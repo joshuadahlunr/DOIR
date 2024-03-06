@@ -44,6 +44,15 @@ namespace lex {
 
 		template<typename T, template <typename, size_t, typename> class Template>
 		concept instantiation_of_token_head = is_instantiation_of_token_head<Template, T>::value;
+
+		template < template <typename, typename> class Template, typename T >
+		struct is_instantiation_of_skip_token_head : std::false_type {};
+
+		template < template <typename, typename> class Template, typename A1, typename A2 >
+		struct is_instantiation_of_skip_token_head< Template, Template<A1, A2> > : std::true_type {};
+
+		template<typename T, template <typename, typename> class Template>
+		concept instantiation_of_skip_token_head = is_instantiation_of_skip_token_head<Template, T>::value;
 	}
 
 	template<typename T, typename CharT>
@@ -143,16 +152,52 @@ namespace lex {
 	template<size_t Token, lexer_head<char> Head>
 	using token_head = basic_token_head<char, Token, Head>;
 
+	template<typename CharT, lexer_head<CharT> Head>
+	struct basic_skip_head {
+		using head = Head;
+		constexpr static auto skip_if_invalid = head::skip_if_invalid;
+		static bool next_valid(size_t index, CharT next) { return head::next_valid(index, next); }
+		static bool token_valid(std::basic_string_view<CharT> token) { return head::token_valid(token); }
+	};
+	template<lexer_head<char> Head>
+	using skip_head = basic_skip_head<char, Head>;
+
+	template<typename CharT>
+	struct basic_null_head {
+		constexpr static auto skip_if_invalid = true;
+		static bool next_valid(size_t index, CharT next) { return false; }
+		static bool token_valid(std::basic_string_view<CharT> token) { return false; }
+	};
+	using null_head = basic_null_head<char>;
+
 	template<typename CharT, lexer_head<CharT>... Heads>
 	struct basic_lexer {
 		struct result {
+			using generic = basic_lexer<CharT, null_head>::result;
+
 			size_t head; // Which head parsed this result;
 			std::basic_string_view<CharT> lexeme;
 			std::basic_string_view<CharT> remaining;
 
+			result(size_t head = 0, std::basic_string_view<CharT> lexeme = {}, std::basic_string_view<CharT> remaining = {})
+				: head(head), lexeme(lexeme), remaining(remaining) {}
+			result(const result&) = default;
+			result(const generic& g) requires (!std::is_same_v<detail::nth_type<0, Heads...>, null_head>)
+				: head(g.head), lexeme(g.lexeme), remaining(g.remaining) {}
+			result(result&&) = default;
+			result(generic&& g) requires (!std::is_same_v<detail::nth_type<0, Heads...>, null_head>)
+				: head(g.head), lexeme(g.lexeme), remaining(g.remaining) {}
+			result& operator=(const result&) = default;
+			result& operator=(const generic& g) requires (!std::is_same_v<detail::nth_type<0, Heads...>, null_head>) { return *this = result(g); }
+			result& operator=(result&&) = default;
+			result& operator=(generic&& g) requires (!std::is_same_v<detail::nth_type<0, Heads...>, null_head>) { return *this = result(g); }
+
 			template<std::convertible_to<size_t> Token>
 			Token token() { return (Token)head; }
 			bool valid() { return head != std::string::npos && !lexeme.empty(); }
+			bool valid_or_end() { return valid() || remaining.empty(); }
+
+			operator generic() { return generic{head, lexeme, remaining}; }
 		};
 	protected:
 		std::bitset<sizeof...(Heads)> valid, lastValid;
@@ -176,6 +221,7 @@ namespace lex {
 			}
 		};
 
+		// Checks that the finished token is in fact valid for all its supposedly valid heads (prevents matching strings which are too short)
 		bool confirm_valid(std::basic_string_view<CharT> token) {
 			[&, this]<std::size_t... I>(std::index_sequence<I...>) {
 				(ConfirmValidOp<I>{}(lastValid, token) && ...);
@@ -187,6 +233,22 @@ namespace lex {
 			inline bool operator()(std::bitset<sizeof...(Heads)>& lastValid, std::basic_string_view<CharT> token) {
 				if(lastValid[Idx])
 					lastValid[Idx] = detail::nth_type<Idx, Heads...>::token_valid(token);
+				return true;
+			}
+		};
+
+		// Checks if the given head is a skip_head
+		bool is_skip(size_t headIndex) {
+			return ![&, this]<std::size_t... I>(std::index_sequence<I...>) {
+				return (IsSkipOp<I>{}(headIndex) && ...);
+			}(std::make_index_sequence<sizeof...(Heads)>{});
+		}
+		template<size_t Idx>
+		struct IsSkipOp {
+			inline bool operator()(size_t headIndex) {
+				if(headIndex == Idx)
+					if constexpr(detail::instantiation_of_skip_token_head<detail::nth_type<Idx, Heads...>, basic_skip_head>)
+						return false;
 				return true;
 			}
 		};
@@ -212,7 +274,12 @@ namespace lex {
 			if(valid.any() && i == buffer.size()) ++i;
 			auto token = buffer.substr(0, i - 1);
 			if(!confirm_valid(token)) return {std::string::npos, {}, buffer};
-			return { apply_tokens(detail::index_of_first_set(lastValid)), token, buffer.substr(i - 1, buffer.size()) };
+
+			auto headIndex = detail::index_of_first_set(lastValid);
+			// If we should skip this token type, recursively lex on the remaining buffer
+			if(is_skip(headIndex)) return lex(buffer.substr(i - 1, buffer.size()));
+			// Otherwise return the token
+			return { apply_tokens(headIndex), token, buffer.substr(i - 1, buffer.size()) };
 		}
 	protected:
 		template<size_t Idx>
@@ -229,4 +296,8 @@ namespace lex {
 	};
 	template<lexer_head<char>... Heads>
 	using lexer = basic_lexer<char, Heads...>;
+
+	template<typename CharT>
+	using basic_lexer_generic_result = basic_lexer<CharT, null_head>::result;
+	using lexer_generic_result = basic_lexer_generic_result<char>;
 }
