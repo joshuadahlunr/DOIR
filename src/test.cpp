@@ -3,6 +3,7 @@
 #include <stdexcept>
 #include <string>
 #define LEXER_CTRE_REGEX
+// #define LEXER_IS_STATEFULL
 #include "lexer.hpp"
 #include "ECS.hpp"
 size_t globalAttributeCounter = 0;
@@ -30,31 +31,31 @@ enum Tokens {
 	Literal,
 };
 
-lex::lexer<
-	lex::token_head<Tokens::Plus, lex::heads::exact_character<'+'>>,
-	lex::token_head<Tokens::Minus, lex::heads::exact_character<'-'>>,
-	lex::token_head<Tokens::Mult, lex::heads::exact_character<'*'>>,
-	lex::token_head<Tokens::Divide, lex::heads::exact_character<'/'>>,
-	lex::token_head<Tokens::Equals, lex::heads::exact_character<'='>>,
-	lex::token_head<Tokens::Open, lex::heads::exact_character<'('>>,
-	lex::token_head<Tokens::Close, lex::heads::exact_character<')'>>,
-	lex::token_head<Tokens::Identifier, lex::heads::ctre_regex<"[_a-zA-z][_a-zA-z0-9]*">>,
-	lex::token_head<Tokens::Literal, lex::heads::ctre_regex<R"_((\+|-)?(\d+(\.\d*)?|\.\d+)([eE](\+|-)?\d+)?)_">>,
-	lex::skip_head<lex::heads::ctre_regex<"\\s+">> // Skip whitespace!
+constexpr lex::lexer<
+	lex::heads::token<Tokens::Plus, lex::heads::exact_character<'+'>>,
+	lex::heads::token<Tokens::Minus, lex::heads::exact_character<'-'>>,
+	lex::heads::token<Tokens::Mult, lex::heads::exact_character<'*'>>,
+	lex::heads::token<Tokens::Divide, lex::heads::exact_character<'/'>>,
+	lex::heads::token<Tokens::Equals, lex::heads::exact_character<'='>>,
+	lex::heads::token<Tokens::Open, lex::heads::exact_character<'('>>,
+	lex::heads::token<Tokens::Close, lex::heads::exact_character<')'>>,
+	lex::heads::token<Tokens::Identifier, lex::heads::ctre_regex<"[_a-zA-z][_a-zA-z0-9]*">>,
+	lex::heads::token<Tokens::Literal, lex::heads::ctre_regex<R"_((\+|-)?(\d+(\.\d*)?|\.\d+)([eE](\+|-)?\d+)?)_">>,
+	lex::heads::skip<lex::heads::ctre_regex<"\\s+">> // Skip whitespace!
 > lexer;
 
-lex::lexer<
-	lex::token_head<Tokens::Newline, lex::heads::exact_character<'\n'>>,
-	lex::token_head<Tokens::Plus, lex::heads::exact_character<'+'>>,
-	lex::token_head<Tokens::Minus, lex::heads::exact_character<'-'>>,
-	lex::token_head<Tokens::Mult, lex::heads::exact_character<'*'>>,
-	lex::token_head<Tokens::Divide, lex::heads::exact_character<'/'>>,
-	lex::token_head<Tokens::Equals, lex::heads::exact_character<'='>>,
-	lex::token_head<Tokens::Open, lex::heads::exact_character<'('>>,
-	lex::token_head<Tokens::Close, lex::heads::exact_character<')'>>,
-	lex::token_head<Tokens::Identifier, lex::heads::ctre_regex<"[_a-zA-z][_a-zA-z0-9]*">>,
-	lex::token_head<Tokens::Literal, lex::heads::ctre_regex<R"_((\+|-)?(\d+(\.\d*)?|\.\d+)([eE](\+|-)?\d+)?)_">>,
-	lex::skip_head<lex::heads::ctre_regex<"\\s">> // Skip whitespace (one at a time, excluding newlines)!
+constexpr lex::lexer<
+	lex::heads::token<Tokens::Newline, lex::heads::exact_character<'\n'>>,
+	lex::heads::token<Tokens::Plus, lex::heads::exact_character<'+'>>,
+	lex::heads::token<Tokens::Minus, lex::heads::exact_character<'-'>>,
+	lex::heads::token<Tokens::Mult, lex::heads::exact_character<'*'>>,
+	lex::heads::token<Tokens::Divide, lex::heads::exact_character<'/'>>,
+	lex::heads::token<Tokens::Equals, lex::heads::exact_character<'='>>,
+	lex::heads::token<Tokens::Open, lex::heads::exact_character<'('>>,
+	lex::heads::token<Tokens::Close, lex::heads::exact_character<')'>>,
+	lex::heads::token<Tokens::Identifier, lex::heads::ctre_regex<"[_a-zA-z][_a-zA-z0-9]*">>,
+	lex::heads::token<Tokens::Literal, lex::heads::ctre_regex<R"_((\+|-)?(\d+(\.\d*)?|\.\d+)([eE](\+|-)?\d+)?)_">>,
+	lex::heads::skip<lex::heads::ctre_regex<"\\s">> // Skip whitespace (one at a time, excluding newlines)!
 > lexerNewline;
 
 
@@ -183,7 +184,22 @@ struct parse {
 	}
 };
 
+// NOTE: Need to provide backing memory for any runtime strings that are used!
+template<> std::string_view lex::heads::runtime_string<0, true>::match = {};
+
 int main() {
+	{
+		lex::lexer<lex::heads::ctre_regex<"a+b*">> lexFirst;
+		lex::lexer<lex::heads::runtime_string<0, true>> lexRest;
+		std::string threeInARow = "aaaabbaaaabbaaaabb"; // Works!
+		// std::string threeInARow = "aaaabbaaaabbaaabb"; // Fails!
+		lex::lexer_generic_result res = lexFirst.lex(threeInARow);
+		lex::heads::runtime_string<0, true>::set(res.lexeme);
+		res = lexRest.lex(res);
+		res = lexRest.lex(res);
+		std::cout << "3 of the same in a row? " << res.valid() << std::endl;
+	}
+
 	ParseData data;
 	parse p;
 	data.buffer = "pi = 3.14159265358979323846";
