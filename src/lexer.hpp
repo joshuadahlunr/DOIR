@@ -52,6 +52,15 @@ namespace lex {
 
 		template<typename T, template <typename, typename> class Template>
 		concept instantiation_of_skip_token_head = is_instantiation_of_skip_token_head<Template, T>::value;
+
+		template < template <typename, typename...> class Template, typename T >
+		struct is_instantiation_of_lexer : std::false_type {};
+
+		template < template <typename, typename...> class Template, typename A1, typename... A2 >
+		struct is_instantiation_of_lexer< Template, Template<A1, A2...> > : std::true_type {};
+
+		template<typename T, template <typename, typename...> class Template>
+		concept instantiation_of_lexer = is_instantiation_of_lexer<Template, T>::value;
 	}
 
 	template<typename T, typename CharT>
@@ -98,7 +107,7 @@ namespace lex {
 				return match.view()[index] == next;
 			}
 			static bool token_valid(std::basic_string_view<CharT> token) {
-				return match.view() == token;
+				return match.view().size() == token.size();
 			}
 		};
 		template<detail::string_literal match>
@@ -111,11 +120,7 @@ namespace lex {
 				return std::tolower(match.view()[index]) == std::tolower(next);
 			}
 			static bool token_valid(std::basic_string_view<CharT> token) {
-				auto view = match.view();
-				if(token.size() != view.size() && token.size() != view.size() - 1) return false;
-				for(size_t i = 0; i < token.size(); i++)
-					if(std::tolower(view[i]) != std::tolower(token[i])) return false;
-				return true;
+				return match.view().size() == token.size();
 			}
 		};
 		template<detail::string_literal match>
@@ -134,7 +139,7 @@ namespace lex {
 				return match[index] == next;
 			}
 			static bool token_valid(std::basic_string_view<CharT> token) {
-				return match == token;
+				return match.size() == token.size();
 			}
 		};
 		template<size_t ID, bool View = false>
@@ -147,8 +152,7 @@ namespace lex {
 				return index == 0 && match == next;
 			}
 			static bool token_valid(std::basic_string_view<CharT> token) {
-				if(token.size() != 1) return false;
-				return match == token[0];
+				return token.size() == 1;
 			}
 		};
 		template<char match>
@@ -161,8 +165,7 @@ namespace lex {
 				return index == 0 && std::tolower(match) == std::tolower(next);
 			}
 			static bool token_valid(std::basic_string_view<CharT> token) {
-				if(token.size() != 1) return false;
-				return std::tolower(match) == std::tolower(token[0]);
+				return token.size() == 1;
 			}
 		};
 		template<char match>
