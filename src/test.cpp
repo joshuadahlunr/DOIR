@@ -1,7 +1,3 @@
-#include <cmath>
-#include <cstddef>
-#include <stdexcept>
-#include <string>
 #define LEXER_CTRE_REGEX
 // #define LEXER_IS_STATEFULL
 #include "lexer.hpp"
@@ -9,6 +5,8 @@
 size_t globalAttributeCounter = 0;
 
 #include <iostream>
+#include <map>
+#include <deque>
 
 using Token = ECS::Token;
 
@@ -59,8 +57,13 @@ constexpr lex::lexer<
 > lexerNewline;
 
 
-
-#include <map>
+// expressions : assignment_expression | assignment_expression \n expressions;
+// assignment_expression: identifier = assignment_expression | add_expression;
+// add_expression : mult_expression add_expression';
+// add_expression' : + mult_expression add_expression' | - mult_expression add_expression' | eps;
+// mult_expression : primary_expression mult_expression';
+// mult_expression' : * primary_expression mult_expression' | / primary_expression mult_expression' | eps;
+// primary_expression : identifier | literal | (assignment_expression);
 struct parse {
 	std::map<std::string, long double> variables;
 
@@ -70,7 +73,7 @@ struct parse {
 		expressions(data);
 	}
 
-	// expressions : assignment_expression | assignment_expression , expressions;
+	// expressions : assignment_expression | assignment_expression \n expressions;
 	void expressions(ParseData& data) {
 		static size_t i = 0;
 
@@ -109,47 +112,90 @@ struct parse {
 		}
 	}
 
-	// add_expression : mult_expression + add_expression | mult_expression - add_expression | mult_expression
+	// add_expression : mult_expression add_expression';
+	// add_expression' : + mult_expression add_expression' | - mult_expression add_expression' | eps;
 	long double add_expression(ParseData& data) {
-		if(!data.lex_result.valid()) { throw std::runtime_error(std::to_string(__LINE__) + ": Unexpected end of input"); }
+		const auto prime = [this](ParseData& data) -> std::deque<std::pair<bool, long double>> {
+			const auto prime_impl = [this](ParseData& data, auto& prime) -> std::deque<std::pair<bool, long double>> {
+				if(!data.lex_result.valid_or_end()) { throw std::runtime_error(std::to_string(__LINE__) + ": Unexpected end of input"); }
+				switch(data.lex_result.token<Tokens>()) {
+				break; case Plus: {
+					data.lex_result = lexer.lex(data.lex_result);
+					auto _2 = mult_expression(data);
+					data.lex_result = lexer.lex(data.lex_result);
+					auto _3 = prime(data, prime);
+					_3.emplace_front(/*wasPlus*/true, _2);
+					return _3;
+				}
+				break; case Minus: {
+					data.lex_result = lexer.lex(data.lex_result);
+					auto _2 = mult_expression(data);
+					data.lex_result = lexer.lex(data.lex_result);
+					auto _3 = prime(data, prime);
+					_3.emplace_front(/*wasPlus*/false, _2);
+					return _3;
+				}
+				break; default: return {};
+				}
+			};
+			return prime_impl(data, prime_impl);
+		};
 
+		if(!data.lex_result.valid()) { throw std::runtime_error(std::to_string(__LINE__) + ": Unexpected end of input"); }
 		auto _1 = mult_expression(data);
-		auto _2 = lexer.lex(data.lex_result);
-		if(!_2.valid_or_end()) { throw std::runtime_error(std::to_string(__LINE__)); }
-		switch (_2.token<Tokens>()) {
-		break; case Plus: {
-			data.lex_result = lexer.lex(_2);
-			auto _3 = add_expression(data);
-			return _1 + _3;
-		}
-		break; case Minus: {
-			data.lex_result = lexer.lex(_2);
-			auto _3 = add_expression(data);
-			return _1 - _3;
-		}
-		break; default: return _1;
-        }
+		auto saved = data.lex_result; // Save the lexer state... this allows us to treat the prime as a lookahead!
+		data.lex_result = lexer.lex(data.lex_result);
+		auto _2 = prime(data);
+		if(_2.empty()) {
+			data.lex_result = saved; // Treat the previous prime as a lookahead
+			return _1;
+		} else for(auto [wasPlus, value]: _2)
+			if(wasPlus) _1 += value;
+			else _1 -= value;
+		return _1;
 	}
-	// mult_expression : primary_expression * mult_expression | primary_expression / mult_expression | primary_expression
-	long double mult_expression(ParseData& data) {
-		if(!data.lex_result.valid()) { throw std::runtime_error(std::to_string(__LINE__) + ": Unexpected end of input"); }
 
+	// mult_expression : primary_expression mult_expression';
+	// mult_expression' : * primary_expression mult_expression' | / primary_expression mult_expression' | eps;
+	long double mult_expression(ParseData& data) {
+		const auto prime = [this](ParseData& data) -> std::deque<std::pair<bool, long double>> {
+			const auto prime_impl = [this](ParseData& data, auto& prime) -> std::deque<std::pair<bool, long double>> {
+				if(!data.lex_result.valid_or_end()) { throw std::runtime_error(std::to_string(__LINE__) + ": Unexpected end of input"); }
+				switch(data.lex_result.token<Tokens>()) {
+				break; case Mult: {
+					data.lex_result = lexer.lex(data.lex_result);
+					auto _2 = primary_expression(data);
+					data.lex_result = lexer.lex(data.lex_result);
+					auto _3 = prime(data, prime);
+					_3.emplace_front(/*wasMult*/true, _2);
+					return _3;
+				}
+				break; case Divide: {
+					data.lex_result = lexer.lex(data.lex_result);
+					auto _2 = primary_expression(data);
+					data.lex_result = lexer.lex(data.lex_result);
+					auto _3 = prime(data, prime);
+					_3.emplace_front(/*wasMult*/false, _2);
+					return _3;
+				}
+				break; default: return {};
+				}
+			};
+			return prime_impl(data, prime_impl);
+		};
+
+		if(!data.lex_result.valid()) { throw std::runtime_error(std::to_string(__LINE__) + ": Unexpected end of input"); }
 		auto _1 = primary_expression(data);
-		auto _2 = lexer.lex(data.lex_result);
-		if(!_2.valid_or_end()) { throw std::runtime_error(std::to_string(__LINE__)); }
-		switch (_2.token<Tokens>()) {
-		break; case Mult: {
-			data.lex_result = lexer.lex(_2);
-			auto _3 = mult_expression(data);
-			return _1 * _3;
-		}
-		break; case Divide: {
-			data.lex_result = lexer.lex(_2);
-			auto _3 = mult_expression(data);
-			return _1 / _3;
-		}
-		break; default: return _1;
-        }
+		auto saved = data.lex_result; // Save the lexer state... this allows us to treat the prime as a lookahead!
+		data.lex_result = lexer.lex(data.lex_result);
+		auto _2 = prime(data);
+		if(_2.empty()) {
+			data.lex_result = saved; // Treat the previous prime as a lookahead
+			return _1;
+		} else for(auto [wasMult, value]: _2)
+			if(wasMult) _1 *= value;
+			else _1 /= value;
+		return _1;
 	}
 
 	// primary_expression : identifier | literal | (assignment_expression);
