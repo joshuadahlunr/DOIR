@@ -13,7 +13,7 @@ namespace ECS {
 		return id;
 	}
 
-	using Token = size_t; 
+	using Token = size_t;
 
 	struct AttributeStorage {
 		size_t elementSize = -1;
@@ -21,7 +21,7 @@ namespace ECS {
 
 		AttributeStorage() : elementSize(-1), data(1, std::byte{0}) {}
 		AttributeStorage(size_t elementSize) : elementSize(elementSize) { data.reserve(5 * elementSize); }
-		
+
 		template<typename Tcomponent>
 		AttributeStorage(Tcomponent reference = {}) : AttributeStorage(sizeof(Tcomponent)) {}
 
@@ -122,7 +122,7 @@ namespace ECS {
 
 		SkiplistAttributeStorage() : elementSize(-1), indecies(1, -1), data(1, std::byte{0}) {}
 		SkiplistAttributeStorage(size_t elementSize) : elementSize(elementSize) { data.reserve(5 * elementSize); }
-		
+
 		template<typename Tcomponent>
 		SkiplistAttributeStorage(Tcomponent reference = {}) : SkiplistAttributeStorage(sizeof(Tcomponent)) {}
 
@@ -178,7 +178,7 @@ namespace ECS {
 
 			bool operator==(Sentinel) { return scene == nullptr || e >= scene->entityMasks.size(); }
 
-			Iterator& operator++(post_increment_t) { 
+			Iterator& operator++(post_increment_t) {
 				do {
 					e++;
 				} while(!valid() && e < scene->entityMasks.size());
@@ -194,8 +194,8 @@ namespace ECS {
 			std::tuple<std::add_lvalue_reference_t<Tcomponents>...> operator*() { return { scene->GetAttribute<Tcomponents>(e)... }; }
 		};
 
-		Iterator begin() { 
-			Iterator out{&scene, 0}; 
+		Iterator begin() {
+			Iterator out{&scene, 0};
 			if(!out.valid()) ++out;
 			return out;
 		}

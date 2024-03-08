@@ -2,7 +2,6 @@
 
 #include <bitset>
 #include <algorithm>
-#include <string_view>
 #ifdef LEXER_CTRE_REGEX
 	#include "ctre.hpp"
 #endif
