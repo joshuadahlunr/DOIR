@@ -117,10 +117,10 @@ namespace ECS {
 
 	struct SkiplistAttributeStorage {
 		size_t elementSize = -1;
-		std::vector<size_t> indecies;
+		std::vector<size_t> indices;
 		std::vector<std::byte> data;
 
-		SkiplistAttributeStorage() : elementSize(-1), indecies(1, -1), data(1, std::byte{0}) {}
+		SkiplistAttributeStorage() : elementSize(-1), indices(1, -1), data(1, std::byte{0}) {}
 		SkiplistAttributeStorage(size_t elementSize) : elementSize(elementSize) { data.reserve(5 * elementSize); }
 
 		template<typename Tcomponent>
@@ -129,9 +129,9 @@ namespace ECS {
 		template<typename Tcomponent>
 		Tcomponent& Get(Token e) {
 			assert(sizeof(Tcomponent) == elementSize);
-			assert(e < indecies.size());
-			assert(indecies[e] != std::numeric_limits<size_t>::max());
-			return *(Tcomponent*)(data.data() + indecies[e]);
+			assert(e < indices.size());
+			assert(indices[e] != std::numeric_limits<size_t>::max());
+			return *(Tcomponent*)(data.data() + indices[e]);
 		}
 
 		template<typename Tcomponent>
@@ -146,17 +146,17 @@ namespace ECS {
 
 		template<typename Tcomponent>
 		Tcomponent& Allocate(Token e) {
-			auto [ret, i] = Allocate<Tcomponent>();
-			indecies[e] = i * elementSize;
-			return ret;
+			auto [ert, i] = Allocate<Tcomponent>();
+			indices[e] = i * elementSize;
+			return ert;
 		}
 
 		template<typename Tcomponent>
 		Tcomponent& GetOrAllocate(Token e) {
 			assert(sizeof(Tcomponent) == elementSize);
-			if (indecies.size() <= e)
-				indecies.insert(indecies.end(), std::max<int64_t>(int64_t(e) - indecies.size(), 1), -1);
-			if (indecies[e] == std::numeric_limits<size_t>::max())
+			if (indices.size() <= e)
+				indices.insert(indices.end(), std::max<int64_t>(int64_t(e) - indices.size(), 1), -1);
+			if (indices[e] == std::numeric_limits<size_t>::max())
 				return Allocate<Tcomponent>(e);
 			return Get<Tcomponent>(e);
 		}

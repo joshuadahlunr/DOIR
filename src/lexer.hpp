@@ -3,7 +3,7 @@
 #include <bitset>
 #include <algorithm>
 #ifdef LEXER_CTRE_REGEX
-	#include "ctre.hpp"
+	#include "../thirdparty/ctre.hpp"
 #endif
 
 namespace lex {
@@ -143,7 +143,7 @@ namespace lex {
 			}
 		};
 		template<size_t ID, bool View = false>
-		using runtime_string = basic_runtime_string<char, ID, View>; // TODO: Do we need case insenstive versions? Do we need a char version?
+		using runtime_string = basic_runtime_string<char, ID, View>; // TODO: Do we need case insensitive versions? Do we need a char version?
 
 		template<typename CharT, CharT match>
 		struct basic_exact_character {
