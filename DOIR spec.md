@@ -302,6 +302,57 @@ terminate : void(int status) terminating intrinsic = {
 }
 ```
 
+## Async Draft
+
+* Fork expressions evaluate every block provided concurrently (what concurently means is up to the implementaion)
+* The result of a fork expression is a pointer to an array holding the values yielded by all the blocks in the sync
+* If threads are used by the implementation, the first block of a fork will execute on the thread the fork was issued on (a `fork.detach` in this block will cause a new thread to be spawned and detached)
+
+```cpp
+%result : int* = fork {
+    %0 = 5
+    %x = yield(%0)
+} {
+    %0 = 6
+    %x = yield(%0)
+} {
+    %0 = 7
+    %x = fork.stop(%0) // Acts like a yield but also stops all other syncs
+    // %x = sync.stop.yield_all(%0, %0) // The second value defines what is yielded by all other syncs
+} {
+    %0 = 8
+    %x = fork.detach(%0) // Acts like a yield, however instead of stopping the execution of the block it allows it to continue (this code is now lost and will run until finished on its own)
+    // NOTE: sync.detach may be treated as a no-op on systems which don't use threads as part of their implementation of fork
+}
+%idx = 1
+%0 : int* = %result.array.extract(%idx) // Returns a pointer pointing to 6 (the result yielded by the second block)
+```
+
+* Functions can be marked as transactions, all memory manipulated by a transaction is copied before the manipulation, if the transaction succedes the manipulated values are then copied back
+* Success and failure are indicated by associatedly labeled return statements
+* If an expression containing a transaction fails it will always be converted to boolean false
+* Any functions called by a transaction are implicitly inlined (Is this restriction nessicary?)
+
+```cpp
+global = data.alloc(int) // Reserve a global int
+foo.transaction : int(int x) transaction = {
+    global = x // The value of global is now copied and the copy is changed
+    %1 = true
+    %x = if %1 {
+        %x = return.success(%0) // The value in global gets copied back
+    } else {
+        %x = return.failure(%1) // The value in our copied global is popped off the stack and lost
+    }
+}
+
+%0 = 5
+%1 = foo.transaction(%0) // TODO: Should the type of %1 be int? int! or something similar?
+%2 = if %1 {
+    // On success normal rules apply, %1 has type int and it is implicitly converted to a boolean
+} else {
+    // However on failure %1 always evaluates to boolean false (if a value was returned it is still accessable anywhere not looking for a boolea)
+}
+
 ## Grammar
 
 The input file is assumed to be UTF-8 encoded. Additional formats may be supported by specific implementations.
