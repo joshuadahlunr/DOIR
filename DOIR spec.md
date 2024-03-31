@@ -211,7 +211,7 @@ x = 5
 ```cpp
 while : void(block condition, block body) inline = {
     impl : void(block condition, block body) { // Note: Local functions don't "capture" any of their surrounding scope, thus everything relevant must be passed in (the exception is that a function can recursively call itself)!
-        %0 = condition.unquote() // Note: if a condition is based on a pointer, the value pointed to may be changeable by the body as a side effect!
+        %0 = condition.block.unquote() // Note: if a condition is based on a pointer, the value pointed to may be changeable by the body as a side effect!
         _ = if %0 {
             %0 = body.replace_parameterless_call(break) { // Note: The block following the function is passed as the last argument
                 %x = return()
@@ -221,7 +221,7 @@ while : void(block condition, block body) inline = {
                 %0 : %res = {}
                 %x = yield(%0)
             }
-            _ = %1.unquote()
+            _ = %1.block.unquote()
             _ = impl()
             %x = return()
         } else {
@@ -353,6 +353,174 @@ foo.transaction : int(int x) transaction = {
     // However on failure %1 always evaluates to boolean false (if a value was returned it is still accessable anywhere not looking for a boolea)
 }
 
+## Low Level Draft
+
+* Assembly languages are expected to begin with a function `target.name` that returns a string (canoncically allocated in rodata)
+
+```cpp
+target.name : u8*() = {
+    %0 : u8* = "rv32"
+    _ = return(%0)
+}
+```
+
+* Assembly languages then look for a function called `register.types` which returns void
+* It is expected that a series of calls to `register.type.add` will be invoked inside of this function
+* Providing `offset` or `immediate` as a type name will result in an error
+
+```cpp
+register.types : void() = {
+    %0 : u8* = "integer" // String literals are allocated in rodata
+    %1 = register.type.add(%0) // register.type.add takes a string and returns void
+    %2 : u8* = "floating"
+    %3 = register.type.add(%2)
+    _ = return()
+}
+```
+
+* Assembly languages then look for a function `instructions` which repeatedly calls `instruction.add` with a string name and list of classes
+* All of the classes defined in `register.types` are available, prefixed with the result of `target.name`
+* `offset` and `immediate` are valid types in addition to the types provided above
+
+```cpp
+instructions : u8**() = {
+    %0 : u8* = "sw"
+    %1 = instruction.add(%0, rv32.integer, offset, rv32.integer) // Note: the types are usable like types in regular functions
+
+    %2 : u8* = "add"
+    %3 = instruction.add.return(%2, rv32.integer, rv32.integer, rv32.integer)  // Note: the .return variant treats the first type as a return type meaning that `x0 = add(x1, x2)` will be treated the same as `_ = add(x0, x1, x2)`
+
+    %4 : u8* = "mv.i.i"
+    %5 : u8* = "mv"
+    %5 = instruction.add.override.return(%4, %5, rv32.integer, rv32.integer) // .override and .override.return expect a unique name followed by a name to be emitted (in case the same instruction can be used with multiple register types)
+    //...
+    _ = return()
+}
+```
+
+* Assembly languages then look for a function `registers` which repeatedly calls `register.add` with a string name and a register type
+
+```cpp
+registers : void() = {
+    %4 : u8* = "s0"
+    %5 = register.add(%4, rv32.integer) // Note: unlike the previous steps functions which return void, register.add returns a u64
+    %6 : u8* = "x8"
+    %7 = register.add.alias(%5, %6) // This allows for multiple names to be assigned to the same register (only the first name registered will show up in output assembly)
+
+    %0 : u8* = "zero"
+    %1 : u64 = register.add.reserved(%0, rv32.integer) // The .reserved version indicates that the register shouldn't be used by the automatic register assigner
+    %2 : u8* = "x0"
+    %3 : u64 = register.add.alias(%1, %2) // No .reserved nessicary for aliases
+    //...
+    _ = return()
+}
+```
+
+// TODO: constant functions
+
+* Assembly languages are then asked for an `if.implementation` function which is provided a register storing the condition, a block for the true case, a block for the false case, and a string which contains a unique value for every if
+* They can also optionally provide a `fork.implementation` function (if not provided, one based on instruction interweaving will be used), it is similarly given a block for every block of the fork, and string containing a unique value
+
+```cpp
+if.implementation : auto(bool condition, block T, block F, u8* unique) {
+    %0 = "if.true."
+    %true = string.concat(%0, unique)
+    %1 = "if.false."
+    %false = string.concat(%1, unique)
+    %2 = "if.false.staging."
+    %staging = string.concat(%2, unique)
+    %3 = "if.end."
+    %end = string.concat(%3, unique)
+
+    %4 = block {
+        %0 = T.block.return_type()
+        %1 = F.block.return_type()
+        %2 = type.union(%0, %1)
+        $3 = type.floating(%2)
+        %4 = if %3 {
+            _ = yield(rv32.floating)
+        } else {
+            _ = yield(rv32.integer)
+        }
+        _ = yield(%4)
+    }
+    %r = register.get.return(%4)
+    %c : rv32.integer* = condition.register.get()
+    Tsize = T.block.instructions.count()
+
+    %5 : u32 = 1048576
+    %6 = Tsize.less(%5)
+    if %5 {
+        %0 = assembly.label.unordered_lookup(%false)
+        %1 = assembly.label.offset_from_current_instruction(%0)
+        %c = rv32.not(%c)
+        %2 = rv32.bgez(%c, %1)
+
+        %3 = assembly.label(%true)
+        %4 = T.block.unquote()
+
+        %5 = assembly.label.unordered_lookup.offset(%end)
+        %6 = rv32.j(%5)
+
+        %7 = assembly.label(%false)
+        %8 = F.block.unquote()
+
+        %9 = assembly.label(%end)
+    } else {
+        // ...
+    }
+}
+
+fork.implementation : void(block first, block... rest, u8* unique) {
+    //...
+}
+```
+
+// TODO: Call implementation
+
+* Finally assembly languages are expected to provide implementations for all of the intrinsic functions
+* All of the instructions will be available (prefixed with the language name)
+* All of the registers will be available (their types will be the language name prefixed to their class, they can be used the same as pointers in the rest of the language)
+* The function `register.get` can be used to get the register associated a type (returns a pointer to the register, there are no implications of this beyond the fact that they behave like pointers in the rest of the language)
+* The function `register.get.return` can be used to get the register a return value can be stored in
+
+```cpp
+add : auto(implict type T, T a, T, b) inline = {
+    %0 = sizeof(T)
+    %1 : u32 = 8
+    %2 = %1.less(%2)
+    %3 = type.integral(T)
+    %4 = %2.and(%3)
+    _ = if %4 {
+        %a : rv32.integer* = a.register.get()
+        %b = b.register.get()
+        %r = register.get.return(rv32.integer)
+
+        %0 = type.integral.unsigned(T)
+        if %0 {
+            s0 = rv32.add(%a, %b) // All of the registers added in `registers` are available (and can be used like pointers)
+            %r = rv32.mv.i.i(s0) // All of the instructions in `instructions` are available (prefixed with the result returned from `target.name`)
+        } else {
+            %r = rv32.addu(%a, %b)
+        }
+    } else {
+        %1 = equal(T, float)
+        _ = if %1 {
+            //...
+        } else {
+            //...
+        }
+    }
+    _ = return() // NOTE: Returns are still nessicary!!
+}
+
+// The minimal 
+subtract : auto(implict type T, T a, T, b) inline = {
+    %0 : u8* = "`subtract` not yet implemented"
+    _ = message.error(%0)
+}
+```
+
 ## Grammar
 
 The input file is assumed to be UTF-8 encoded. Additional formats may be supported by specific implementations.
@@ -377,7 +545,7 @@ type_block = "type" "{" { nodot_identifier ":" type ["=" constant] terminator } 
 function_modifiers = { "inline" | "noinline" | "comptime" | "nocomptime" | "intrinsic" | "terminating" }
 identifier = nodot_identifier { "." nodot_identifier } // NOTE: Whitespace and comments are not cannonically allowed between identifiers and their dots, implementations may allow it however
 constant = number | string | "true" | "false" | ("{" constant { "," constant } "}")
-number = binary_number | decimal_number | hexadecimal_number
+number = binary_number | decimal_number | hexadecimal_number | character
 ```
 
 ### Terminal Regexs
@@ -388,6 +556,7 @@ binary_number = `0[bB]([01]+|[01]+\.|[01]*\.[01]+)([eE][+-]?[01]+)?`
 decimal_number = `([0-9]+|[0-9]+\.|[0-9]*\.[0-9]+)([eE][+-]?[0-9]+)?` Note: Any valid octal_number string is also a valid decimal_number string!
 hexadecimal_number = `0[xX]([0-9A-F]+|[0-9A-F]+\.|[0-9A-F]*\.[0-9A-F]+)(e[+-]?[0-9A-F]+)?`
 string = `"(\\"|[^"])*"`
+character = `'(\\'|[^'])'` Note: Any single valid UTF-32 character
 
 comment = `(//[^\n]*\n)|(/\*(.*?)\*/)`
 whitespace = `[ \t\n\r]+`
