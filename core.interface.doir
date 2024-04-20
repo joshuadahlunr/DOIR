@@ -1,0 +1,413 @@
+// All of these functions are implemented by the interpretor
+// Any function marked comptime is not expected to be implemented by assemblies/operating systems
+// Any function marked nocomptime is assumed to be run at runtime unless explicitly overridden
+
+// Diagnostics
+
+message : void(message: u8*) comptime = extern
+message.runtime : void(message: u8*) = extern
+warning : void(message: u8*) comptime = extern
+warning.runtime : void(message: u8*) = extern
+error : void(message: u8*) comptime = extern
+error.runtime : void(message: u8*) = extern
+panic : void(message: u8*) comptime terminating = extern
+panic.error_code : void(message: u8*, ec: usize) comptime terminating = extern
+message.impl : void(message: u8*, severity: u2) = extern
+
+// source_location = type {
+// 	file: u8*
+// 	function: u8*
+// 	line: usize
+// 	column: usize
+// 	length: usize
+// }
+// source_location.get : source_location() comptime = extern
+
+
+// Core
+
+
+yield : T(T: implicit type, value: T) terminating = extern
+return : T(T: implicit type, value: T) terminating = extern
+// ecall : 
+// breakpoint :
+
+load : T(T: implicit type, value: T*) = extern
+load.offset : T(T: implicit type, value: T*, offset: i32) = extern
+store : T(T: implicit type, value: T*) = extern
+store.offset : T(T: implicit type, value: T*, offset: i32) = extern
+cast : Tout(Tin: implicit type, Tout: type, in: Tin) = extern
+
+/**
+ * If both types are the same \p in is returned, otherwise...
+ * Casts bool to u1
+ * Casts unsigned to signed if both are present (u32,i32 -> i32)
+ * Casts integers and floats to higher precision (i32,i16 -> i32   f32,f64 -> f64   i32,u16 -> i32)
+ * Casts integers to floats (i64,f32 -> f32)
+ * Casts integers to pointers (i64,i1* -> i1*)
+ *
+ * @brief compares T and Tother determining which is "better" then casts to the "better" type
+ * @param T the first type to compare (all the type of the input)
+ * @param Tother the second type to compare
+ * @param in the value to cast to the "better" type
+ * @return in cast to the "better" of T and Tother
+ */
+promote : auto(T: implicit type, Tother: type, in: T) comptime = extern
+add : T(T: implicit type, a: T, b: T) = extern
+subtract : T(T: implicit type, a: T, b: T) = extern
+multiply : T(T: implicit type, a: T, b: T) = extern
+divide : T(T: implicit type, a: T, b: T) = extern
+remainder : T(T: implicit type, a: T, b: T) = extern
+
+/**
+ * @brief Ands every bit of the two prvided values together
+ * @note if T happens to be bool, becomes a call to and.logical
+ * @param T the type of the two values (it is recommended to use promote to ensure they are the same)
+ * If T is a non-integer type an error will occur
+ * @param a the first value
+ * @param b the second value
+ * @return the value of a & b
+ */
+and : T(T: implicit type, a: T, b: T) = extern
+and.logical : bool(a: bool, b: bool) = extern
+
+/**
+ * @brief Ors every bit of the two prvided values together
+ * @note if T happens to be bool, becomes a call to or.logical
+ * @param T the type of the two values (it is recommended to use promote to ensure they are the same)
+ * If T is a non-integer type an error will occur
+ * @param a the first value
+ * @param b the second value
+ * @return the value of a | b
+ */
+or : T(T: implicit type, a: T, b: T) = extern
+or.logical : bool(a: bool, b: bool)
+zor : T(T: implicit type, a: T, b: T) = extern
+negate : T(T: implicit type, a: T) = extern
+shift.left : T(T: implicit type, a: T, b: usize) = extern
+shift.left.logical : T(T: implicit type, a: T, b: usize) = extern
+shift.right : T(T: implicit type, a: T, b: usize) = extern
+shift.right.logical : T(T: implicit type, a: T, b: usize) = extern
+sqrt : T(T: implicit type, a: T) = extern
+
+/**
+ * @brief concatenates the value of the first parameter with the sign of the second
+ * @param T the type of the two values (if T is a pointer or unsigned this function is a nop)
+ * @param value the value to change the sign of
+ * @param sign the sign to copy
+ * @return the value of abs(value) * sign(sign)
+ */
+sign.copy : T(T: implicit type, value: T, sign: T) = extern
+max : T(T: implicit type, a: T, b: T) = extern
+min : T(T: implicit type, a: T, b: T) = extern
+
+/**
+ * @brief compares two values
+ * @param T the type of the two values (it is recommended to use promote to ensure they are the same)
+ * @param a the first value
+ * @param b the second value
+ * @returns 0 if a == b, -1 if a < b, 1 if a > b
+ */
+compare : i2(T: implicit type, a: T, b: T) = extern
+equal : u1(T: implicit type, a: T, b: T) = extern
+equal.not : u1(T: implicit type, a: T, b: T) = extern
+less : u1(T: implicit type, a: T, b: T) = extern
+equal.less : u1(T: implicit type, a: T, b: T) = extern
+greater : u1(T: implicit type, a: T, b: T) = extern
+equal.greater : u1(T: implicit type, a: T, b: T) = extern
+
+
+// Float Flag Manipulation
+
+
+float.rounding.set_round_to_nearest_ties_to_even : void() = extern
+float.rounding.is_round_to_nearest_ties_to_even : u1() = extern
+float.rounding.set_round_to_nearest_ties_to_max_magnitude : void() = extern
+float.rounding.is_round_to_nearest_ties_to_max_magnitude : u1() = extern
+float.rounding.set_round_to_zero : void() = extern
+float.rounding.is_round_to_zero : u1() = extern
+float.rounding.set_round_down : void() = extern
+float.rounding.is_round_down : u1() = extern
+float.rounding.set_round_up : void() = extern
+float.rounding.is_round_up : u1() = extern
+float.operation.was_invalid : u1() = extern
+float.operation.was_divide_by_zero : u1() = extern
+float.operation.was_overflow : u1() = extern
+float.operation.was_underflow : u1() = extern
+float.operation.was_inexact : u1() = extern
+
+
+// Memory
+
+
+/**
+ * @brief Offsets a pointer by by a raw number of bytes
+ * @note if \p bytes is zero can be used as an unsafe pointer cast
+ * @note used as the main implementation detail of type.member.access and array.extract 
+ * @param Tin type of the input pointer
+ * @param Tout type of the resulting pointer
+ * @param in pointer to offset
+ * @param bytes number of bytes to offset the pointer
+ * @note if the bits are not a multiple of 8 the pointer will be flagged as a type.pointer.bit_setter
+ */
+pointer.offset : Tout*(Tin: implicit type, Tout: type, in: Tin*, bytes: isize) = extern
+pointer.offset.bits : Tout*(Tin: implicit type, Tout: type, in: Tin*, bits: isize) = extern
+pointer.offset.same_type : T*(T: implicit type, in: T*, bytes: isize) = extern
+pointer.offset.bits.same_type : T*(T: implicit type, in: T*, bits: isize) = extern
+
+/**
+ * @brief Allocates a variable on the stack
+ * @param T type of the variable to allocate
+ * @return a pointer to the allocated variable
+ */
+stack.alloc : T*(T: type) nocomptime = extern
+
+/**
+ * @brief Allocates an array on the stack
+ * @param T type of the elements of the array to allocate
+ * @param size the number of elements to allocate
+ * @return a fat pointer to the allocated array
+ */
+stack.alloc.array : T[*](T: type, size: usize) nocomptime = extern
+
+/**
+ * @brief Allocates raw memory on the stack
+ * @param size amount of memory to allocate
+ * @return a pointer to the start of the allocated memory, or null (0) if it failed
+ */
+stack.alloc.impl : u8*(size: usize) nocomptime = extern
+
+/**
+ * @brief Allocates a variable in the .data section
+ * @param T type of the variable to allocate
+ * @return a pointer to the allocated variable
+ */
+data.alloc : T*(T: type) nocomptime = extern
+
+/**
+ * @brief Allocates an array in the .data section
+ * @param T type of the elements of the array to allocate
+ * @param size the number of elements to allocate
+ * @return a fat pointer to the allocated array
+ */
+data.alloc.array : T[*](T: type, size: usize) nocomptime = extern
+
+/**
+ * @brief Allocates raw memory in the .data section
+ * @param size amount of memory to allocate
+ * @return a pointer to the start of the allocated memory, or null (0) if it failed
+ */
+data.alloc.impl : u8*(size: usize) nocomptime = extern
+
+/**
+ * @brief Allocates a variable in the .rodata section
+ * @param T type of the variable to allocate
+ * @param value the value to store in the allocation
+ * @return a pointer to the allocated variable
+ */
+data.readonly.alloc : T*const(T: type, value: T) nocomptime = extern
+
+/**
+ * @brief Allocates an array in the .rodata section
+ * @param T type of the elements of the array to allocate
+ * @param size the number of elements to allocate
+ * @return a fat pointer to the allocated array
+ */
+data.readonly.alloc.array : T[*]const(implicit T: type, T* data, size: usize) nocomptime = extern
+
+/**
+ * @brief Allocates raw memory in the .rodata section
+ * @param data the raw data to store in the allocation
+ * @param size amount of memory to allocate
+ * @return a pointer to the start of the allocated memory, or null (0) if it failed
+ */
+data.readonly.alloc.impl : u8*const(data: u8*, size: usize) nocomptime = extern
+
+/**
+ * @brief Allocates a variable in thread local storage
+ * @param T type of the variable to allocate
+ * @return a pointer to the allocated variable
+ */
+thread_local.alloc : T*(T: type) nocomptime = extern
+
+/**
+ * @brief Allocates an array in thread local storage
+ * @param T type of the elements of the array to allocate
+ * @param size the number of elements to allocate
+ * @return a fat pointer to the allocated array
+ */
+thread_local.alloc.array : T[*](T: type, size: usize) nocomptime = extern
+
+/**
+ * @brief Allocates raw memory in thread local storage
+ * @param size amount of memory to allocate
+ * @return a pointer to the start of the allocated memory, or null (0) if it failed
+ */
+thread_local.alloc.impl : u8*(size: usize) nocomptime = extern
+
+/**
+ * @brief Allocates a variable on the heap
+ * @note It is an error to to use this function in the interpretor, use the gc version instead
+ * @param T type of the variable to allocate
+ * @return a pointer to the allocated variable
+ */
+heap.alloc : T*(T: type) nocomptime = extern
+
+/**
+ * @brief Allocates an array on the heap
+ * @note It is an error to to use this function in the interpretor, use the gc version instead
+ * @param T type of the elements of the array to allocate
+ * @param size the number of elements to allocate
+ * @return a fat pointer to the allocated array
+ */
+heap.alloc.array : T[*](T: type, size: usize) nocomptime = extern
+
+/**
+ * @brief Allocates raw memory on the heap
+ * @note It is an error to to use this function in the interpretor, use the gc version instead
+ * @param size amount of memory to allocate
+ * @return a pointer to the start of the allocated memory, or null (0) if it failed
+ */
+heap.alloc.impl : u8*(size: usize) nocomptime = extern
+
+/**
+ * @brief Reallocates an array on the heap
+ * @note It is an error to to use this function in the interpretor, use the gc version instead
+ * @param T type of the elements of the array to allocate
+ * @param a the array to reallocate
+ * @param size the new number of elements to allocate
+ * @return a fat pointer to the allocated array
+ */
+heap.realloc : T[*](T: implicit type, a: T*, size: usize) nocomptime = extern
+
+/**
+ * @brief Reallocates raw memory on the heap
+ * @note It is an error to to use this function in the interpretor, use the gc version instead
+ * @param p pointer to the memory to reallocate
+ * @param size amount of memory to allocate
+ * @return a pointer to the start of the allocated memory, or null (0) if it failed
+ */
+heap.realloc.impl : u8*(p: u8*, size: usize) nocomptime = extern
+
+/**
+ * @brief Frees the memory associated with a heap allocated variable
+ * @note It is an error to to use this function in the interpretor, use the gc version instead
+ * @param T type of the variable to free
+ * @param a the pointer/array to free
+ */
+heap.free : T*(T: implicit type, a: T*) nocomptime = extern
+
+/**
+ * @brief Frees raw memory on the heap
+ * @note It is an error to to use this function in the interpretor, use the gc version instead
+ * @param p pointer to the memory to free
+ * @return true (1) on success, false (0) on failure
+ */
+heap.free.impl : i1(p: u8*) nocomptime = extern
+
+/**
+ * @brief Allocates a garbage collected variable on the heap
+ * @note implementations are allowed to make this function an alias for the heap version and dispatch a warning
+ * @note Will run gc.mark_and_sweep, then tries once more if allocation fails
+ * @param T type of the variable to allocate
+ * @return a pointer to the allocated variable
+ */
+gc.alloc : T*(T: type) nocomptime = extern
+
+/**
+ * @brief Allocates an garbage collected  array on the heap
+ * @note implementations are allowed to make this function an alias for the heap version and dispatch a warning
+ * @note Will run gc.mark_and_sweep, then tries once more if allocation fails
+ * @param T type of the elements of the array to allocate
+ * @param size the number of elements to allocate
+ * @return a fat pointer to the allocated array
+ */
+gc.alloc.array : T[*](T: type, size: usize) nocomptime = extern
+
+/**
+ * @brief Allocates raw garbage collected memory on the heap
+ * @note implementations are allowed to make this function an alias for the heap version and dispatch a warning
+ * @note Will run gc.mark_and_sweep, then tries once more if allocation fails
+ * @param size amount of memory to allocate
+ * @return a pointer to the start of the allocated memory, or null (0) if it failed
+ */
+gc.alloc.impl : u8*(size: usize) nocomptime = extern
+
+/**
+ * @brief Reallocates an garbage collected array on the heap
+ * @note implementations are allowed to make this function an alias for the heap version and dispatch a warning
+ * @note Will run gc.mark_and_sweep, then tries once more if allocation fails
+ * @param T type of the elements of the array to allocate
+ * @param a the array to reallocate
+ * @param size the new number of elements to allocate
+ * @return a fat pointer to the allocated array
+ */
+gc.realloc : T[*](T: implicit type, a: T*, size: usize) nocomptime = extern
+
+/**
+ * @brief Reallocates raw garbage collected memory on the heap
+ * @note implementations are allowed to make this function an alias for the heap version and dispatch a warning
+ * @note Will run gc.mark_and_sweep, then tries once more if allocation fails
+ * @param size amount of memory to allocate
+ * @return a pointer to the start of the allocated memory, or null (0) if it failed
+ */
+gc.realloc.impl : u8*(size: usize) nocomptime = extern
+
+/**
+ * @brief Frees the memory associated with a garbage collected variable
+ * @param T type of the variable to free
+ * @param a the pointer/array to free
+ */
+gc.free : T*(T: implicit type, a: T*) nocomptime = extern
+
+/**
+ * @brief Frees raw garbage collected memory
+ * @param p pointer to the memory to free
+ * @return true (1) on success, false (0) on failure
+ */
+gc.free.impl : i1(p: u8*) nocomptime = extern
+
+/**
+ * @brief Runs mark and sweep garbage collection
+ * @note Will be run automatically if an allocation fails
+ */
+gc.mark_and_sweep : void() nocomptime = extern
+
+
+// Array
+
+
+/**
+ * @brief attempts to determine the length of an array
+ * @param T type of the array
+ * @param p pointer to determine the length of
+ * @returns 0 if p is not a fat pointer, otherwise the length associated with p
+ */
+array.length : usize(T: implicit type, p: T*) = extern
+
+/**
+ * @brief accesses the \p index 'th array element
+ * @param T type of the array elements
+ * @param array the array to index into
+ * @param index the element index to access
+ * @returns &array[index] aka (array + index)
+ */
+array.extract : T*(T: implicit type, array: T*, index: usize) = extern
+/**
+ * @brief accesses the \p index 'th array element and displays an error and [what should happen when bounds checking fails?] on failure
+ * @param T type of the array elements
+ * @param array the array to index into
+ * @param index the element index to access
+ * @returns &array[index] aka (array + index)
+ */
+array.extract.checked : T*(T: implicit type, array: T[*], index: usize) = extern
+/**
+ * @brief accesses the \p index 'th array element and displays an error and [what should happen when bounds checking fails?] on failure
+ * @param T type of the array elements
+ * @param array the array to index into
+ * @param index the element index to access
+ * @param min the minimum bounds (inclusive) of the array
+ * @param max the maximum bounds (inclusive) of the array
+ * @returns &array[index] aka (array + index)
+ */
+array.extract.checked.explicit_bounds : T*(T: implicit type, array: T*, index: usize, min: usize, max: usize) = extern
