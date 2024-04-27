@@ -12,7 +12,7 @@ extern "C" {
 #define fp_dynarray(type) type*
 
 #ifndef FPDA_DEFAULT_SIZE_BYTES
-#define FPDA_DEFAULT_SIZE_BYTES 64
+#define FPDA_DEFAULT_SIZE_BYTES 16
 #endif
 
 struct __FatDynamicArrayHeader {
@@ -116,7 +116,10 @@ void* __fpda_maybe_grow(void** da, size_t type_size, size_t new_size, bool updat
 	}
 
 	auto h = __fpda_header(*da);
-	if(h->h.size >= new_size) return h->h.data + (type_size * (new_size - 1));
+	if(h->h.size >= new_size) {
+		if(update_utilized) h->utilized_size = h->utilized_size > new_size ? h->utilized_size : new_size;
+		return h->h.data + (type_size * (new_size - 1));
+	}
 	
 	size_t size2 = fp_upper_power_of_two(new_size);
 	void* new = __fpda_malloc(type_size * size2);
@@ -134,6 +137,9 @@ void* __fpda_maybe_grow(void** da, size_t type_size, size_t new_size, bool updat
 ;
 #endif
 #define __fpda_maybe_grow_short(a, _size) ((typeof(*a)*)__fpda_maybe_grow((void**)&a, sizeof(*a), (_size), true, false))
+
+#define fpda_front(a) (a)
+#define fpda_back(a) (a + __fpda_header(a)->utilized_size)
 
 #define fpda_reserve(a, _size) ((typeof(*a)*)__fpda_maybe_grow((void**)&a, sizeof(*a), (_size), false, true))
 #define fpda_reserve_void_pointer(a, type_size, _size) (__fpda_maybe_grow((void**)&a, type_size, (_size), false, true))

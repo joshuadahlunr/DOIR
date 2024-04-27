@@ -1,9 +1,9 @@
 #include <assert.h>
-#include <stdint.h>
 #include <stdio.h>
 
 #define FP_IMPLEMENTATION
 #include "fp/dynarray.h"
+#include "fp/bitmask.h"
 
 typedef uint32_t entity_t;
 
