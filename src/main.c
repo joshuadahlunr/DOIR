@@ -6,83 +6,131 @@
 #include "fp/bitmask.h"
 
 typedef uint32_t entity_t;
+typedef size_t doir_skiplist_index_t;
 
-#define CSPrefix(name) doir_component_storage_##name
+#pragma region ComponentStorage
 
-#define DOIRComponentStorageTyped(type) struct {\
-	size_t element_size;\
-	fp_dynarray(type) data; /* Fat pointer dynamic array */\
-}
-typedef DOIRComponentStorageTyped(uint8_t) DOIRComponentStorage;
-
-#define __DOIRComponentStorageTypedCast(type, this) ((DOIRComponentStorageTyped(type)*)(this))
-
-void CSPrefix(default) (DOIRComponentStorage* this) {
-	this->element_size = -1;
-	this->data = nullptr;
-}
-
-void CSPrefix(init_impl) (DOIRComponentStorage* this, size_t element_size) {
-	this->element_size = element_size;
-	this->data = nullptr;
-}
-
-#define doir_component_storage_initial_reservation(type, this, initialSize) (CSPrefix(init_impl)(this, sizeof(type)), fpda_reserve(__DOIRComponentStorageTypedCast(type, this)->data, initialSize))
-#define doir_component_storage_init(type, this) doir_component_storage_initial_reservation(type, this, 5)
-
-void CSPrefix(free) (DOIRComponentStorage* this) {
-	fpda_free(this->data);
-	CSPrefix(default)(this);
-}
-
-size_t CSPrefix(capacity)(DOIRComponentStorage* this) { return fpda_capacity(this->data) / this->element_size; }
-size_t CSPrefix(size)(DOIRComponentStorage* this) { return fpda_size(this->data) / this->element_size; }
-
-void* CSPrefix(get_impl) (DOIRComponentStorage* this, entity_t e, size_t type_size_validator) {
-#ifndef DOIR_COMPONENT_STORAGE_DONT_VALIDATE_TYPE_SIZES
-	assert(type_size_validator == this->element_size);
+#ifdef DOIR_COMPONENT_STORAGE_ENSURE_MONOTONIC_GROWTH
+	#define DOIRComponentStorageTyped(type) struct {\
+		size_t element_size;\
+		fp_dynarray(doir_skiplist_index_t) indecies;\
+		fp_dynarray(type) data; /* Fat pointer dynamic array */\
+		entity_t last_entity;\
+	}
 #else
-	(void)type_size_validator;
+	#define DOIRComponentStorageTyped(type) struct {\
+		size_t element_size;\
+		fp_dynarray(doir_skiplist_index_t) indecies;\
+		fp_dynarray(type) data; /* Fat pointer dynamic array */\
+	}
 #endif
-	assert(e < fpda_size(this->data) / this->element_size);
-	return this->data + e * this->element_size;
-}
-void* CSPrefix(get_no_validation) (DOIRComponentStorage* this, entity_t e) { return CSPrefix(get_impl)(this, e, this->element_size); }
-#define doir_component_storage_get(type, this, e) ((type*)CSPrefix(get_impl)((void*)(this), (e), sizeof(type)))
+	typedef DOIRComponentStorageTyped(uint8_t) DOIRComponentStorage;
 
-void* CSPrefix(allocate_impl)(DOIRComponentStorage* this, size_t count, size_t type_size_validator) {
-#ifndef DOIR_COMPONENT_STORAGE_DONT_VALIDATE_TYPE_SIZES
-	assert(type_size_validator == this->element_size);
-#else
-	(void)type_size_validator;
-#endif
+	#define __DOIRComponentStorageTypedCast(type, this) ((DOIRComponentStorageTyped(type)*)(this))
 
-	fpda_grow(this->data, this->element_size * count);
-	return this->data + fpda_size(this->data) - this->element_size;
-}
-#define doir_component_storage_allocate_count(type, this, count) ((type*)CSPrefix(allocate_impl)((void*)(this), (count), sizeof(type)))
-#define doir_component_storage_allocate(type, this) ((type*)CSPrefix(allocate_impl)((void*)(this), 1, sizeof(type)))
+	void doir_component_storage_default (DOIRComponentStorage* this) {
+		this->element_size = -1;
+		this->indecies = nullptr;
+		this->data = nullptr;
+	#ifdef DOIR_COMPONENT_STORAGE_ENSURE_MONOTONIC_GROWTH
+		this->last_entity = 0;
+	#endif
+	}
 
-void* CSPrefix(get_or_allocate_impl)(DOIRComponentStorage* this, entity_t e, size_t type_size_validator) {
-	size_t size = CSPrefix(size)(this);
-	if (size <= e)
-		CSPrefix(allocate_impl)(this, ((int64_t)e) - size + 1, type_size_validator);
-	return CSPrefix(get_impl)(this, e, type_size_validator);
-}
-#define doir_component_storage_get_or_allocate(type, this, e) ((type*)CSPrefix(get_or_allocate_impl)((void*)(this), (e), sizeof(type)))
+	void doir_component_storage_init_impl (DOIRComponentStorage* this, size_t element_size) {
+		this->element_size = element_size;
+		this->indecies = nullptr;
+		this->data = nullptr;
+	#ifdef DOIR_COMPONENT_STORAGE_ENSURE_MONOTONIC_GROWTH
+		this->last_entity = 0;
+	#endif
+	}
 
+	#define doir_component_storage_initial_reservation(type, this, initialSize) (doir_component_storage_init_impl(this, sizeof(type)), fpda_reserve(__DOIRComponentStorageTypedCast(type, this)->data, initialSize))
+	#define doir_component_storage_init(type, this) doir_component_storage_initial_reservation(type, this, 5)
+
+	void doir_component_storage_free (DOIRComponentStorage* this) {
+		if(this->indecies) fpda_free(this->indecies);
+		if(this->data) fpda_free(this->data);
+		doir_component_storage_default(this);
+	}
+
+	size_t doir_component_storage_capacity(DOIRComponentStorage* this) { return fpda_capacity(this->indecies); }
+	size_t doir_component_storage_size(DOIRComponentStorage* this) { return fpda_size(this->indecies); }
+
+	void* doir_component_storage_get_impl(DOIRComponentStorage* this, entity_t e, size_t type_size_validator) {
+	#ifndef DOIR_COMPONENT_STORAGE_DONT_VALIDATE_TYPE_SIZES
+		assert(type_size_validator == this->element_size);
+	#else
+		(void)type_size_validator;
+	#endif
+		assert(e < doir_component_storage_size(this));
+		assert(this->indecies[e] != (size_t)-1);
+		return this->data + this->indecies[e];
+	}
+	void* doir_component_storage_get_no_validation_impl(DOIRComponentStorage* this, entity_t e) { return doir_component_storage_get_impl(this, e, this->element_size); }
+	#define doir_component_storage_get(type, this, e) ((type*)doir_component_storage_get_impl((void*)(this), (e), sizeof(type)))
+	#define doir_component_storage_get_no_validation(type, this, e) ((type*)doir_component_storage_get_no_validation_impl((void*)(this), (e)))
+
+	struct doir_component_storage_allocate_raw_impl_return_t {void* ret; size_t i;}
+		doir_component_storage_allocate_raw_impl(DOIRComponentStorage* this, size_t type_size_validator)
+	{
+	#ifndef DOIR_COMPONENT_STORAGE_DONT_VALIDATE_TYPE_SIZES
+		assert(type_size_validator == this->element_size);
+	#else
+		(void)type_size_validator;
+	#endif
+
+		fpda_grow(this->data, this->element_size);
+		return (struct doir_component_storage_allocate_raw_impl_return_t){
+			this->data + fpda_size(this->data) - this->element_size,
+			(fpda_size(this->data) - 1) / this->element_size
+		};
+	}
+
+	void* doir_component_storage_allocate_impl(DOIRComponentStorage* this, entity_t e, size_t type_size_validator) {
+	#ifdef DOIR_COMPONENT_STORAGE_ENSURE_MONOTONIC_GROWTH
+		assert(e >= this->last_entity);
+		this->last_entity = e;
+	#endif
+		auto res = doir_component_storage_allocate_raw_impl(this, type_size_validator);
+		if (fpda_size(this->indecies) <= e) {
+			auto start = fpda_size(this->indecies);
+			fpda_grow(this->indecies, ((int64_t)e) - fpda_size(this->indecies) + 1);
+			for(auto cur = this->indecies + start; cur < fpda_back(this->indecies); cur++)
+				*cur = (doir_skiplist_index_t)-1;
+		}
+		this->indecies[e] = res.i * this->element_size;
+		return res.ret;
+	}
+	#define doir_component_storage_allocate(type, this, e) ((type*)doir_component_storage_allocate_impl((void*)(this), (e), sizeof(type)))
+
+	void* doir_component_storage_get_or_allocate_impl(DOIRComponentStorage* this, entity_t e, size_t type_size_validator) {
+		if (fpda_size(this->indecies) <= e || this->indecies[e] == (doir_skiplist_index_t)-1)
+			return doir_component_storage_allocate_impl(this, e, type_size_validator);
+		return doir_component_storage_get_impl(this, e, type_size_validator);
+	}
+	#define doir_component_storage_get_or_allocate(type, this, e) ((type*)doir_component_storage_get_or_allocate_impl((void*)(this), (e), sizeof(type)))
+
+#pragma endregion ComponentStorage
 
 
 int main() {
 	DOIRComponentStorage s;
 	doir_component_storage_init(int, &s);
 	*doir_component_storage_get_or_allocate(int, &s, 100) = 5;
+	*doir_component_storage_get_or_allocate(int, &s, 50) = 5;
 
 	DOIRComponentStorageTyped(int)* typed = &s;
 	int cap = fpda_capacity(typed->data) / typed->element_size;
 	int size = fpda_size(typed->data) / typed->element_size;
+	cap = fpda_capacity(typed->indecies);
+	size = fpda_size(typed->indecies);
 	auto five = *doir_component_storage_get_or_allocate(int, typed, 100);
-	five = typed->data[100];
+	five = *(int*)(s.data + typed->indecies[100]);
+
+	auto a = typed->indecies[50];
+	auto b = typed->indecies[100];
 
 	doir_component_storage_free(&s);
 }
