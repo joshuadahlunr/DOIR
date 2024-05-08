@@ -16,7 +16,7 @@ extern "C" {
 #endif
 
 struct __FatDynamicArrayHeader {
-	size_t utilized_size;
+	size_t capacity;
 	struct __FatPointerHeader h;
 };
 
@@ -24,7 +24,7 @@ struct __FatDynamicArrayHeader* __fpda_header(void* da)
 #ifdef FP_IMPLEMENTATION
 {
 	static struct __FatDynamicArrayHeader ref = {
-		.utilized_size = 0,
+		.capacity = 0,
 		.h = {
 			.magic = 0,
 			.size = 0,
@@ -49,9 +49,9 @@ void* __fpda_malloc(size_t _size)
 	p += sizeof(struct __FatDynamicArrayHeader);
 	if(!p) return 0;
 	auto h = __fpda_header(p);
-	h->utilized_size = 0;
+	h->capacity = _size;
 	h->h.magic = FP_MAGIC_NUMBER;
-	h->h.size = _size;
+	h->h.size = 0;
 	h->h.data[_size] = 0;
 	return p;
 }
@@ -76,17 +76,14 @@ void fpda_free(void* da)
 
 size_t fpda_length(void* da) 
 #ifdef FP_IMPLEMENTATION
-{
-	if(!is_fp(da)) return 0;
-	return __fpda_header(da)->utilized_size;
-}
+{ return fp_length(da); }
 #else
 ;
 #endif
 
 size_t fpda_size(void* da) 
 #ifdef FP_IMPLEMENTATION
-{ return fpda_length(da); }
+{ return fp_size(da); }
 #else
 ;
 #endif
@@ -95,7 +92,7 @@ size_t fpda_capacity(void* da)
 #ifdef FP_IMPLEMENTATION
 {
 	if(!is_fp(da)) return 0;
-	return __fpda_header(da)->h.size;
+	return __fpda_header(da)->capacity;
 }
 #else
 ;
@@ -106,18 +103,18 @@ void* __fpda_maybe_grow(void** da, size_t type_size, size_t new_size, bool updat
 {
 	if(*da == nullptr) {
 		size_t initial_size = FPDA_DEFAULT_SIZE_BYTES / type_size;
-		if(initial_size == 0) initial_size++;
+		if(initial_size == 0) initial_size++; // If the size would wind up being 0, make sure the initial size is 1
 		*da = __fpda_malloc(initial_size * type_size);
 		auto h = __fpda_header(*da);
-		h->h.size = initial_size;
+		h->capacity /= type_size;
 		if(update_utilized)
-			h->utilized_size = h->utilized_size > new_size ? h->utilized_size : new_size;
-		else h->utilized_size = 0;
+			h->h.size = h->h.size > new_size ? h->h.size : new_size;
+		else h->h.size = 0;
 	}
 
 	auto h = __fpda_header(*da);
-	if(h->h.size >= new_size) {
-		if(update_utilized) h->utilized_size = h->utilized_size > new_size ? h->utilized_size : new_size;
+	if(h->capacity >= new_size) {
+		if(update_utilized) h->h.size = h->h.size > new_size ? h->h.size : new_size;
 		return h->h.data + (type_size * (new_size - 1));
 	}
 	
@@ -125,8 +122,8 @@ void* __fpda_maybe_grow(void** da, size_t type_size, size_t new_size, bool updat
 	void* new = __fpda_malloc(type_size * size2);
 	auto newH = __fpda_header(new);
 	if(update_utilized)
-		newH->utilized_size = h->utilized_size > new_size ? h->utilized_size : new_size;
-	newH->h.size = size2;
+		newH->h.size = h->h.size > new_size ? h->h.size : new_size;
+	newH->capacity = size2;
 	memcpy(newH->h.data, h->h.data, type_size * size2);
 
 	fpda_free(*da);
@@ -139,7 +136,7 @@ void* __fpda_maybe_grow(void** da, size_t type_size, size_t new_size, bool updat
 #define __fpda_maybe_grow_short(a, _size) ((typeof(*a)*)__fpda_maybe_grow((void**)&a, sizeof(*a), (_size), true, false))
 
 #define fpda_front(a) (a)
-#define fpda_back(a) (a + __fpda_header(a)->utilized_size)
+#define fpda_back(a) (a + fpda_size(a))
 
 #define fpda_reserve(a, _size) ((typeof(*a)*)__fpda_maybe_grow((void**)&a, sizeof(*a), (_size), false, true))
 #define fpda_reserve_void_pointer(a, type_size, _size) (__fpda_maybe_grow((void**)&a, type_size, (_size), false, true))
@@ -148,7 +145,7 @@ void* __fpda_maybe_grow(void** da, size_t type_size, size_t new_size, bool updat
 #define fpda_push_back(a, _value) (*__fpda_maybe_grow_short(a, __fpda_header(a)->utilized_size += 1) = (_value))
 
 // Marks the last element of the array as gone and returns a pointer to it
-#define fpda_pop_back(a) (__fpda_maybe_grow_short(a, __fpda_header(a)->utilized_size <= 0 ? 0 : __fpda_header(a)->utilized_size -= 1) + 1)
+#define fpda_pop_back(a) (__fpda_maybe_grow_short(a, __fpda_header(a)->h.size <= 0 ? 0 : __fpda_header(a)->h.size -= 1) + 1)
 
 	//   arrins:
 	// 	T arrins(T* a, int p, T b);
