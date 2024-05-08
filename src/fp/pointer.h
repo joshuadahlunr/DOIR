@@ -26,7 +26,7 @@ extern "C" {
 			free(p);
 			return nullptr;
 		}
-		
+
 		return realloc(p, size);
 	}
 	#else
@@ -36,7 +36,7 @@ extern "C" {
 #endif
 
 // From: https://stackoverflow.com/a/466278
-size_t fp_upper_power_of_two(size_t v) 
+size_t fp_upper_power_of_two(size_t v)
 #ifdef FP_IMPLEMENTATION
 {
     v--;
@@ -60,6 +60,17 @@ struct __FatPointerHeader {
 	char data[];
 };
 
+#define FP_CONCAT_(x,y) x##y
+#define FP_CONCAT(x,y) FP_CONCAT_(x,y)
+
+#ifndef __cplusplus
+#define FP_TYPE_OF(x) typeof(x)
+#else
+#include <type_traits>
+#define FP_TYPE_OF(x) std::remove_reference<decltype(x)>::type
+#endif
+
+#ifndef __cplusplus
 #define fp_salloc(type, _size) ((type*)(((char*)&(struct {\
 		unsigned char magic;\
 		size_t size;\
@@ -69,8 +80,15 @@ struct __FatPointerHeader {
 		.size = (_size),\
 		.data = {0}\
 	}) + sizeof(struct __FatPointerHeader)))
+#else
+#define fp_salloc(type, _size) ((type*)((char*)&((*(__FatPointerHeader*)alloca(sizeof(__FatPointerHeader) + sizeof(type) * _size)) = \
+    __FatPointerHeader {\
+		.magic = FP_MAGIC_NUMBER,\
+		.size = (_size),\
+	}) + sizeof(struct __FatPointerHeader)))
+#endif
 
-struct __FatPointerHeader* __fp_header(void* _p)
+struct __FatPointerHeader* __fp_header(const void* _p)
 #ifdef FP_IMPLEMENTATION
 {
 	char* p = (char*)_p;
@@ -82,11 +100,11 @@ struct __FatPointerHeader* __fp_header(void* _p)
 #endif
 
 
-void* __fp_alloc(void* _p, size_t _size) 
+void* __fp_alloc(void* _p, size_t _size)
 #ifdef FP_IMPLEMENTATION
 {
 	if(_p == nullptr && _size == 0) return nullptr;
-	if(_size == 0) 
+	if(_size == 0)
 		return FP_ALLOCATION_FUNCTION(__fp_header(_p), 0);
 
 	size_t size = sizeof(struct __FatPointerHeader) + _size + 1;
@@ -103,7 +121,7 @@ void* __fp_alloc(void* _p, size_t _size)
 ;
 #endif
 
-void* __fp_malloc(size_t size) 
+void* __fp_malloc(size_t size)
 #ifdef FP_IMPLEMENTATION
 { return __fp_alloc(nullptr, size); }
 #else
@@ -120,7 +138,7 @@ void* __fp_malloc(size_t size)
 	.size = (_size),\
 }).data))
 
-bool is_fp(void* p) 
+bool is_fp(const void* p)
 #ifdef FP_IMPLEMENTATION
 {
 	if(p == nullptr) return false;
@@ -138,7 +156,7 @@ void fp_free(void* p)
 ;
 #endif
 
-size_t fp_length(void* p) 
+size_t fp_length(const void* p)
 #ifdef FP_IMPLEMENTATION
 {
 	if(!is_fp(p)) return 0;
@@ -148,7 +166,7 @@ size_t fp_length(void* p)
 ;
 #endif
 
-size_t fp_size(void* p) 
+size_t fp_size(const void* p)
 #ifdef FP_IMPLEMENTATION
 { return fp_length(p); }
 #else

@@ -14,17 +14,18 @@ extern "C" {
 #define FP_BITMASK_BLOCK_SIZE (sizeof(FP_BITMASK_BLOCK_TYPE) * 8)
 typedef FP_BITMASK_BLOCK_TYPE* fp_bitmask_t;
 
-void fp_bitmask_init_impl(fp_bitmask_t* this)
+void fp_bitmask_init_impl(fp_bitmask_t* self)
 #ifdef FP_IMPLEMENTATION
 {
-	fpda_resize(*this, 1);
-	(*this)[0] = 0;
+	fpda_resize(*self, 1);
+	(*self)[0] = 0;
 }
 #else
 ;
 #endif
-#define fp_bitmask_init(this) fp_bitmask_init_impl(&this)
-#define fp_bitmask_free(this) fpda_free(this)
+#define fp_bitmask_init(self) fp_bitmask_init_impl(&self)
+#define fp_bitmask_init_as_null(self) do { self = nullptr; fp_bitmask_init(self); } while(false)
+#define fp_bitmask_free(self) fpda_free(self)
 
 size_t fp_bitmask_find_highest_set(fp_bitmask_t self)
 #ifdef FP_IMPLEMENTATION
@@ -32,9 +33,9 @@ size_t fp_bitmask_find_highest_set(fp_bitmask_t self)
 	for(size_t block = fpda_size(self); block--; ) {
 		if(self[block] == 0) continue;
 		// Scary UB from: https://stackoverflow.com/a/23857066
-		union { double ddd; int64_t uu; } u; 
-		u.ddd = self[block] + 0.5; 
-		auto dbg = FP_BITMASK_BLOCK_SIZE - 1 - (1054 - (int)(u.uu >> 52)) + block * FP_BITMASK_BLOCK_SIZE;// + (block == 0 ? 2 : 1);
+		union { double ddd; int64_t uu; } u;
+		u.ddd = self[block] + 0.5;
+		auto dbg = FP_BITMASK_BLOCK_SIZE - 1 - (1054 - (int)(u.uu >> 52)) + block * FP_BITMASK_BLOCK_SIZE;
 		return dbg;
 	}
 	return 0;
@@ -43,26 +44,26 @@ size_t fp_bitmask_find_highest_set(fp_bitmask_t self)
 ;
 #endif
 
-bool fp_bitmask_test(fp_bitmask_t this, size_t offset)
+bool fp_bitmask_test(fp_bitmask_t self, size_t offset)
 #ifdef FP_IMPLEMENTATION
 {
-	if(offset / FP_BITMASK_BLOCK_SIZE > fpda_size(this)) return false;
+	if(offset / FP_BITMASK_BLOCK_SIZE > fpda_size(self)) return false;
 
 	size_t block = offset / FP_BITMASK_BLOCK_SIZE;
 	offset %= FP_BITMASK_BLOCK_SIZE;
-	return this[block] & (1 << offset);
+	return self[block] & (1 << offset);
 }
 #else
 ;
 #endif
 
-bool fp_bitmask_test_alln(fp_bitmask_t this, size_t* offsets, size_t length)
+bool fp_bitmask_test_alln(fp_bitmask_t self, size_t* offsets, size_t length)
 #ifdef FP_IMPLEMENTATION
 {
 	bool all = true;
 	for(size_t i = length; --i; ){
 		if(offsets[i] == (size_t)-1) continue;
-		all &= fp_bitmask_test(this, offsets[i]);
+		all &= fp_bitmask_test(self, offsets[i]);
 		if(!all) return false;
 	}
 	return all;
@@ -70,22 +71,22 @@ bool fp_bitmask_test_alln(fp_bitmask_t this, size_t* offsets, size_t length)
 #else
 ;
 #endif
-bool fp_bitmask_test_all(fp_bitmask_t this, size_t* offsets)
+bool fp_bitmask_test_all(fp_bitmask_t self, size_t* offsets)
 #ifdef FP_IMPLEMENTATION
 {
 	if(!is_fp(offsets)) return false;
-	return fp_bitmask_test_alln(this, offsets, fp_size(offsets));
+	return fp_bitmask_test_alln(self, offsets, fp_size(offsets));
 }
 #else
 ;
 #endif
 
-bool fp_bitmask_test_anyn(fp_bitmask_t this, size_t* offsets, size_t length)
+bool fp_bitmask_test_anyn(fp_bitmask_t self, size_t* offsets, size_t length)
 #ifdef FP_IMPLEMENTATION
 {
 	for(size_t i = length; --i; ){
 		if(offsets[i] == (size_t)-1) continue;
-		if(fp_bitmask_test(this, offsets[i]))
+		if(fp_bitmask_test(self, offsets[i]))
 			return true;
 	}
 	return false;
@@ -93,56 +94,56 @@ bool fp_bitmask_test_anyn(fp_bitmask_t this, size_t* offsets, size_t length)
 #else
 ;
 #endif
-bool fp_bitmask_test_any(fp_bitmask_t this, size_t* offsets)
+bool fp_bitmask_test_any(fp_bitmask_t self, size_t* offsets)
 #ifdef FP_IMPLEMENTATION
 {
 	if(!is_fp(offsets)) return false;
-	return fp_bitmask_test_anyn(this, offsets, fp_size(offsets));
+	return fp_bitmask_test_anyn(self, offsets, fp_size(offsets));
 }
 #else
 ;
 #endif
 
-char* fp_bitmask_to_string_extended(fp_bitmask_t this, size_t offset, size_t length)
+char* fp_bitmask_to_string_extended(fp_bitmask_t self, size_t offset, size_t length)
 #ifdef FP_IMPLEMENTATION
 {
-	assert((offset + length) / FP_BITMASK_BLOCK_SIZE <= fpda_size(this));
+	assert((offset + length) / FP_BITMASK_BLOCK_SIZE <= fpda_size(self));
 	char* str = nullptr;
 	fpda_resize(str, length);
-	for(size_t i = length; i--; ) {
-		bool test = fp_bitmask_test(this, offset + i);
-		str[length - i - 1] =  test ? '1' : '0';
-	}
+	// if(length == 1) str[0] = fp_bitmask_test(self, 0) ? '1' : '0';
+	// else
+	for(size_t i = length; i--; )
+		str[length - i - 1] = fp_bitmask_test(self, offset + i) ? '1' : '0';
 	return str;
 }
 #else
 ;
 #endif
 
-char* fp_bitmask_to_string(fp_bitmask_t this)
+char* fp_bitmask_to_string(fp_bitmask_t self)
 #ifdef FP_IMPLEMENTATION
 { auto highest = fp_bitmask_find_highest_set(self); return fp_bitmask_to_string_extended(self, 0, highest > 1 ? highest + 1: 1); }
 #else
 ;
 #endif
 
-void fp_bitmask_set_state_impl(fp_bitmask_t* this, size_t offset, bool value)
+void fp_bitmask_set_state_impl(fp_bitmask_t* self, size_t offset, bool value)
 #ifdef FP_IMPLEMENTATION
 {
-	if(offset / FP_BITMASK_BLOCK_SIZE > fpda_size(this))
-		fpda_resize(*this, offset / FP_BITMASK_BLOCK_SIZE + 1);
+	if(offset / FP_BITMASK_BLOCK_SIZE > fpda_size(self))
+		fpda_resize(*self, offset / FP_BITMASK_BLOCK_SIZE + 1);
 
 	size_t block = offset / FP_BITMASK_BLOCK_SIZE;
 	offset %= FP_BITMASK_BLOCK_SIZE;
-	if(value) (*this)[block] |= (1 << offset);
-	else (*this)[block] &= ~(1 << offset);
+	if(value) (*self)[block] |= (1 << offset);
+	else (*self)[block] &= ~(1 << offset);
 }
 #else
 ;
 #endif
-#define fp_bitmask_set_state(this, offset, value) fp_bitmask_set_state_impl(&this, (offset), (value))
-#define fp_bitmask_set(this, offset) fp_bitmask_set_state(this, offset, true)
-#define fp_bitmask_reset(this, offset) fp_bitmask_set_state(this, offset, false)
+#define fp_bitmask_set_state(self, offset, value) fp_bitmask_set_state_impl(&self, (offset), (value))
+#define fp_bitmask_set(self, offset) fp_bitmask_set_state(self, offset, true)
+#define fp_bitmask_reset(self, offset) fp_bitmask_set_state(self, offset, false)
 
 bool fp_bitmask_from_binary_stringn_impl(fp_bitmask_t* self, const char* str, size_t length)
 #ifdef FP_IMPLEMENTATION

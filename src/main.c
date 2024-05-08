@@ -13,14 +13,14 @@ typedef size_t doir_skiplist_index_t;
 #ifdef DOIR_COMPONENT_STORAGE_ENSURE_MONOTONIC_GROWTH
 	#define DOIRComponentStorageTyped(type) struct {\
 		size_t element_size;\
-		fp_dynarray(doir_skiplist_index_t) indecies;\
+		fp_dynarray(doir_skiplist_index_t) indices;\
 		fp_dynarray(type) data; /* Fat pointer dynamic array */\
 		entity_t last_entity;\
 	}
 #else
 	#define DOIRComponentStorageTyped(type) struct {\
 		size_t element_size;\
-		fp_dynarray(doir_skiplist_index_t) indecies;\
+		fp_dynarray(doir_skiplist_index_t) indices;\
 		fp_dynarray(type) data; /* Fat pointer dynamic array */\
 	}
 #endif
@@ -30,7 +30,7 @@ typedef size_t doir_skiplist_index_t;
 
 	void doir_component_storage_default (DOIRComponentStorage* this) {
 		this->element_size = -1;
-		this->indecies = nullptr;
+		this->indices = nullptr;
 		this->data = nullptr;
 	#ifdef DOIR_COMPONENT_STORAGE_ENSURE_MONOTONIC_GROWTH
 		this->last_entity = 0;
@@ -39,7 +39,7 @@ typedef size_t doir_skiplist_index_t;
 
 	void doir_component_storage_init_impl (DOIRComponentStorage* this, size_t element_size) {
 		this->element_size = element_size;
-		this->indecies = nullptr;
+		this->indices = nullptr;
 		this->data = nullptr;
 	#ifdef DOIR_COMPONENT_STORAGE_ENSURE_MONOTONIC_GROWTH
 		this->last_entity = 0;
@@ -50,13 +50,13 @@ typedef size_t doir_skiplist_index_t;
 	#define doir_component_storage_init(type, this) doir_component_storage_initial_reservation(type, this, 5)
 
 	void doir_component_storage_free (DOIRComponentStorage* this) {
-		if(this->indecies) fpda_free(this->indecies);
+		if(this->indices) fpda_free(this->indices);
 		if(this->data) fpda_free(this->data);
 		doir_component_storage_default(this);
 	}
 
-	size_t doir_component_storage_capacity(DOIRComponentStorage* this) { return fpda_capacity(this->indecies); }
-	size_t doir_component_storage_size(DOIRComponentStorage* this) { return fpda_size(this->indecies); }
+	size_t doir_component_storage_capacity(DOIRComponentStorage* this) { return fpda_capacity(this->indices); }
+	size_t doir_component_storage_size(DOIRComponentStorage* this) { return fpda_size(this->indices); }
 
 	void* doir_component_storage_get_impl(DOIRComponentStorage* this, entity_t e, size_t type_size_validator) {
 	#ifndef DOIR_COMPONENT_STORAGE_DONT_VALIDATE_TYPE_SIZES
@@ -65,8 +65,8 @@ typedef size_t doir_skiplist_index_t;
 		(void)type_size_validator;
 	#endif
 		assert(e < doir_component_storage_size(this));
-		assert(this->indecies[e] != (size_t)-1);
-		return this->data + this->indecies[e];
+		assert(this->indices[e] != (size_t)-1);
+		return this->data + this->indices[e];
 	}
 	void* doir_component_storage_get_no_validation_impl(DOIRComponentStorage* this, entity_t e) { return doir_component_storage_get_impl(this, e, this->element_size); }
 	#define doir_component_storage_get(type, this, e) ((type*)doir_component_storage_get_impl((void*)(this), (e), sizeof(type)))
@@ -94,19 +94,19 @@ typedef size_t doir_skiplist_index_t;
 		this->last_entity = e;
 	#endif
 		auto res = doir_component_storage_allocate_raw_impl(this, type_size_validator);
-		if (fpda_size(this->indecies) <= e) {
-			auto start = fpda_size(this->indecies);
-			fpda_grow(this->indecies, ((int64_t)e) - fpda_size(this->indecies) + 1);
-			for(auto cur = this->indecies + start; cur < fpda_back(this->indecies); cur++)
+		if (fpda_size(this->indices) <= e) {
+			auto start = fpda_size(this->indices);
+			fpda_grow(this->indices, ((int64_t)e) - fpda_size(this->indices) + 1);
+			for(auto cur = this->indices + start; cur < fpda_back(this->indices); cur++)
 				*cur = (doir_skiplist_index_t)-1;
 		}
-		this->indecies[e] = res.i * this->element_size;
+		this->indices[e] = res.i * this->element_size;
 		return res.ret;
 	}
 	#define doir_component_storage_allocate(type, this, e) ((type*)doir_component_storage_allocate_impl((void*)(this), (e), sizeof(type)))
 
 	void* doir_component_storage_get_or_allocate_impl(DOIRComponentStorage* this, entity_t e, size_t type_size_validator) {
-		if (fpda_size(this->indecies) <= e || this->indecies[e] == (doir_skiplist_index_t)-1)
+		if (fpda_size(this->indices) <= e || this->indices[e] == (doir_skiplist_index_t)-1)
 			return doir_component_storage_allocate_impl(this, e, type_size_validator);
 		return doir_component_storage_get_impl(this, e, type_size_validator);
 	}
@@ -124,13 +124,13 @@ int main() {
 	DOIRComponentStorageTyped(int)* typed = &s;
 	int cap = fpda_capacity(typed->data) / typed->element_size;
 	int size = fpda_size(typed->data) / typed->element_size;
-	cap = fpda_capacity(typed->indecies);
-	size = fpda_size(typed->indecies);
+	cap = fpda_capacity(typed->indices);
+	size = fpda_size(typed->indices);
 	auto five = *doir_component_storage_get_or_allocate(int, typed, 100);
-	five = *(int*)(s.data + typed->indecies[100]);
+	five = *(int*)(s.data + typed->indices[100]);
 
-	auto a = typed->indecies[50];
-	auto b = typed->indecies[100];
+	auto a = typed->indices[50];
+	auto b = typed->indices[100];
 
 	doir_component_storage_free(&s);
 }
