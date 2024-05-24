@@ -8,6 +8,7 @@ extern "C" {
 #include <stddef.h>
 #include <stdlib.h>
 #include <stdbool.h>
+#include <assert.h>
 
 #ifndef FP_ALLOCATION_FUNCTION
 	/**
@@ -172,6 +173,71 @@ size_t fp_size(const void* p)
 #else
 ;
 #endif
+
+#define fp_iterate_named(a, iter) for(auto __fp_start = (a), iter = __fp_start; iter < __fp_start + fp_length(__fp_start); iter++)
+#define fp_iterate(a) fpda_iterate_named(a, i)
+
+
+
+#ifdef __cplusplus
+}
+
+template<typename T>
+struct __fp_view {
+	T* data;
+	size_t size;
+
+	template<typename To>
+	explicit operator __fp_view<To>() { return {(To*)data, size}; }
+};
+#define fp_view(type) __fp_view<type>
+typedef fp_view(void) fp_void_view;
+
+template<typename T>
+union __fp_pointer_or_view {
+	fp_view(T) view;
+	T* p;
+};
+#define fp_pointer_or_view(type) __fp_pointer_or_view<type>
+
+extern "C" {
+#else
+#define fp_view(type) struct {\
+	type* data;\
+	size_t size;\
+}
+typedef fp_view(void) fp_void_view;
+
+#define fp_pointer_or_view(type) union {\
+	fp_view(type) view;\
+	type* p;\
+}
+#endif
+
+
+fp_void_view __fp_make_view(void* p, size_t type_size, size_t start, size_t length)
+#ifdef FP_IMPLEMENTATION
+{
+	assert(start + length < fp_size(p)); 
+	return (fp_void_view){((char*)p) + type_size * start, length};
+}
+#else
+;
+#endif
+#define fp_view_make(p, start, length) ((fp_view(FP_TYPE_OF(*(p))))__fp_make_view((p), sizeof(*(p)), (start), (length)))
+#define fp_view_make_full(p) fp_make_view(p, 0, fp_size(p))
+#define fp_view_make_start_end(p, start, end) fp_view_make(p, (start), ((end) - (start) + 1))
+
+// TODO: Support making views from views?
+
+#define fp_view_length(view) ((view).size)
+#define fp_view_size(view) fp_view_length(view)
+#define fp_view_data(view) ((view).data)
+#define fp_view_access(view, index) (assert((index) < fp_view_length(view)), fp_view_data(view) + (index))
+#define fp_view_subscript(view, index) fp_view_access(view, index)
+
+#define fp_view_iterate_named(view, iter) for(auto __fp_start = fp_view_data(view), iter = __fp_start; iter < __fp_start + fp_view_length(view); iter++)
+#define fp_view_iterate(view) fp_view_iterate_named((view), i)
 
 #ifdef __cplusplus
 }

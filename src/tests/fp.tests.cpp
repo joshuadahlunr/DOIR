@@ -28,6 +28,19 @@ TEST_SUITE("LibFP") {
 		fp_free(arr);
 	}
 
+	TEST_CASE("View") {
+		int* arr = fp_salloc(int, 20);
+		arr[10] = 6;
+
+		auto view = fp_view_make(arr, 10, 3);
+		CHECK(fp_view_size(view) == 3);
+		CHECK(*fp_view_access(view, 0) == 6);
+		*fp_view_access(view, 1) = 6;
+		*fp_view_access(view, 2) = 6;
+
+		fp_view_iterate(view) CHECK(*i == 6);
+	}
+
 	TEST_CASE("Dynamic Array - Basic") {
 		fp_dynarray(int) arr = nullptr;
 		fpda_reserve(arr, 20);

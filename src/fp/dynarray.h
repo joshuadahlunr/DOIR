@@ -6,7 +6,6 @@ extern "C" {
 #endif
 
 #include "pointer.h"
-#include <assert.h>
 #include <string.h>
 
 #define fp_dynarray(type) type*
@@ -294,9 +293,6 @@ void __fpda_clone(void** dest, void* src, size_t type_size)
 
 #define fpda_clone(dest, src) __fpda_clone((void**)&dest, (src), sizeof(*dest))
 #define fpda_copy(dest, src) fpda_clone(dest, src)
-
-#define fpda_iterate_named(a, iter) for(auto __fp_start = (a), iter = __fp_start; iter < __fp_start + fpda_size(__fp_start); iter++)
-#define fpda_iterate(a) fpda_iterate_named(a, i)
 
 #ifdef __cplusplus
 }
