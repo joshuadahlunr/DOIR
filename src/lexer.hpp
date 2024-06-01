@@ -6,7 +6,7 @@
 	#include "../thirdparty/ctre.hpp"
 #endif
 
-namespace lex {
+namespace doir { inline namespace lex {
 	namespace detail {
 		template<size_t N>
 		struct string_literal {
@@ -333,4 +333,4 @@ namespace lex {
 	template<typename CharT>
 	using basic_lexer_generic_result = basic_lexer<CharT, heads::null>::result;
 	using lexer_generic_result = basic_lexer_generic_result<char>;
-}
+}}
