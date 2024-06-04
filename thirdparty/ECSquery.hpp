@@ -27,8 +27,8 @@
 #define __ECS_QUERY_HPP__
 
 #include "ECS.hpp"
-#include <compare>
 #include <ranges>
+#include <variant>
 
 /**
 * @file ecs_query.hpp
@@ -36,11 +36,74 @@
 */
 
 namespace ecs {
-	/**
-	* @typedef post_increment_t
-	* @brief A type alias for an integer representing a post-increment operation.
-	*/
-	using post_increment_t = int;
+	template<typename... Tcomponents>
+	struct or_{};
+	template<typename... Tcomponents>
+	using Or = or_<Tcomponents...>;
+
+	namespace detail {
+		/**
+		* @typedef post_increment_t
+		* @brief A type alias for an integer representing a post-increment operation.
+		*/
+		using post_increment_t = int;
+
+		template<typename>
+		struct is_optional: public std::false_type {};
+		template<typename T>
+		struct is_optional<optional<T>> : public std::true_type {};
+		template<typename T>
+		static constexpr bool is_optional_v = is_optional<T>::value;
+
+		template<typename>
+		struct is_or: public std::false_type {};
+		template<typename... Ts>
+		struct is_or<or_<Ts...>> : public std::true_type {};
+		template<typename T>
+		static constexpr bool is_or_v = is_or<T>::value;
+
+
+		template<typename T>
+		struct add_reference { using type = std::add_lvalue_reference_t<T>; };
+		template<typename T>
+		struct add_reference<std::optional<T>> { using type = optional_reference<T>; };
+		template<typename T>
+		using add_reference_t = typename add_reference<T>::type;
+
+		template<typename T>
+		struct reference_to_wrapper { using type = T; };
+		template<typename T>
+		struct reference_to_wrapper<T&> { using type = std::reference_wrapper<T>; };
+		template<typename T>
+		struct reference_to_wrapper<T&&> { using type = std::reference_wrapper<T>; };
+		// template<typename T>
+		// struct reference_to_wrapper<std::reference_wrapper<T>> { using type = std::reference_wrapper<T>; };
+		template<typename T>
+		using reference_to_wrapper_t = typename reference_to_wrapper<T>::type;
+
+		template<typename T>
+		struct or_to_variant { using type = T; };
+		template<typename... Ts>
+		struct or_to_variant<or_<Ts...>> { using type = std::variant<std::monostate, typename or_to_variant<Ts>::type...>; };
+		template<typename T>
+		using or_to_variant_t = typename or_to_variant<T>::type;
+
+		template<typename T>
+		struct or_to_variant_reference { using type = add_reference_t<T>; };
+		template<typename... Ts>
+		struct or_to_variant_reference<or_<Ts...>> { using type = std::variant<std::monostate, reference_to_wrapper_t<typename or_to_variant_reference<Ts>::type>...>; };
+		template<typename T>
+		using or_to_variant_reference_t = typename or_to_variant_reference<T>::type;
+
+		template<typename T>
+		struct or_to_tuple { using type = T; };
+		template<typename... Ts>
+		struct or_to_tuple<or_<Ts...>> { using type = std::tuple<std::decay_t<or_to_variant_reference_t<Ts>>...>; };
+		template<typename T>
+		using or_to_tuple_t = typename or_to_tuple<T>::type;
+	}
+
+
 
 	/**
 	* @struct scene_view
@@ -66,8 +129,8 @@ namespace ecs {
 		*/
 		struct Iterator {
 			using difference_type = std::ptrdiff_t; /**< The type of the difference between two iterators. */
-			using value_type = std::tuple<Tcomponents...>; /**< The type of the values returned by the iterator. */
-			using reference = std::tuple<std::add_lvalue_reference_t<Tcomponents>...>; /**< The type of the references returned by the iterator. */
+			using value_type = std::tuple<detail::or_to_variant_t<Tcomponents>...>; /**< The type of the values returned by the iterator. */
+			using reference = std::tuple<detail::or_to_variant_reference_t<Tcomponents>...>; /**< The type of the references returned by the iterator. */
 			using pointer = void; /**< The type of the pointers returned by the iterator. */
 			using iterator_category = std::forward_iterator_tag; /**< The category of the iterator. */
 
@@ -79,7 +142,19 @@ namespace ecs {
 			*
 			* @return true if the iterator is valid, false otherwise.
 			*/
-			bool valid() const { return (scene->has_component<Tcomponents>(e) && ...); }
+			bool valid() const { return (valid_impl<Tcomponents>() && ...); }
+		protected:
+			template<typename Tcomponent>
+			bool valid_impl() const {
+				if constexpr(detail::is_or_v<Tcomponent>) {
+					return valid_impl_or_expand(Tcomponent{});
+				} else if constexpr(detail::is_optional_v<Tcomponent>) {
+					return true;
+				} else return scene->has_component<Tcomponent>(e);
+			}
+			template<typename... Tcomps>
+			bool valid_impl_or_expand(or_<Tcomps...>) const { return (valid_impl<Tcomps>() || ...); }
+		public:
 
 			/**
 			* @brief Equality operator for comparing two iterators.
@@ -104,7 +179,7 @@ namespace ecs {
 			/**
 			* @brief Advances the iterator to the next entity.
 			*/
-			Iterator operator++(post_increment_t) {
+			Iterator operator++(detail::post_increment_t) {
 				Iterator old{scene, e};
 				operator++();
 				return old;
@@ -118,10 +193,48 @@ namespace ecs {
 
 			/**
 			* @brief Deference opperator
-			* 
+			*
 			* @return References to all of the components currently being viewed
 			*/
-			std::tuple<std::add_lvalue_reference_t<Tcomponents>...> operator*() const { return { *scene->get_component<Tcomponents>(e)... }; }
+			reference operator*() const { return { get_component<Tcomponents, true>()... }; }
+
+		protected:
+			template<typename Tcomponent, bool deref = true>
+			decltype(auto) get_component() const {
+				if constexpr(detail::is_or_v<Tcomponent>)
+					return get_component_or(Tcomponent{});
+				else if constexpr(detail::is_optional_v<Tcomponent>)
+					return get_component_optional(Tcomponent{});
+				else if constexpr(deref)
+					return *scene->get_component<Tcomponent>(e);
+				else return scene->get_component<Tcomponent>(e);
+			}
+			template<typename... Tcomps>
+			inline detail::or_to_variant_reference_t<or_<Tcomps...>> get_component_or(or_<Tcomps...>) const {
+				using Variant = detail::or_to_variant_reference_t<or_<Tcomps...>>;
+				Variant out = {};
+				std::apply([this, &out](auto ...elem){ ([this, &out](auto elem) {
+					using Tcomponent = decltype(elem);
+					auto res = get_component_or_single<Tcomponent, Tcomps...>({});
+					if(res.index() > 0){
+						out = res;
+						return false;
+					}
+					return true;
+				}(elem) && ...); }, detail::or_to_tuple_t<or_<Tcomps...>>{});
+				return out;
+			}
+			template<typename Tcomponent, typename... Tcomps>
+			inline detail::or_to_variant_reference_t<or_<Tcomps...>> get_component_or_single(or_<Tcomps...>) const {
+				// using Variant = detail::or_to_variant_reference_t<or_<Tcomps...>>;
+				auto res = get_component<Tcomponent, false>();
+				if(res) return std::reference_wrapper{*res};
+				return {};
+			}
+			template<typename Tcomponent>
+			inline optional_reference<Tcomponent> get_component_optional(std::optional<Tcomponent>) const {
+				return scene->get_component<Tcomponent>(e);
+			}
 		};
 
 		Iterator begin() {
@@ -139,11 +252,11 @@ namespace ecs {
 	struct scene_view<include_entity, Tcomponents...> : public scene_view<Tcomponents...>  {
 		struct Iterator: public scene_view<Tcomponents...>::Iterator {
 			using Base = scene_view<Tcomponents...>::Iterator;
-			using value_type = std::tuple<entity, Tcomponents...>;
-			using reference = std::tuple<entity, std::add_lvalue_reference_t<Tcomponents>...>;
-			Iterator operator++(post_increment_t) { Iterator old{this->scene, this->e}; operator++(); return old; }
+			using value_type = std::tuple<entity, detail::or_to_variant_t<Tcomponents>...>;
+			using reference = std::tuple<entity, detail::or_to_variant_reference_t<Tcomponents>...>;
+			Iterator operator++(detail::post_increment_t) { Iterator old{this->scene, this->e}; operator++(); return old; }
 			Iterator& operator++() { Base::operator++(); return *this; }
-			std::tuple<entity, std::add_lvalue_reference_t<Tcomponents>...> operator*() const { return { this->e, *this->scene->template get_component<Tcomponents>(this->e)... }; }
+			reference operator*() const { return { this->e, this->template get_component<Tcomponents, true>()... }; }
 		};
 
 		Iterator begin() {
@@ -160,11 +273,11 @@ namespace ecs {
 	struct scene_view<include_scene, Tcomponents...> : public scene_view<Tcomponents...>  {
 		struct Iterator: public scene_view<Tcomponents...>::Iterator {
 			using Base = scene_view<Tcomponents...>::Iterator;
-			using value_type = std::tuple<scene&, Tcomponents...>;
-			using reference = std::tuple<scene&, std::add_lvalue_reference_t<Tcomponents>...>;
-			Iterator operator++(post_increment_t) { Iterator old{this->scene, this->e}; operator++(); return old; }
+			using value_type = std::tuple<scene&, detail::or_to_variant_t<Tcomponents>...>;
+			using reference = std::tuple<scene&, detail::or_to_variant_reference_t<Tcomponents>...>;
+			Iterator operator++(detail::post_increment_t) { Iterator old{this->scene, this->e}; operator++(); return old; }
 			Iterator& operator++() { Base::operator++(); return *this; }
-			std::tuple<scene&, std::add_lvalue_reference_t<Tcomponents>...> operator*() const { return { this->scene, *this->scene->template get_component<Tcomponents>(this->e)... }; }
+			reference operator*() const { return { this->scene, this->template get_component<Tcomponents, true>()... }; }
 		};
 
 		Iterator begin() {
@@ -178,11 +291,11 @@ namespace ecs {
 	struct scene_view<include_scene, include_entity, Tcomponents...> : public scene_view<Tcomponents...>  {
 		struct Iterator: public scene_view<Tcomponents...>::Iterator {
 			using Base = scene_view<Tcomponents...>::Iterator;
-			using value_type = std::tuple<scene&, entity, Tcomponents...>;
-			using reference = std::tuple<scene&, entity, std::add_lvalue_reference_t<Tcomponents>...>;
-			Iterator operator++(post_increment_t) { Iterator old{this->scene, this->e}; operator++(); return old; }
+			using value_type = std::tuple<scene&, entity, detail::or_to_variant_t<Tcomponents>...>;
+			using reference = std::tuple<scene&, entity, detail::or_to_variant_reference_t<Tcomponents>...>;
+			Iterator operator++(detail::post_increment_t) { Iterator old{this->scene, this->e}; operator++(); return old; }
 			Iterator& operator++() { Base::operator++(); return *this; }
-			std::tuple<scene&, entity, std::add_lvalue_reference_t<Tcomponents>...> operator*() const { return { this->scene, this->e, *this->scene->template get_component<Tcomponents>(this->e)... }; }
+			reference operator*() const { return { this->scene, this->e, this->template get_component<Tcomponents, true>()... }; }
 		};
 
 		Iterator begin() {
@@ -196,11 +309,11 @@ namespace ecs {
 	struct scene_view<include_entity, include_scene, Tcomponents...> : public scene_view<Tcomponents...>  {
 		struct Iterator: public scene_view<Tcomponents...>::Iterator {
 			using Base = scene_view<Tcomponents...>::Iterator;
-			using value_type = std::tuple<entity, scene&, Tcomponents...>;
-			using reference = std::tuple<entity, scene&, std::add_lvalue_reference_t<Tcomponents>...>;
-			Iterator operator++(post_increment_t) { Iterator old{this->scene, this->e}; operator++(); return old; }
+			using value_type = std::tuple<entity, scene&, detail::or_to_variant_t<Tcomponents>...>;
+			using reference = std::tuple<entity, scene&, detail::or_to_variant_reference_t<Tcomponents>...>;
+			Iterator operator++(detail::post_increment_t) { Iterator old{this->scene, this->e}; operator++(); return old; }
 			Iterator& operator++() { Base::operator++(); return *this; }
-			std::tuple<entity, scene&, std::add_lvalue_reference<Tcomponents>...> operator*() const { return { this->e, this->scene, *this->scene->template get_component<Tcomponents>(this->e)... }; }
+			reference operator*() const { return { this->e, this->scene, this->template get_component<Tcomponents, true>()... }; }
 		};
 
 		Iterator begin() {

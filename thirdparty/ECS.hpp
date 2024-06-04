@@ -40,30 +40,24 @@
 	#include <cxxabi.h>
 #endif
 
-/**
-* @defgroup ECS Entity-Component-System (ECS) Framework
-*
-* The ECS framework provides a way to manage entities, components, and systems.
-*/
-
 #ifdef ECS_IMPLEMENTATION
 /**
 * @var ecs::globalComponentCounter
 * Global component counter.
 */
-static size_t globalComponentCounter = 0;
+size_t globalComponentCounter = 0;
 
 /**
 * @var ecs::globalComponentForwardLookup
 * Forward lookup map for components by name to their IDs.
 */
-static std::unordered_map<std::string, size_t> globalComponentForwardLookup = {};
+std::unordered_map<std::string, size_t> globalComponentForwardLookup = {};
 
 /**
 * @var ecs::globalComponentReverseLookup
 * Reverse lookup map for components by ID to their names.
 */
-static std::unordered_map<size_t, std::string> globalComponentReverseLookup = {};
+std::unordered_map<size_t, std::string> globalComponentReverseLookup = {};
 #else
 /**
 * @var ecs::globalComponentCounter
@@ -210,301 +204,163 @@ namespace ecs {
 #endif
 	using entity = ECS_ENTITY_TYPE;
 
-	/**
-	* @brief A structure for storing components of various types.
-	*/
-	struct component_storage {
-		/**
-		* @brief An invalid index value.
-		*/
-		static constexpr size_t invalid = std::numeric_limits<size_t>::max();
-		size_t element_size = invalid;
-		std::vector<std::byte> data;
-
-		/**
-		* @brief Constructor for the component storage with a default element size and initialized data.
-		*/
-		component_storage() : element_size(invalid), data(1, std::byte{0}) {}
-
-		/**
-		* @brief Constructor for the component storage with a specified element size and reserved memory.
-		*
-		* @param element_size The size of each component.
-		*/
-		component_storage(size_t element_size, size_t element_count = 5) : element_size(element_size) { data.reserve(element_count * element_size); }
-
-		/**
-		* @brief Template constructor that initializes the component storage with a specified element size and type.
-		*
-		* @tparam Tcomponent The type of component.
-		* @param reference A reference to the component (default is an empty object).
-		*/
-		template<typename Tcomponent>
-		component_storage(Tcomponent reference = {}, size_t element_count = 5) : component_storage(sizeof(Tcomponent), element_count) {}
-
-		/**
-		* @brief Template function that retrieves a component by its entity index, if it exists and matchesthe expected type.
-		*
-		* @tparam Tcomponent The type of component.
-		* @param e The entity index.
-		* @return An optional reference to the retrieved component, or an empty optional if it doesn't exist or doesn't match the expected type.
-		*/
-		template<typename Tcomponent>
-		optional_reference<const Tcomponent> get(entity e) const {
-			if (!(sizeof(Tcomponent) == element_size)) return {};
-			if (!(e < (data.size() / element_size))) return {};
-			return {*(Tcomponent*)(data.data() + e * element_size)};
-		}
-
-		/**
-		* @brief Template function that retrieves a component by its entity index, if it exists and matches the expected type.
-		*
-		* @tparam Tcomponent The type of component.
-		* @param e The entity index.
-		* @return An optional reference to the retrieved component, or an empty optional if it doesn't exist or doesn't match the expected type.
-		*/
-		template<typename Tcomponent>
-		optional_reference<Tcomponent> get(entity e) {
-			if (auto got = ((const component_storage*)this)->get<Tcomponent>(e); got) return {const_cast<Tcomponent&>(*got)}; else return {};
-		}
-
-		/**
-		* @brief Template function that allocates memory for a specified number of components.
-		*
-		* @tparam Tcomponent The type of component.
-		* @param count The number of components to allocate.
-		* @return An optional pair containing the allocated component and its entity index, or an empty optional if allocation fails.
-		*/
-		template<typename Tcomponent>
-		std::optional<std::pair<Tcomponent&, size_t>> allocate(size_t count = 1) {
-			if (!(sizeof(Tcomponent) == element_size)) return {};
-			// if (!(count < 100)) return {};
-			auto originalEnd = data.size();
-			data.insert(data.end(), element_size * count, std::byte{0});
-			for (size_t i = 0; i < count - 1; i++) // Skip the last one
-				new(data.data() + originalEnd + i * element_size) Tcomponent();
-			return {
-				*new(data.data() + data.size() - element_size) Tcomponent(),
-				data.size() / element_size
-			};
-		}
-
-		/**
-		* @brief Template function that retrieves or allocates a component by its entity index, if it doesn't exist.
-		*
-		* @tparam Tcomponent The type of component.
-		* @param e The entity index.
-		* @return An optional reference to the retrieved or allocated component, or an empty optional if allocation fails.
-		*/
-		template<typename Tcomponent>
-		optional_reference<Tcomponent> get_or_allocate(entity e) {
-			if (!(sizeof(Tcomponent) == element_size)) return {};
-			size_t size = data.size() / element_size;
-			if (size <= e)
-				if (!allocate<Tcomponent>(std::max<int64_t>(int64_t(e) - size + 1, 1))) return {};
-			return get<Tcomponent>(e);
-		}
-	};
 
 	/**
-	* @brief A struct for storing skiplist components.
-	*
-	* This struct is used to store and manage skiplist components.
+	* @brief Scene structure for storing and managing entities and components.
 	*/
-	struct skiplist_component_storage {
+	struct scene {
 		/**
-		* @brief The maximum value for a size_t.
+		* @brief A structure for storing components of various types.
 		*/
-		static constexpr size_t invalid = std::numeric_limits<size_t>::max();
+		struct component_storage {
+			/**
+			* @brief An invalid index value.
+			*/
+			static constexpr size_t invalid = std::numeric_limits<size_t>::max();
+			size_t element_size = invalid;
+			std::vector<std::byte> data;
 
-		/**
-		* @brief The element size of the stored components.
-		*
-		* This is set to the maximum value by default, and can be changed when creating an instance.
-		*/
-		size_t element_size = invalid;
+			/**
+			* @brief Constructor for the component storage with a default element size and initialized data.
+			*/
+			component_storage() : element_size(invalid), data(1, std::byte{0}) {}
 
-		/**
-		* @brief A vector of indices for storing component data.
-		*/
-		std::vector<size_t> indices;
+			/**
+			* @brief Constructor for the component storage with a specified element size and reserved memory.
+			*
+			* @param element_size The size of each component.
+			*/
+			component_storage(size_t element_size, size_t element_count = 5) : element_size(element_size) { data.reserve(element_count * element_size); }
 
-		/**
-		* @brief A vector of bytes for storing component data.
-		*/
-		std::vector<std::byte> data;
+			/**
+			* @brief Template constructor that initializes the component storage with a specified element size and type.
+			*
+			* @tparam Tcomponent The type of component.
+			* @param reference A reference to the component (default is an empty object).
+			*/
+			template<typename Tcomponent>
+			component_storage(Tcomponent reference = {}, size_t element_count = 5) : component_storage(sizeof(Tcomponent), element_count) {}
 
-		/**
-		* @brief Default constructor.
-		*
-		* Sets the element size to the maximum value and initializes the indices and data vectors.
-		*/
-		skiplist_component_storage() : element_size(invalid), indices(1, invalid), data(1, std::byte{0}) {}
-
-		/**
-		* @brief Constructor with specified element size.
-		*
-		* Sets the element size to the specified value and initializes the data vector.
-		*
-		* @param element_size The element size of the stored components.
-		*/
-		skiplist_component_storage(size_t element_size, size_t element_count = 5) : element_size(element_size) { data.reserve(element_count * element_size); }
-
-		/**
-		* @brief Template constructor for storing components with specified type.
-		*
-		* Creates an instance with the specified component type and initializes the data vector.
-		*
-		* @param Tcomponent The type of component to store.
-		*/
-		template<typename Tcomponent>
-		skiplist_component_storage(Tcomponent reference = {}, size_t element_count = 5) : skiplist_component_storage(sizeof(Tcomponent), element_count) {}
-
-		/**
-		* @brief Template function for getting a stored component.
-		*
-		* Returns an optional reference to the stored component at the specified entity index, or an empty optional if the entity is out of bounds.
-		*
-		* @param e The entity index.
-		* @return An optional reference to the stored component.
-		*/
-		template<typename Tcomponent>
-		optional_reference<const Tcomponent> get(entity e) const {
-			if (!(sizeof(Tcomponent) == element_size)) return {};
-			if (!(e < indices.size())) return {};
-			if (!(indices[e] != invalid)) return {};
-			return {*(Tcomponent*)(data.data() + indices[e])};
-		}
-
-		/**
-		* @brief Template function for getting a stored component.
-		*
-		* Returns an optional reference to the stored component at the specified entity index, or an empty optional if the entity is out of bounds.
-		*
-		* @param e The entity index.
-		* @return An optional reference to the stored component.
-		*/
-		template<typename Tcomponent>
-		optional_reference<Tcomponent> get(entity e) {
-			if (auto got = ((const skiplist_component_storage*)this)->get<Tcomponent>(e); got) return {const_cast<Tcomponent&>(*got)}; else return {};
-		}
-
-		/**
-		* @brief Template function for allocating a new component.
-		*
-		* Allocates a new component of the specified type and returns an optional reference to it, or an empty optional if allocation fails.
-		*
-		* @param Tcomponent The type of component to allocate.
-		* @return An optional reference to the allocated component.
-		*/
-		template<typename Tcomponent>
-		std::optional<std::pair<Tcomponent&, size_t>> allocate() {
-			if (!(sizeof(Tcomponent) == element_size)) return {};
-			data.insert(data.end(), element_size, std::byte{0});
-			return {{
-				*new(data.data() + data.size() - element_size) Tcomponent(),
-				(data.size() - 1) / element_size
-			}};
-		}
-
-		/**
-		* @brief Template function for allocating a new component.
-		*
-		* Allocates a new component of the specified type at the specified entity index, or returns an empty optional if allocation fails.
-		*
-		* @param e The entity index.
-		* @param skipMonitinicityPass Whether to skip monotonicity pass after allocation.
-		* @return An optional reference to the allocated component.
-		*/
-		template<typename Tcomponent>
-		optional_reference<Tcomponent> allocate(entity e, bool skipMonitinicityPass = false) {
-			auto res = allocate<Tcomponent>();
-			if(!res) return {}; auto [ret, i] = *res;
-			if (indices.size() <= e)
-				indices.insert(indices.end(), std::max<int64_t>(int64_t(e) - indices.size() + 1, 1), invalid);
-			indices[e] = i * element_size;
-			if(!skipMonitinicityPass) make_monotonic();
-			return {ret};
-		}
-		/**
-		* @brief Template function for updating the component storage.
-		*
-		* Updates the component storage with the specified entity index and value.
-		*
-		* @param e The entity index.
-		* @param value The new value to store at the specified entity index.
-		*/
-		template<typename Tcomponent>
-		optional_reference<Tcomponent> get_or_allocate(entity e, bool skipMonitinicityPass = true) {
-			if(!(sizeof(Tcomponent) == element_size)) return {};
-			if (indices.size() <= e)
-				indices.insert(indices.end(), std::max<int64_t>(int64_t(e) - indices.size() + 1, 1), invalid);
-			if (indices[e] == std::numeric_limits<size_t>::max())
-				return allocate<Tcomponent>(e, skipMonitinicityPass);
-			return get<Tcomponent>(e);
-		}
-
-		// TODO: Broken!
-		void make_monotonic() {
-			std::vector<std::byte> swapTemporaryStorage; swapTemporaryStorage.resize(element_size);
-			// We manipulate a proxy array that stores index references (so that they are updated when swapped)
-			//	and indices allowing us treat the sparsely packed skiplist layer as a densely packed array
-			std::vector<std::pair<size_t&, size_t>> filledIndices; filledIndices.reserve(indices.size());
-			for(size_t i = 0; i < indices.size(); i++)
-				if(indices[i] != std::numeric_limits<size_t>::max())
-					filledIndices.emplace_back(indices[i], i);
-
-			// Use insertion sort... assumes that the data is already close to being monotonic
-			for(size_t i = 1; i < filledIndices.size(); i++) {
-				// Move elements (that are greater than key) to one position ahead of their current position
-				size_t j;
-				for (j = i - 1; j >= 0 && filledIndices[j].first > filledIndices[i - 1].first; j--)
-					// TODO: If we could swap large ranges it would be better! (Would that work given the sparseness?)
-					data_swap(filledIndices[j + 1].second, filledIndices[j].second, swapTemporaryStorage);
-
-				// arr[j + 1] = key;
-				data_swap(filledIndices[j + 1].second, filledIndices[i].second, swapTemporaryStorage);
-			}
-		}
-	protected:
-		void data_swap(size_t _first, size_t _second, std::vector<std::byte>& _tmp) {
-			assert(_tmp.size() >= element_size);
-			// Swap the data referenced by indices[first] and indices[second]
-			{
-				std::byte* tmp = _tmp.data();
-				std::byte* first = data.data() + indices[_first];
-				std::byte* second = data.data() + indices[_second];
-
-				memcpy(first, tmp, element_size);
-				memcpy(second, first, element_size);
-				memcpy(tmp, second, element_size);
+			/**
+			* @brief Template function that retrieves a component by its entity index, if it exists and matchesthe expected type.
+			*
+			* @tparam Tcomponent The type of component.
+			* @param e The entity index.
+			* @return An optional reference to the retrieved component, or an empty optional if it doesn't exist or doesn't match the expected type.
+			*/
+			template<typename Tcomponent>
+			optional_reference<const Tcomponent> get(entity e) const {
+				if (!(sizeof(Tcomponent) == element_size)) return {};
+				if (!(e < (data.size() / element_size))) return {};
+				return {*(Tcomponent*)(data.data() + e * element_size)};
 			}
 
-			// Swap the references
-			{
-				auto tmp = indices[_first];
-				indices[_first] = indices[_second];
-				indices[_second] = tmp;
+			/**
+			* @brief Template function that retrieves a component by its entity index, if it exists and matches the expected type.
+			*
+			* @tparam Tcomponent The type of component.
+			* @param e The entity index.
+			* @return An optional reference to the retrieved component, or an empty optional if it doesn't exist or doesn't match the expected type.
+			*/
+			template<typename Tcomponent>
+			optional_reference<Tcomponent> get(entity e) {
+				if (auto got = ((const component_storage*)this)->get<Tcomponent>(e); got) return {const_cast<Tcomponent&>(*got)}; else return {};
 			}
-		}
-	};
 
+			/**
+			* @brief Template function that allocates memory for a specified number of components.
+			*
+			* @tparam Tcomponent The type of component.
+			* @param count The number of components to allocate.
+			* @return An optional pair containing the allocated component and its entity index, or an empty optional if allocation fails.
+			*/
+			template<typename Tcomponent>
+			std::optional<std::pair<Tcomponent&, size_t>> allocate(size_t count = 1) {
+				if (!(sizeof(Tcomponent) == element_size)) return {};
+				// if (!(count < 100)) return {};
+				auto originalEnd = data.size();
+				data.insert(data.end(), element_size * count, std::byte{0});
+				for (size_t i = 0; i < count - 1; i++) // Skip the last one
+					new(data.data() + originalEnd + i * element_size) Tcomponent();
+				return {{
+					*new(data.data() + data.size() - element_size) Tcomponent(),
+					data.size() / element_size
+				}};
+			}
 
-	/**
-	* @defgroup BasicScene Basic Scene Structure
-	* @brief Template-based scene structure for storing and managing entities and components.
-	*/
-	template<typename Storage = component_storage>
-	struct basic_scene {
+			/**
+			* @brief Template function that retrieves or allocates a component by its entity index, if it doesn't exist.
+			*
+			* @tparam Tcomponent The type of component.
+			* @param e The entity index.
+			* @return An optional reference to the retrieved or allocated component, or an empty optional if allocation fails.
+			*/
+			template<typename Tcomponent>
+			optional_reference<Tcomponent> get_or_allocate(entity e) {
+				if (!(sizeof(Tcomponent) == element_size)) return {};
+				size_t size = data.size() / element_size;
+				if (size <= e)
+					if ( !allocate<Tcomponent>(std::max<int64_t>(int64_t(e) - size + 1, 1)) ) return {};
+				return get<Tcomponent>(e);
+			}
+
+			/**
+			* @brief function which determines how many components are currently stored inside this storage.
+			*
+			* @return How many components are currently stored inside this storage.
+			* @note Some of these components may be unitialized!
+			*/
+			size_t size() const { return data.size() / element_size; }
+
+			template<typename Tcomponent>
+			bool remove(struct scene& scene, entity e) { return remove(scene, e, get_global_component_id<Tcomponent>()); }
+			bool remove(struct scene&, entity, size_t component_id);
+			
+
+		friend struct scene;
+		protected:
+			template<typename Tcomponent>
+			bool swap(size_t a, std::optional<size_t> _b = {}) {
+				size_t b = _b.value_or(size() - 1);
+				if(a > size()) return false;
+				if(b > size()) return false;
+
+				Tcomponent* aPtr = data.data() + a * sizeof(Tcomponent);
+				Tcomponent* bPtr = data.data() + b * sizeof(Tcomponent);
+				std::swap(*aPtr, *bPtr);
+				return true;
+			}
+
+			bool swap(size_t a, std::optional<size_t> _b = {}, std::vector<std::byte>& buffer = []() -> std::vector<std::byte>& { 
+				static std::vector<std::byte> global;
+				global.clear();
+				return global; 
+			}()) {
+				if(buffer.empty()) buffer.resize(element_size);
+				if(buffer.size() < element_size) return false;
+
+				size_t b = _b.value_or(size() - 1);
+				if(a > size()) return false;
+				if(b > size()) return false;
+
+				void* aPtr = data.data() + a * element_size;
+				void* bPtr = data.data() + b * element_size;
+				std::memcpy(buffer.data(), aPtr, element_size);
+				std::memcpy(aPtr, bPtr, element_size);
+				std::memcpy(bPtr, buffer.data(), element_size);
+				return true;
+			}
+		};
+
 		/**
-		* @brief Vector of entity masks, where each mask represents an entity's presence in various components.
+		* @brief Vector of entity masks, where each mask represents an entity's component indecies in the storage.
 		*/
-		std::vector<std::vector<bool>> entityMasks;
+		std::vector<std::vector<entity>> entity_component_indicies;
 
 		/**
 		* @brief Vector of storage objects for storing and retrieving components.
 		*/
-		std::vector<Storage> storages = {Storage()};
+		std::vector<component_storage> storages = {component_storage()};
 
 		/**
 		* @brief Queue of available entities that can be reused.
@@ -519,7 +375,7 @@ namespace ecs {
 		*/
 		template<bool ignoreFree = false>
 		size_t size() const {
-			size_t size = entityMasks.size();
+			size_t size = entity_component_indicies.size();
 			if constexpr(!ignoreFree) size -= freelist.size();
 			return size;
 		}
@@ -531,12 +387,12 @@ namespace ecs {
 		* @return An optional reference to the storage object, or an empty optional if the storage does not exist.
 		*/
 		template<typename Tcomponent>
-		optional_reference<Storage> get_storage() {
+		optional_reference<component_storage> get_storage() {
 			size_t id = get_global_component_id<Tcomponent>();
 			if(storages.size() <= id)
-				storages.insert(storages.cend(), std::max<int64_t>(id - storages.size(), 1), Storage());
-			if (storages[id].element_size == Storage::invalid)
-				storages[id] = Storage(Tcomponent{});
+				storages.resize(id + 1, component_storage());
+			if (storages[id].element_size == component_storage::invalid)
+				storages[id] = component_storage(Tcomponent{});
 			return {storages[id]};
 		}
 
@@ -547,10 +403,10 @@ namespace ecs {
 		* @return An optional reference to the storage object, or an empty optional if the storage does not exist.
 		*/
 		template<typename Tcomponent>
-		optional_reference<const Storage> get_storage() const {
+		optional_reference<const component_storage> get_storage() const {
 			size_t id = get_global_component_id<Tcomponent>();
 			if(!(storages.size() > id)) return {};
-			if(!(storages[id].element_size != Storage::invalid)) return {};
+			if(!(storages[id].element_size != component_storage::invalid)) return {};
 			return {storages[id]};
 		}
 
@@ -564,8 +420,8 @@ namespace ecs {
 		bool release_storage() {
 			size_t id = get_global_component_id<Tcomponent>();
 			if(storages.size() <= id) return false;
-			if(storages[id].element_size == Storage::invalid) return false;
-			storages[id] = Storage();
+			if(storages[id].element_size == component_storage::invalid) return false;
+			storages[id] = component_storage();
 			return true;
 		}
 
@@ -576,13 +432,13 @@ namespace ecs {
 		*/
 		entity create_entity() {
 			if(freelist.empty()) {
-				entity e = entityMasks.size();
-				entityMasks.emplace_back(std::vector<bool>{false});
+				entity e = entity_component_indicies.size();
+				entity_component_indicies.emplace_back(std::vector<size_t>{component_storage::invalid});
 				return e;
 			}
 
 			entity e = freelist.back();
-			entityMasks[e] = std::vector<bool>{false};
+			entity_component_indicies[e] = std::vector<size_t>{component_storage::invalid};
 			freelist.pop();
 			return e;
 		}
@@ -593,10 +449,13 @@ namespace ecs {
 		* @param e The ID of the entity to release.
 		* @return Whether the release was successful.
 		*/
-		bool release_entity(entity e) {
-			if(e >= entityMasks.size()) return false;
+		bool release_entity(entity e, bool clearMemory = true) {
+			if(e >= entity_component_indicies.size()) return false;
 
-			entityMasks[e] = std::vector<bool>{false};
+			if(clearMemory) for(size_t i = storages.size() - 1; --i; )
+				storages[i].remove(*this, e, i);
+
+			entity_component_indicies[e] = std::vector<size_t>{component_storage::invalid};
 			freelist.emplace(e);
 			return true;
 		}
@@ -611,11 +470,11 @@ namespace ecs {
 		template<typename Tcomponent>
 		optional_reference<Tcomponent> add_component(entity e) {
 			size_t id = get_global_component_id<Tcomponent>();
-			auto& eMask = entityMasks[e];
-			if(eMask.empty() || eMask.size() <= id)
-				eMask.resize(id + 1, false);
-			eMask[id] = true;
-			return get_storage<Tcomponent>()->template get_or_allocate<Tcomponent>(e);
+			auto& indicies = entity_component_indicies[e];
+			if(indicies.empty() || indicies.size() <= id)
+				indicies.resize(id + 1, component_storage::invalid);
+			indicies[id] = get_storage<Tcomponent>()->size();
+			return get_storage<Tcomponent>()->template get_or_allocate<Tcomponent>(indicies[id]);
 		}
 
 		/**
@@ -623,19 +482,10 @@ namespace ecs {
 		*
 		* @tparam Tcomponent The component type to remove.
 		* @param e The ID of the entity to remove the component from.
-		* @param clearMemory Whether to clear the memory associated with the removed component.
 		* @return Whether the removal was successful.
 		*/
 		template<typename Tcomponent>
-		bool remove_component(entity e, bool clearMemory = true) {
-			size_t id = get_global_component_id<Tcomponent>();
-			if(e >= entityMasks.size()) return false;
-			auto& eMask = entityMasks[e];
-			if(!(eMask.size() > id)) return false;
-			if(eMask[id] && clearMemory) if(auto res = get_component<Tcomponent>(e); res) res = {};
-			eMask[id] = false;
-			return true;
-		}
+		bool remove_component(entity e) { return get_storage<Tcomponent>()->template remove<Tcomponent>(*this, e); }
 
 		/**
 		* @brief Get a reference to the component associated with an entity.
@@ -647,15 +497,16 @@ namespace ecs {
 		template<typename Tcomponent>
 		optional_reference<Tcomponent> get_component(entity e) {
 			size_t id = get_global_component_id<Tcomponent>();
-			if(e >= entityMasks.size()) return {};
-			if(!entityMasks[e][id]) return {};
-			return get_storage<Tcomponent>()->template get<Tcomponent>(e);
+			if(e >= entity_component_indicies.size()) return {};
+			if(entity_component_indicies[e][id] == component_storage::invalid) return {};
+			return get_storage<Tcomponent>()->template get<Tcomponent>(entity_component_indicies[e][id]);
 		}
 		template<typename Tcomponent>
 		optional_reference<const Tcomponent> get_component(entity e) const {
 			size_t id = get_global_component_id<Tcomponent>();
-			if(!entityMasks[e][id]) return {};
-			if(auto s = get_storage<Tcomponent>(); s) return s->template get<Tcomponent>(e);
+			if(e >= entity_component_indicies.size()) return {};
+			if(entity_component_indicies[e][id] == component_storage::invalid) return {};
+			if(auto s = get_storage<Tcomponent>(); s) return s->template get<Tcomponent>(entity_component_indicies[e][id]);
 			return {};
 		}
 
@@ -669,11 +520,28 @@ namespace ecs {
 		template<typename Tcomponent>
 		bool has_component(entity e) const {
 			size_t id = get_global_component_id<Tcomponent>();
-			return entityMasks.size() > e && entityMasks[e].size() > id && entityMasks[e][id];
+			return entity_component_indicies.size() > e && entity_component_indicies[e].size() > id && entity_component_indicies[e][id] != component_storage::invalid;
 		}
 	};
 
-	using scene = basic_scene<skiplist_component_storage>;
+	inline bool scene::component_storage::remove(scene& scene, entity e, size_t id) {
+		if(e >= scene.entity_component_indicies.size()) return false;
+		auto& indicies = scene.entity_component_indicies[e];
+		if(!(indicies.size() > id)) return false;
+
+		size_t lastIndex = size() - 1;
+		for(e = 0; e < scene.entity_component_indicies.size(); ++e)
+			if(indicies[id] == lastIndex) {
+				lastIndex = e;
+				break;
+			}
+		if(e >= scene.entity_component_indicies.size()) return false;
+
+		swap(indicies[id]);
+		std::swap(indicies[id], scene.entity_component_indicies[lastIndex][id]);
+		data.erase(data.cbegin() + data.size() - element_size - 1, data.cend());
+		return true;
+	}
 }
 
 #endif // __ECS__HPP__

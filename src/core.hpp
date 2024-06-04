@@ -14,6 +14,8 @@ namespace doir {
 
 	using ecs::optional_reference;
 	using ecs::optional;
+	using ecs::or_;
+	using ecs::Or;
 
 	using Token = ecs::entity;
 
@@ -21,7 +23,7 @@ namespace doir {
 		std::string buffer;
 
 		Module(const std::string& buffer = "") : buffer(buffer) {
-			assert(create_entity() == 0); // Reserve token 0 for errors!
+			assert(make_token() == 0); // Reserve token 0 for errors!
 		}
 
 		size_t token_count() const { return size(); }
@@ -71,6 +73,23 @@ namespace doir {
 		size_t start, length;
 
 		std::string_view view(std::string_view buffer) { return buffer.substr(start, length); }
+		static std::optional<Lexeme> from_view(std::string_view buffer, std::string_view source) {
+			auto diff = source.data() - buffer.data();
+			if(diff < 0) return {};
+			if(diff + source.size() > buffer.size()) return {};
+			return {{(size_t)diff, source.size()}};
+		}
+	};
+	struct Reference : public std::variant<Token, Lexeme> {
+		using std::variant<Token, Lexeme>::variant;
+
+		bool looked_up() const { return index() == 0; }
+		operator bool() const { return looked_up(); }
+
+		Token& token() { return std::get<Token>(*this); }
+		const Token& token() const { return std::get<Token>(*this); }
+		Lexeme& lexeme() { return std::get<Lexeme>(*this); }
+		const Lexeme& lexeme() const { return std::get<Lexeme>(*this); }
 	};
 
 	struct Error {
@@ -119,8 +138,7 @@ namespace doir {
 		Token make_token(const State& state) {
 			if(!state.lexer.valid()) return 0;
 			auto t = Module::make_token();
-			size_t start = state.lexer.lexeme.data() - buffer.data();
-			add_attribute<Lexeme>(t) = {start, state.lexer.lexeme.size()};
+			add_attribute<Lexeme>(t) = *Lexeme::from_view(buffer, state.lexer.lexeme);
 			add_attribute<NamedSourceLocation>(t) = state.location;
 			return t;
 		}
@@ -129,12 +147,11 @@ namespace doir {
 		template<typename Terror>
 		Token make_error(const State& state, Terror&& error) {
 			Token t = 0;
+			add_attribute<Terror>(t) = error;
 			if(!state.lexer.valid()) return t;
 
-			size_t start = state.lexer.lexeme.data() - buffer.data();
-			add_attribute<Lexeme>(t) = {start, state.lexer.lexeme.size()};
+			add_attribute<Lexeme>(t) = *Lexeme::from_view(buffer, state.lexer.lexeme);
 			add_attribute<NamedSourceLocation>(t) = state.location;
-			add_attribute<Terror>(t) = error;
 			return t;
 		}
 		template<typename Terror>
