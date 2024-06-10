@@ -221,7 +221,15 @@ namespace ecs {
 			* @brief An invalid index value.
 			*/
 			static constexpr size_t invalid = std::numeric_limits<size_t>::max();
+			/**
+			 * @brief Size (in bytes) of the stored type
+			 * @note this is one of the few points of validation we have
+			 */
 			size_t element_size = invalid;
+			/**
+			 * @brief types stored as a container of raw bytes
+			 * @note the scene will track offsets indicating where certain elements begin
+			 */
 			std::vector<std::byte> data;
 
 			/**
@@ -307,7 +315,26 @@ namespace ecs {
 			* @note Some of these components may be uninitialized!
 			*/
 			size_t size() const { return data.size() / element_size; }
+			/**
+			* @brief Template function that checks if the component storage is empty.
+			*
+			* @return True if the component storage is empty, false otherwise.
+			*/
+			bool empty() const {
+				return size() == 0;
+			}
 
+
+			/**
+			 * @brief Function which removes the value associated with the provided entity
+			 * @note performs a swap with the last stored value thus needs to update offset information stored in the scene
+			 * 
+			 * @tparam Tcomponent The component type to remove (calculates the component_id automatically if provided)
+			 * @param scene The scene storing offset information
+			 * @param e The entity to remove
+			 * @param component_id The component id to remove if a type is not automatically provided!
+			 * @return true if the element was successfully removed, false if an error occured
+			 */
 			template<typename Tcomponent>
 			bool remove(struct scene& scene, entity e) { return remove(scene, e, get_global_component_id<Tcomponent>()); }
 			bool remove(struct scene&, entity, size_t component_id);
@@ -315,6 +342,16 @@ namespace ecs {
 
 		friend struct scene;
 		protected:
+			/**
+			* @brief Template function that swaps two components.
+			*
+			* @tparam Tcomponent The type of component.
+			* @param a The index of the first component.
+			* @param b The index of the second component.
+			* @param buffer an optional buffer to store intermediates in
+			* @note providing a buffer is useful for reuse when multiple swaps are performed in sequence
+			* @return false if an error occured, true otherwise
+			*/
 			template<typename Tcomponent>
 			bool swap(size_t a, std::optional<size_t> _b = {}) {
 				size_t b = _b.value_or(size() - 1);
@@ -326,7 +363,6 @@ namespace ecs {
 				std::swap(*aPtr, *bPtr);
 				return true;
 			}
-
 			bool swap(size_t a, std::optional<size_t> _b = {}, std::vector<std::byte>& buffer = []() -> std::vector<std::byte>& { 
 				static std::vector<std::byte> global;
 				global.clear();
@@ -349,7 +385,7 @@ namespace ecs {
 		};
 
 		/**
-		* @brief Vector of entity masks, where each mask represents an entity's component indices in the storage.
+		* @brief Vector of entity offsets, where each offsets represents an entity's component indices in the storage.
 		*/
 		std::vector<std::vector<entity>> entity_component_indices;
 
@@ -391,13 +427,6 @@ namespace ecs {
 				storages[id] = component_storage(Tcomponent{});
 			return {storages[id]};
 		}
-
-		/**
-		* @brief Get a const reference to a storage object for the given component type.
-		*
-		* @tparam Tcomponent The component type to retrieve.
-		* @return An optional reference to the storage object, or an empty optional if the storage does not exist.
-		*/
 		template<typename Tcomponent>
 		optional_reference<const component_storage> get_storage() const {
 			size_t id = get_global_component_id<Tcomponent>();
@@ -407,7 +436,7 @@ namespace ecs {
 		}
 
 		/**
-		* @brief Release a storage object for the given component type.
+		* @brief Release a storage object for the given component type freeing all of the memory of the associated components
 		*
 		* @tparam Tcomponent The component type to release.
 		* @return Whether the release was successful.
@@ -443,7 +472,8 @@ namespace ecs {
 		* @brief Release an entity back to the free list.
 		*
 		* @param e The ID of the entity to release.
-		* @return Whether the release was successful.
+		* @param clearMemory Weather all of the components associated with the entity should be removed or not!
+		* @return True if the entity was successfully released, false otherwise.
 		*/
 		bool release_entity(entity e, bool clearMemory = true) {
 			if(e >= entity_component_indices.size()) return false;
@@ -475,10 +505,11 @@ namespace ecs {
 
 		/**
 		* @brief Remove a component from an entity and release the associated storage.
+		* @note this function is named remove rather than release since the associated memory is deleted... rather than a "tombstone being placed"
 		*
 		* @tparam Tcomponent The component type to remove.
 		* @param e The ID of the entity to remove the component from.
-		* @return Whether the removal was successful.
+		* @return true if the removal was successful, false otherwise.
 		*/
 		template<typename Tcomponent>
 		bool remove_component(entity e) { return get_storage<Tcomponent>()->template remove<Tcomponent>(*this, e); }
@@ -522,22 +553,31 @@ namespace ecs {
 		}
 	};
 
-	inline bool scene::component_storage::remove(scene& scene, entity e, size_t id) {
-		if(size() == 0) return false;
-		if(e >= scene.entity_component_indices.size()) return false;
+	/**
+	* @brief Function which removes the value associated with the provided entity
+	* @note performs a swap with the last stored value thus needs to update offset information stored in the scene
+	* 
+	* @param scene The scene storing offset information
+	* @param e The entity to remove
+	* @param component_id The component id to remove if a type is not automatically provided!
+	* @return true if the element was successfully removed, false if an error occured
+	*/
+	inline bool scene::component_storage::remove(scene& scene, entity e, size_t component_id) {\
+		size_t size = this->size();
+		if(size == 0 || e >= scene.entity_component_indices.size()) return false;
+		
 		auto& indices = scene.entity_component_indices[e];
-		if(!(indices.size() > id)) return false;
+		if(indices.size() <= component_id) return false;
 
-		size_t lastIndex = size() - 1;
 		for(e = 0; e < scene.entity_component_indices.size(); ++e)
-			if( scene.entity_component_indices[e][id] == lastIndex)
+			if( scene.entity_component_indices[e][component_id] == size - 1)
 				break;
 		if(e >= scene.entity_component_indices.size()) return false;
 
-		if(!swap(indices[id])) return false;
-		std::swap(indices[id], scene.entity_component_indices[e][id]);
+		if(!swap(indices[component_id])) return false;
+		std::swap(indices[component_id], scene.entity_component_indices[e][component_id]);
 		data.erase(data.cbegin() + data.size() - element_size, data.cend());
-		indices[id] = component_storage::invalid;
+		indices[component_id] = invalid;
 		return true;
 	}
 }

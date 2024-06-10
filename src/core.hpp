@@ -11,7 +11,6 @@
 #include <deque>
 
 namespace doir {
-
 	using ecs::optional_reference;
 	using ecs::optional;
 
@@ -47,6 +46,21 @@ namespace doir {
 		template<typename... Tattrs>
 		ecs::scene_view<Tattrs...> view() { return {*this}; }
 	};
+
+	// A module wrapped value assumes that the associated module won't move!
+	#define DOIR_MODULE_WRAPPED_BODY_IMPLEMENTATION(baseType)\
+		doir::Module* module;\
+		ModuleWrapped() : module(nullptr), baseType() {}\
+		template<typename... Args>\
+		ModuleWrapped(doir::Module& module, Args... args) : module(&module), baseType(args...) {}\
+		ModuleWrapped(doir::Module& module, const baseType& p) : module(&module), baseType(p) {}\
+		ModuleWrapped(doir::Module& module, baseType&& p) : module(&module), baseType(std::move(p)) {}\
+		ModuleWrapped(const ModuleWrapped&) = default;\
+		ModuleWrapped(ModuleWrapped&&) = default;\
+		ModuleWrapped& operator=(const ModuleWrapped&) = default;\
+		ModuleWrapped& operator=(ModuleWrapped&&) = default
+	template<typename Parent>
+	struct ModuleWrapped : public Parent { DOIR_MODULE_WRAPPED_BODY_IMPLEMENTATION(Parent); };
 
 
 	struct SourceLocation {
@@ -85,6 +99,14 @@ namespace doir {
 
 		std::strong_ordering operator<=>(const Lexeme&) const = default;
 	};
+	template<>
+	struct ModuleWrapped<Lexeme> : public Lexeme {
+		DOIR_MODULE_WRAPPED_BODY_IMPLEMENTATION(Lexeme);
+
+		std::string_view view() const { return Lexeme::view(module->buffer); }
+		operator std::string_view() const { return view(); }	
+	};
+
 	struct TokenReference : public std::variant<Token, Lexeme> {
 		using std::variant<Token, Lexeme>::variant;
 

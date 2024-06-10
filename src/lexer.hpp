@@ -14,8 +14,8 @@ namespace doir { inline namespace lex {
 				std::copy_n(str, N, value);
 			}
 
-			std::string_view view() { return {value, N}; }
-			const std::string_view view() const { return {value, N}; }
+			std::string_view view() { return {value, N - 1}; }
+			const std::string_view view() const { return {value, N - 1}; }
 
 			std::string runtime() { return std::string(view()); }
 			const std::string runtime() const { return std::string(view()); }

@@ -2,12 +2,9 @@
 #include "../../thirdparty/ECSquery.hpp"
 
 #include <doctest/doctest.h>
-#include <functional>
-#include <optional>
-#include <ranges>
 
 TEST_SUITE("ECS") {
-	TEST_CASE("ECS Basic") {
+	TEST_CASE("ECS::Basic") {
 		ecs::scene scene;
 		ecs::entity e = scene.create_entity();
 		CHECK(e == 0);
@@ -23,13 +20,13 @@ TEST_SUITE("ECS") {
 		CHECK(*scene.get_component<float>(e) == 6);
 	}
 
-	TEST_CASE("ECS Removal" * doctest::skip()) {
+	TEST_CASE("ECS::Removal") {
 		ecs::scene scene;
 		ecs::entity e = scene.create_entity();
 		CHECK(e == 0);
 		scene.add_component<float>(e);
 		CHECK(scene.release_entity(e));
-		
+
 		e = scene.create_entity();
 		CHECK(e == 0);
 		CHECK(scene.has_component<float>(e) == false);
@@ -51,7 +48,7 @@ TEST_SUITE("ECS") {
 		CHECK(*scene.get_component<float>(e3) == 3);
 	}
 
-	TEST_CASE("ECS Query") {
+	TEST_CASE("ECS::Query") {
 		ecs::scene scene;
 		*scene.add_component<float>(scene.create_entity()) = 1;
 		*scene.add_component<float>(scene.create_entity()) = 2;
@@ -73,5 +70,5 @@ TEST_SUITE("ECS") {
 		// auto filtered = std::ranges::views::filter( | std::views::take(3), [](float value) { return value == 2; });
 	}
 
-	
+
 }

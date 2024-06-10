@@ -36,6 +36,11 @@
 */
 
 namespace ecs {
+	/**
+	 * @brief Marker class which marks an entity as valid in the filter if any of the provided components are present.
+	 *
+	 * @tparam Tcomponents List of possible components to check for
+	 */
 	template<typename... Tcomponents>
 	struct or_{};
 	template<typename... Tcomponents>
@@ -48,124 +53,276 @@ namespace ecs {
 		*/
 		using post_increment_t = int;
 
+		/**
+		* @struct is_optional
+		* @tparam T The type to check
+		* @brief A template struct that checks if a type is an optional type.
+		*/
 		template<typename>
-		struct is_optional: public std::false_type {};
+		struct is_optional : public std::false_type {};
+
+		/**
+		* @struct is_optional
+		* @tparam T The type to check
+		* @brief A specialization of the is_optional struct for types that are optional.
+		*/
 		template<typename T>
 		struct is_optional<optional<T>> : public std::true_type {};
+
+		/**
+		* @variable is_optional_v
+		* @brief A static variable that contains the result of a call to the is_optional struct.
+		*/
 		template<typename T>
 		static constexpr bool is_optional_v = is_optional<T>::value;
 
+		/**
+		* @struct is_or
+		* @tparam T The type to check
+		* @brief A template struct that checks if a type is an or type.
+		*/
 		template<typename>
-		struct is_or: public std::false_type {};
+		struct is_or : public std::false_type {};
+
+		/**
+		* @struct is_or
+		* @tparam Ts... The types to check
+		* @brief A specialization of the is_or struct for types that are ors.
+		*/
 		template<typename... Ts>
 		struct is_or<or_<Ts...>> : public std::true_type {};
+
+		/**
+		* @variable is_or_v
+		* @brief A static variable that contains the result of a call to the is_or struct.
+		*/
 		template<typename T>
 		static constexpr bool is_or_v = is_or<T>::value;
 
-
+		/**
+		* @struct add_reference
+		* @tparam T The type to get the reference for
+		* @brief A template struct that adds a reference to a type.
+		*/
 		template<typename T>
 		struct add_reference { using type = std::add_lvalue_reference_t<T>; };
+
+		/**
+		* @struct add_reference
+		* @tparam T The type to get the reference for
+		* @brief A specialization of the add_reference struct for optional types.
+		*/
 		template<typename T>
 		struct add_reference<std::optional<T>> { using type = optional_reference<T>; };
+
+		/**
+		* @variable add_reference_t
+		* @brief A using declaration that gets the type from the add_reference struct.
+		*/
 		template<typename T>
 		using add_reference_t = typename add_reference<T>::type;
 
+		/**
+		* @struct reference_to_wrapper
+		* @tparam T The type to get the wrapper for
+		* @brief A template struct that adds a wrapper to a type.
+		*/
 		template<typename T>
 		struct reference_to_wrapper { using type = T; };
+
+		/**
+		* @struct reference_to_wrapper
+		* @tparam T The type to get the wrapper for
+		* @brief A specialization of the reference_to_wrapper struct for lvalue references.
+		*/
 		template<typename T>
 		struct reference_to_wrapper<T&> { using type = std::reference_wrapper<T>; };
+
+		/**
+		* @struct reference_to_wrapper
+		* @tparam T The type to get the wrapper for
+		* @brief A specialization of the reference_to_wrapper struct for rvalue references.
+		*/
 		template<typename T>
 		struct reference_to_wrapper<T&&> { using type = std::reference_wrapper<T>; };
-		// template<typename T>
-		// struct reference_to_wrapper<std::reference_wrapper<T>> { using type = std::reference_wrapper<T>; };
+
+		/**
+		* @variable reference_to_wrapper_t
+		* @brief A using declaration that gets the type from the reference_to_wrapper struct.
+		*/
 		template<typename T>
 		using reference_to_wrapper_t = typename reference_to_wrapper<T>::type;
 
+		/**
+		* @struct or_to_variant
+		* @tparam T The type to get the variant for
+		* @brief A template struct that adds a variant to a type.
+		*/
 		template<typename T>
 		struct or_to_variant { using type = T; };
+
+		/**
+		* @struct or_to_variant
+		* @tparam Ts... The types to get the variant for
+		* @brief A specialization of the or_to_variant struct for ors.
+		*/
 		template<typename... Ts>
 		struct or_to_variant<or_<Ts...>> { using type = std::variant<std::monostate, typename or_to_variant<Ts>::type...>; };
+
+		/**
+		* @variable or_to_variant_t
+		* @brief A using declaration that gets the type from the or_to_variant struct.
+		*/
 		template<typename T>
 		using or_to_variant_t = typename or_to_variant<T>::type;
 
+		/**
+		* @struct or_to_variant_reference
+		* @tparam T The type to get the reference for
+		* @brief A template struct that adds a reference to a variant.
+		*/
 		template<typename T>
 		struct or_to_variant_reference { using type = add_reference_t<T>; };
+
+		/**
+		* @struct or_to_variant_reference
+		* @tparam Ts... The types to get the reference for
+		* @brief A specialization of the or_to_variant_reference struct for ors.
+		*/
 		template<typename... Ts>
 		struct or_to_variant_reference<or_<Ts...>> { using type = std::variant<std::monostate, reference_to_wrapper_t<typename or_to_variant_reference<Ts>::type>...>; };
+
+		/**
+		* @variable or_to_variant_reference_t
+		* @brief A using declaration that gets the type from the or_to_variant_reference struct.
+		*/
 		template<typename T>
 		using or_to_variant_reference_t = typename or_to_variant_reference<T>::type;
 
+		/**
+		* @struct or_to_tuple
+		* @tparam T The type to get the tuple for
+		* @brief A template struct that adds a tuple to a type.
+		*/
 		template<typename T>
 		struct or_to_tuple { using type = T; };
+
+		/**
+		* @struct or_to_tuple
+		* @tparam Ts... The types to get the tuple for
+		* @brief A specialization of the or_to_tuple struct for ors.
+		*/
 		template<typename... Ts>
 		struct or_to_tuple<or_<Ts...>> { using type = std::tuple<std::decay_t<or_to_variant_reference_t<Ts>>...>; };
+
+		/**
+		* @variable or_to_tuple_t
+		* @brief A using declaration that gets the type from the or_to_tuple struct.
+		*/
 		template<typename T>
 		using or_to_tuple_t = typename or_to_tuple<T>::type;
 	}
 
 
-
 	/**
 	* @struct scene_view
-	* @brief A view into the ECS scene, allowing iteration over entities and their components.
+	* @brief A class that provides a view into an ECS (Entity-Component-System) scene.
 	*
-	* @tparam Tcomponents A variadic template parameter pack containing the types of the components.
+	* This class is used to iterate over entities in a scene and access their components.
 	*/
 	template<typename... Tcomponents>
 	struct scene_view {
-		ecs::scene& scene; /**< The ECS scene being queried. */
+		/**
+		* @var ecs::scene& scene
+		* The underlying ECS scene.
+		*/
+		ecs::scene& scene;
 
 		/**
-		* @struct Sentinel
-		* @brief A sentinel value indicating the end of the query iteration.
+		* @class Sentinel
+		* A sentinel value that marks the end of an iteration.
 		*/
 		struct Sentinel {};
 
 		/**
-		* @struct Iterator
-		* @brief An iterator over the entities and their components in the ECS scene.
+		* @class Iterator
+		* An iterator class used to iterate over entities in a scene.
 		*
-		* @see scene_view
+		* This iterator is a forward iterator, which means it supports both forward and backward iteration.
 		*/
 		struct Iterator {
-			using difference_type = std::ptrdiff_t; /**< The type of the difference between two iterators. */
-			using value_type = std::tuple<detail::or_to_variant_t<Tcomponents>...>; /**< The type of the values returned by the iterator. */
-			using reference = std::tuple<detail::or_to_variant_reference_t<Tcomponents>...>; /**< The type of the references returned by the iterator. */
-			using pointer = void; /**< The type of the pointers returned by the iterator. */
-			using iterator_category = std::forward_iterator_tag; /**< The category of the iterator. */
-
-			ecs::scene* scene = nullptr; /**< A pointer to the ECS scene being queried. */
-			entity e; /**< The current entity being processed. */
+			/**
+			* The difference type of this iterator.
+			*/
+			using difference_type = std::ptrdiff_t;
+			/**
+			* The value type of this iterator. It's a tuple of variant references to the scene's components.
+			*/
+			using value_type = std::tuple<detail::or_to_variant_t<Tcomponents>...>;
+			/**
+			* A reference to the value type of this iterator.
+			*/
+			using reference = std::tuple<detail::or_to_variant_reference_t<Tcomponents>...>;
+			/**
+			* A pointer to nothing, indicating that the iterator doesn't support pointer dereferencing.
+			*/
+			using pointer = void;
+			/**
+			* The category of this iterator. It's a forward iterator.
+			*/
+			using iterator_category = std::forward_iterator_tag;
 
 			/**
-			* @brief Returns whether the iterator is valid.
+			* The ECS scene pointer and entity ID used by this iterator.
+			*/
+			ecs::scene* scene;
+			entity e;
+
+			/**
+			* Checks if the iterator is valid.
 			*
-			* @return true if the iterator is valid, false otherwise.
+			* @return True if the iterator is valid, false otherwise.
 			*/
 			bool valid() const { return (valid_impl<Tcomponents>() && ...); }
+
 		protected:
+			/**
+			* A template function that checks if the iterator is valid for a single component type.
+			*
+			* @param Tcomponent The component type to check.
+			* @return True if the component is present, false otherwise.
+			*/
 			template<typename Tcomponent>
 			bool valid_impl() const {
 				if constexpr(detail::is_or_v<Tcomponent>) {
 					return valid_impl_or_expand(Tcomponent{});
 				} else if constexpr(detail::is_optional_v<Tcomponent>) {
 					return true;
-				} else return scene->has_component<Tcomponent>(e);
+				} else
+					return scene->has_component<Tcomponent>(e);
 			}
+
+			/**
+			* A template function that checks if the iterator is valid for an "or expression"
+			*
+			* @param Tcomps The component types to check.
+			* @return True if all components are present, false otherwise.
+			*/
 			template<typename... Tcomps>
 			bool valid_impl_or_expand(or_<Tcomps...>) const { return (valid_impl<Tcomps>() || ...); }
+
 		public:
 
 			/**
-			* @brief Equality operator for comparing two iterators.
+			* Checks if the iterator is equal to a sentinel value.
 			*
-			* @param o The other iterator to compare with.
-			* @return true if the iterators are equal, false otherwise.
+			* @param Sentinel The sentinel value to compare with.
+			* @return True if the iterators are equal, false otherwise.
 			*/
 			bool operator==(Sentinel) const { return scene == nullptr || e >= scene->size<true>(); }
 
 			/**
-			* @brief Partial ordering operator for comparing two iterators.
+			* Compares two iterators for ordering.
 			*
 			* @param o The other iterator to compare with.
 			* @return A partial ordering of the iterators.
@@ -177,13 +334,22 @@ namespace ecs {
 			}
 
 			/**
-			* @brief Advances the iterator to the next entity.
+			* Increments the iterator to the next valid enity.
+			*
+			* @param detail::post_increment_t A flag indicating whether this is a post-increment or not.
+			* @return The old state of the iterator before incrementation.
 			*/
 			Iterator operator++(detail::post_increment_t) {
 				Iterator old{scene, e};
 				operator++();
 				return old;
 			}
+
+			/**
+			* Increments the iterator to the next valid enity.
+			*
+			* @return This iterator after incrementation.
+			*/
 			Iterator& operator++() {
 				do {
 					e++;
@@ -192,13 +358,20 @@ namespace ecs {
 			}
 
 			/**
-			* @brief Deference opperator
+			* Dereferences the iterator and returns a reference to the components at this position.
 			*
-			* @return References to all of the components currently being viewed
+			* @return A tuple of references to the components at this position.
 			*/
 			reference operator*() const { return { get_component<Tcomponents, true>()... }; }
 
 		protected:
+			/**
+			* @brief Get a component from the scene.
+			*
+			* @tparam Tcomponent The type of the component to retrieve.
+			* @param[in] deref Whether to dereference the result if it's a pointer. Defaults to true.
+			* @return The retrieved component, or an empty optional if no component is found.
+			*/
 			template<typename Tcomponent, bool deref = true>
 			decltype(auto) get_component() const {
 				if constexpr(detail::is_or_v<Tcomponent>)
@@ -209,6 +382,13 @@ namespace ecs {
 					return *scene->get_component<Tcomponent>(e);
 				else return scene->get_component<Tcomponent>(e);
 			}
+
+			/**
+			* @brief Get all components from an OR of component types.
+			*
+			* @tparam Tcomps A tuple of component types to retrieve.
+			* @return The first non-empty optional component, or an empty optional if no components are found.
+			*/
 			template<typename... Tcomps>
 			inline auto get_component_or(or_<Tcomps...>) const {
 				detail::or_to_variant_reference_t<or_<Tcomps...>> out = {};
@@ -223,20 +403,42 @@ namespace ecs {
 				}(elems) && ...); }, detail::or_to_tuple_t<or_<Tcomps...>>{});
 				return out;
 			}
+
+			/**
+			* @brief Get an optional component from the scene.
+			*
+			* @tparam Tcomponent The type of the optional component to retrieve.
+			* @param[in] opt An optional component.
+			* @return An optional reference to the retrieved component, or an empty optional if no component is 
+			found.
+			*/
 			template<typename Tcomponent>
 			inline optional_reference<Tcomponent> get_component_optional(std::optional<Tcomponent>) const {
 				return scene->get_component<Tcomponent>(e);
 			}
 		};
 
+		/**
+		* @brief Begins an iteration over the matching entities in the scene.
+		*
+		* @return The starting iterator for the iteration.
+		*/
 		Iterator begin() {
 			Iterator out{&scene, 0};
 			if(!out.valid()) ++out;
 			return out;
 		}
+		/**
+		 * @brief Marks the end of an iteration over the matching entities in the scene.
+		 */
 		Sentinel end() { return {}; }
 	};
 
+
+	/**
+	 * @brief Struct which when added to the list of components to filter for, includes the entity in the result
+	 * @note Must be present at the beginning of the filter list
+	 */
 	struct include_entity{};
 	using IncludeEntity = include_entity;
 
@@ -258,6 +460,10 @@ namespace ecs {
 		}
 	};
 
+	/**
+	 * @brief Struct which when added to the list of components to filter for, includes a reference to the scene in the result
+	 * @note Must be present at the beginning of the filter list
+	 */
 	struct include_scene{};
 	using IncludeScene = include_scene;
 

@@ -632,4 +632,4 @@ documentation = `(/\*\*(.*?)\*/)`
 comment = `(//[^\n]*\n)|(/\*(.*?)\*/)`
 whitespace = `[ \t\n\r]+`
 
-filaname = `[^:]+?`
+filename = `[^:]+?`
