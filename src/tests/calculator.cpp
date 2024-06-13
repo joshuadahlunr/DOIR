@@ -2,6 +2,7 @@
 // #define LEXER_IS_STATEFULL
 #include "../lexer.hpp"
 #include "../core.hpp"
+#include "../parse_state.hpp"
 
 #include <doctest/doctest.h>
 
@@ -131,158 +132,160 @@ constexpr doir::lex::lexer<
 struct parse {
 	struct Variable {};
 
-	void print_result(doir::ParseModule& data, doir::Token t) {
+	void print_result(doir::ParseModule& module, doir::Token t) {
 		static size_t i = 0;
-		std::cout << i++;
-		if(data.has_attribute<doir::Error>(t))
-			std::cerr << " !!ERROR: " << data.get_attribute<doir::Error>(t)->message << std::endl;
-		else std::cout << ": " << *data.get_attribute<float>(t) << std::endl;
+		std::cout << i++ << ": ";
+		if(module.has_attribute<doir::Error>(t))
+			std::cerr << "!!ERROR!! " << module.get_attribute<doir::Error>(t)->message << std::endl;
+		else std::cout << *module.get_attribute<float>(t) << std::endl;
 	}
 
-	doir::Token lookup_variable(doir::ParseModule& data, std::string_view target) {
-		for(auto [t, _1, _2, name] : doir::query_with_token<Variable, float, doir::Lexeme>(data))
-			if(name.view(data.buffer) == target)
-				return t;
-		return 0;
+	doir::Token lookup_variable(doir::ParseModule& module, std::string_view target) {
+		auto query = doir::query_with_token<Variable, float, doir::Lexeme>(module);
+		auto res = std::ranges::find_if(query, [&module, target](const auto& tuple){
+			// auto [_0, _1, _2, name] = tuple;
+			return std::get<3>(tuple).view(module.buffer) == target;
+		});
+		return res == std::ranges::end(query) ? 0 : std::get<doir::Token>(*res);
 	}
 
 	// start: expressions
-	bool start(doir::ParseModule& data) {
-		if(data.state.lexer.lexeme.empty()) data.lex(lexer);
-		return !data.has_attribute<doir::Error>(expressions(data));
+	bool start(doir::ParseModule& module) {
+		if(module.lexer_state.lexeme.empty()) module.lex(lexer);
+		return !module.has_attribute<doir::Error>(expressions(module));
 	}
 
 	// expressions : assignment_expression | assignment_expression \n expressions;
-	doir::Token expressions(doir::ParseModule& data) {
-		if(!data.state.lexer.valid()) return data.make_error();
-		auto t = assignment_expression(data);
-		print_result(data, t);
+	doir::Token expressions(doir::ParseModule& module) {
+		if(!module.lexer_state.valid()) return module.make_error();
+		auto t = assignment_expression(module);
+		print_result(module, t);
 
-		if(data.lex(lexerNewline).lexer.token<Tokens>() == Newline){
-			data.lex(lexer);
-			return expressions(data);
+		if(module.lex(lexerNewline).lexer_state.token<Tokens>() == Newline){
+			module.lex(lexer);
+			return expressions(module);
 		}
 
 		return t;
 	}
 
 	// assignment_expression: identifier = assignment_expression | add_expression;
-	doir::Token assignment_expression(doir::ParseModule& data) {
-		if(!data.state.lexer.valid()) return data.make_error();
+	doir::Token assignment_expression(doir::ParseModule& module) {
+		if(!module.lexer_state.valid()) return module.make_error();
 
-		if(data.current_lexer_token<Tokens>() == Identifier){
-			if(data.current_lexer_token<Tokens>(data.lookahead(lexer)) == Equals) {
+		if(module.current_lexer_token<Tokens>() == Identifier){
+			if(module.current_lexer_token<Tokens>(module.lookahead(lexer)) == Equals) {
 				// Find the attribute storing the identifier value (or make it if it doesn't exist!)
-				doir::Token ident = lookup_variable(data, data.state.lexer.lexeme);
+				doir::Token ident = lookup_variable(module, module.lexer_state.lexeme);
 				if(ident == 0) {
-					ident = data.make_token();
-					data.add_attribute<Variable>(ident);
-					data.add_attribute<float>(ident);
+					ident = module.make_token();
+					module.add_attribute<Variable>(ident);
+					module.add_attribute<float>(ident);
 				}
 
-				if(data.lex(lexer).lexer.token<Tokens>() != Equals)
-					return data.make_error<doir::Error>({"Expected `=`!"});
-				data.lex(lexer);
-				auto expr = assignment_expression(data);
+				if(module.lex(lexer).lexer_state.token<Tokens>() != Equals)
+					return module.make_error<doir::Error>({"Expected `=`!"});
+				module.lex(lexer);
+				auto expr = assignment_expression(module);
 				if(expr == 0) return expr;
-				auto value = *data.get_attribute<float>(expr);
-				*data.get_attribute<float>(ident) = value;
+				auto value = *module.get_attribute<float>(expr);
+				*module.get_attribute<float>(ident) = value;
 				return ident;
 			}
 		}
-		return add_expression(data);
+		return add_expression(module);
 	}
 
 	// add_expression : mult_expression add_expression';
 	// add_expression' : + mult_expression add_expression' | - mult_expression add_expression' | eps;
-	doir::Token add_expression_prime(doir::ParseModule& data) {
-		if (auto t = data.current_lexer_token<Tokens>(); t == Plus || t == Minus) {
-			data.lex(lexer);
-			doir::Token value = mult_expression(data);
-			if(data.has_attribute<doir::Error>(value)) return value;
-			if(t == Minus) *data.get_attribute<float>(value) = -(*data.get_attribute<float>(value));
+	doir::Token add_expression_prime(doir::ParseModule& module) {
+		if (auto t = module.current_lexer_token<Tokens>(); t == Plus || t == Minus) {
+			module.lex(lexer);
+			doir::Token value = mult_expression(module);
+			if(module.has_attribute<doir::Error>(value)) return value;
+			if(t == Minus) *module.get_attribute<float>(value) = -(*module.get_attribute<float>(value));
 
 			// data.lex(lexer);
-			doir::Token prime = add_expression_prime(data);
+			doir::Token prime = add_expression_prime(module);
 			if(prime == 0) return value;
-			if(data.has_attribute<doir::Error>(prime)) return prime;
+			if(module.has_attribute<doir::Error>(prime)) return prime;
 
-			*data.get_attribute<float>(prime) += *data.get_attribute<float>(value);
+			*module.get_attribute<float>(prime) += *module.get_attribute<float>(value);
 			return prime;
 		}
 		return 0;
 	}
-	doir::Token add_expression(doir::ParseModule& data) {
-		doir::Token value = mult_expression(data);
-		if(data.has_attribute<doir::Error>(value)) return value;
+	doir::Token add_expression(doir::ParseModule& module) {
+		doir::Token value = mult_expression(module);
+		if(module.has_attribute<doir::Error>(value)) return value;
 
 		// data.lex(lexer); Don't need to get the next token here, mult_expression does it in this same spot!
-		doir::Token prime = add_expression_prime(data);
+		doir::Token prime = add_expression_prime(module);
 		if(prime == 0) return value;
-		if(data.has_attribute<doir::Error>(prime)) return prime;
+		if(module.has_attribute<doir::Error>(prime)) return prime;
 
-		*data.get_attribute<float>(prime) += *data.get_attribute<float>(value);
+		*module.get_attribute<float>(prime) += *module.get_attribute<float>(value);
 		return prime;
 	}
 
 	// mult_expression : primary_expression mult_expression';
 	// mult_expression' : * primary_expression mult_expression' | / primary_expression mult_expression' | eps;
-	doir::Token mult_expression_prime(doir::ParseModule& data) {
-		if (auto t = data.current_lexer_token<Tokens>(); t == Mult || t == Divide) {
-			data.lex(lexer);
-			doir::Token value = primary_expression(data);
-			if(data.has_attribute<doir::Error>(value)) return value;
-			if (t == Divide) *data.get_attribute<float>(value) = 1 / (*data.get_attribute<float>(value));
+	doir::Token mult_expression_prime(doir::ParseModule& module) {
+		if (auto t = module.current_lexer_token<Tokens>(); t == Mult || t == Divide) {
+			module.lex(lexer);
+			doir::Token value = primary_expression(module);
+			if(module.has_attribute<doir::Error>(value)) return value;
+			if (t == Divide) *module.get_attribute<float>(value) = 1 / (*module.get_attribute<float>(value));
 
-			data.lex(lexer);
-			doir::Token prime = mult_expression_prime(data);
+			module.lex(lexer);
+			doir::Token prime = mult_expression_prime(module);
 			if(prime == 0) return value;
-			if(data.has_attribute<doir::Error>(prime)) return prime;
+			if(module.has_attribute<doir::Error>(prime)) return prime;
 
-			*data.get_attribute<float>(prime) *= *data.get_attribute<float>(value);
+			*module.get_attribute<float>(prime) *= *module.get_attribute<float>(value);
 			return prime;
 		}
 		return 0;
 	}
-	doir::Token mult_expression(doir::ParseModule& data) {
-		doir::Token value = primary_expression(data);
-		if(data.has_attribute<doir::Error>(value)) return value;
+	doir::Token mult_expression(doir::ParseModule& module) {
+		doir::Token value = primary_expression(module);
+		if(module.has_attribute<doir::Error>(value)) return value;
 
-		data.lex(lexer);
-		doir::Token prime = mult_expression_prime(data);
+		module.lex(lexer);
+		doir::Token prime = mult_expression_prime(module);
 		if(prime == 0) return value;
-		if(data.has_attribute<doir::Error>(prime)) return prime;
+		if(module.has_attribute<doir::Error>(prime)) return prime;
 
-		*data.get_attribute<float>(prime) *= *data.get_attribute<float>(value);
+		*module.get_attribute<float>(prime) *= *module.get_attribute<float>(value);
 		return prime;
 	}
 
 	// primary_expression : identifier | literal | (assignment_expression);
-	doir::Token primary_expression(doir::ParseModule& data) {
-		if(!data.state.lexer.valid()) return data.make_error();
+	doir::Token primary_expression(doir::ParseModule& module) {
+		if(!module.lexer_state.valid()) return module.make_error();
 
-		switch(data.state.lexer.token<Tokens>()){
+		switch(module.lexer_state.token<Tokens>()){
 		break; case Identifier: {
-			doir::Token ident = lookup_variable(data, data.state.lexer.lexeme);
-			if(ident == 0) return data.make_error<doir::Error>({"Identifier not found!"});
-			doir::Token t = data.make_token();
-			data.add_attribute<float>(t) = *data.get_attribute<float>(ident);
+			doir::Token ident = lookup_variable(module, module.lexer_state.lexeme);
+			if(ident == 0) return module.make_error<doir::Error>({"Identifier not found!"});
+			doir::Token t = module.make_token();
+			module.add_attribute<float>(t) = *module.get_attribute<float>(ident);
 			return t;
 		}
 		break; case Literal: {
-			doir::Token t = data.make_token();
-			data.add_attribute<float>(t) = std::strtold(data.get_attribute<doir::Lexeme>(t)->view(data.buffer).data(), nullptr);
+			doir::Token t = module.make_token();
+			module.add_attribute<float>(t) = std::strtold(module.get_attribute<doir::Lexeme>(t)->view(module.buffer).data(), nullptr);
 			return t;
 		}
 		break; case Open: {
-			data.lex(lexer);
-			doir::Token expr = assignment_expression(data);
-			if(data.has_attribute<doir::Error>(expr)) return expr;
-			if(data.state.lexer.token<Tokens>() != Close)
-				return data.make_error<doir::Error>({"Expected `)`!"});
+			module.lex(lexer);
+			doir::Token expr = assignment_expression(module);
+			if(module.has_attribute<doir::Error>(expr)) return expr;
+			if(module.lexer_state.token<Tokens>() != Close)
+				return module.make_error<doir::Error>({"Expected `)`!"});
 			return expr;
 		}
-		break; default: return data.make_error<doir::Error>({"Unexpected token!"});
+		break; default: return module.make_error<doir::Error>({"Unexpected token!"});
 		}
 	}
 };
@@ -305,35 +308,35 @@ TEST_CASE("runtime_strings") {
 }
 
 TEST_CASE("Calculator Parse") {
-	doir::ParseModule data("pi = 3.14159265358979323846\n");
+	doir::ParseModule module("pi = 3.14159265358979323846\n");
 	parse p;
-	p.start(data);
-	CHECK(std::abs(*data.get_attribute<float>(1) - 3.14159265358979323846) < .00001);
+	p.start(module);
+	CHECK(doir::float_equal<float>(*module.get_attribute<float>(1), 3.14159265358979323846) == true);
 }
 
 TEST_CASE("Calculator REPL" * doctest::skip()) {
-	doir::ParseModule data("");
+	doir::ParseModule module("");
 	parse p;
 
 	std::cout << "> ";
-	size_t start = data.buffer.size();
+	size_t start = module.buffer.size();
 	std::string temp;
 	while(std::getline(std::cin, temp)) {
 		if(temp == "\\q") break;
 
-		data.buffer = data.buffer + temp + "\n";
-		data.state.lexer.lexeme = {};
-		data.state.lexer.remaining = std::string_view{data.buffer}.substr(start);
-		data.state.location.next_line();
-		start = data.buffer.size();
+		module.buffer = module.buffer + temp + "\n";
+		module.lexer_state.lexeme = {};
+		module.lexer_state.remaining = std::string_view{module.buffer}.substr(start);
+		start = module.buffer.size();
 
-		p.start(data);
+		p.start(module);
 		std::cout << "> ";
+		module.source_location.next_line();
 	}
 
-	std::cout << data.token_count() << std::endl;
+	std::cout << module.token_count() << std::endl;
 	size_t i = 0;
-	for(auto [t, lexeme, location, value]: doir::query_with_token<doir::Lexeme, doir::NamedSourceLocation, float>(data))
+	for(auto [t, lexeme, location, value]: doir::query_with_token<doir::Lexeme, doir::NamedSourceLocation, float>(module))
 	// for(auto [t, lexeme, location, value]: doir::query_with_token<doir::Lexeme, doir::NamedSourceLocation, doir::or_<float, double>>(data))
-		std::cout << i++ << " (" << t << "): `" << lexeme.view(data.buffer) << "` = " << value << "; " << doir::SourceLocation(location).to_string(lexeme.length) << std::endl;
+		std::cout << i++ << " (" << t << "): `" << lexeme.view(module.buffer) << "` = " << value << "; " << doir::SourceLocation(location).to_string(lexeme.length) << std::endl;
 }

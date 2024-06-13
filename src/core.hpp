@@ -14,10 +14,13 @@ namespace doir {
 
 	using ecs::optional_reference;
 	using ecs::optional;
-	using ecs::or_;
-	using ecs::Or;
 
 	using Token = ecs::entity;
+
+	template<std::floating_point T>
+	bool float_equal(T a, T b, T epsilon = .00001) {
+		return std::abs(a - b) < epsilon;
+	}
 
 	struct Module: protected ecs::scene {
 		std::string buffer;
@@ -72,15 +75,17 @@ namespace doir {
 	struct Lexeme {
 		size_t start, length;
 
-		std::string_view view(std::string_view buffer) { return buffer.substr(start, length); }
+		std::string_view view(std::string_view buffer) const { return buffer.substr(start, length); }
 		static std::optional<Lexeme> from_view(std::string_view buffer, std::string_view source) {
 			auto diff = source.data() - buffer.data();
 			if(diff < 0) return {};
 			if(diff + source.size() > buffer.size()) return {};
 			return {{(size_t)diff, source.size()}};
 		}
+
+		std::strong_ordering operator<=>(const Lexeme&) const = default;
 	};
-	struct Reference : public std::variant<Token, Lexeme> {
+	struct TokenReference : public std::variant<Token, Lexeme> {
 		using std::variant<Token, Lexeme>::variant;
 
 		bool looked_up() const { return index() == 0; }
@@ -95,85 +100,14 @@ namespace doir {
 	struct Error {
 		std::string message;
 
-		// Probably want to add some checks for disabled exceptions around this!
+#if __cpp_exceptions >= 199711 
 		void Throw() { throw std::runtime_error(message); }
-	};
-
-	struct ParseModule: public Module {
-		struct State {
-			doir::lex::lexer_generic_result lexer;
-			NamedSourceLocation location;
-		} state;
-
-		ParseModule(const std::string& buffer = "", NamedSourceLocation location = {}) : Module(buffer), state({}, location) {
-			state.lexer.remaining = this->buffer;
-		}
-
-		auto save_state() {
-			return state;
-		}
-		void restore_state(State saved) {
-			state = saved;
-		}
-
-		static State lookahead(/*doir::lex::detail::instantiation_of_lexer<doir::lex::basic_lexer>*/ auto& lexer, const State& state) {
-			auto location = state.location;
-			auto res = lexer.lex(state.lexer);
-			if(res.lexeme.empty() || state.lexer.lexeme.empty()) return {res, location};
-			for(size_t i = 0, traversed = res.lexeme.data() - state.lexer.lexeme.data(); i < traversed; i++) { // TODO: Is there a way to implement this without having to double iterate?
-				auto c = state.lexer.lexeme.data()[i];
-				if(c == '\n')
-					location.next_line();
-				else location.column++;
-			}
-			return {res, location};
-		}
-		State lookahead(/*doir::lex::detail::instantiation_of_lexer<doir::lex::basic_lexer>*/ auto& lexer) { return lookahead(lexer, this->state); }
-
-		State& lex(/*doir::lex::detail::instantiation_of_lexer<doir::lex::basic_lexer>*/ auto& lexer, const State& state) {
-			return this->state = lookahead(lexer, state);
-		}
-		State& lex(/*doir::lex::detail::instantiation_of_lexer<doir::lex::basic_lexer>*/ auto& lexer) { return lex(lexer, this->state); }
-
-		Token make_token(const State& state) {
-			if(!state.lexer.valid()) return 0;
-			auto t = Module::make_token();
-			add_attribute<Lexeme>(t) = *Lexeme::from_view(buffer, state.lexer.lexeme);
-			add_attribute<NamedSourceLocation>(t) = state.location;
-			return t;
-		}
-		Token make_token() { return make_token(this->state); }
-
-		template<typename Terror>
-		Token make_error(const State& state, Terror&& error) {
-			Token t = 0;
-			add_attribute<Terror>(t) = error;
-			if(!state.lexer.valid()) return t;
-
-			add_attribute<Lexeme>(t) = *Lexeme::from_view(buffer, state.lexer.lexeme);
-			add_attribute<NamedSourceLocation>(t) = state.location;
-			return t;
-		}
-		template<typename Terror>
-		Token make_error(Terror&& error) { return make_error<Terror>(this->state, std::move(error)); }
-		Token make_error() { return make_error<doir::Error>({"An error has occurred!"}); }
-
-		Token lex_and_make_token(/*doir::lex::detail::instantiation_of_lexer<doir::lex::basic_lexer>*/ auto& lexer, const State& state) {
-			lex(lexer, state);
-			return make_token(state);
-		}
-		Token lex_and_make_token(/*doir::lex::detail::instantiation_of_lexer<doir::lex::basic_lexer>*/ auto& lexer) {
-			return lex_and_make_token(lexer, this->state);
-		}
-
-		template<typename Token>
-		Token current_lexer_token(const State& state) { return state.lexer.token<Token>(); }
-		template<typename Token>
-		Token current_lexer_token() { return current_lexer_token<Token>(this->state); }
+#endif
 	};
 
 
-
+	using ecs::or_;
+	using ecs::Or;
 	using include_token = ecs::include_entity;
 	using include_module = ecs::include_scene;
 

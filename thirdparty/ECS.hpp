@@ -38,6 +38,8 @@
 #ifdef __GNUC__
 	#include <new>
 	#include <cxxabi.h>
+#elifdef _MSC_VER
+	#include <typeinfo>
 #endif
 
 #ifdef ECS_IMPLEMENTATION
@@ -91,39 +93,41 @@ namespace ecs {
 	class optional_reference: public std::optional<std::reference_wrapper<T>> {
 		using Base = std::optional<std::reference_wrapper<T>>;
 	public:
-		/**
-		* @brief Get a const reference to the wrapped value.
-		*
-		* Returns a const reference to the wrapped value if it is valid, otherwise returns nullptr.
-		*/
-		constexpr const T* operator->() const noexcept { return &Base::operator*().get(); }
-
-		/**
-		* @brief Get a non-const reference to the wrapped value.
-		*
-		* Returns a non-const reference to the wrapped value if it is valid, otherwise returns nullptr.
-		*/
-		constexpr T* operator->() noexcept { return &Base::operator*().get(); }
+		inline constexpr std::reference_wrapper<T> reference_wrapper() { return Base::operator*(); }
 
 		/**
 		* @brief Get a const reference to the wrapped value.
 		*
 		* Returns a const reference to the wrapped value if it is valid, otherwise returns nullptr.
 		*/
-		constexpr T& operator*() /*&*/ noexcept { return Base::operator*().get(); }
+		inline constexpr const T* operator->() const noexcept { return &reference_wrapper().get(); }
 
 		/**
 		* @brief Get a non-const reference to the wrapped value.
 		*
 		* Returns a non-const reference to the wrapped value if it is valid, otherwise returns nullptr.
 		*/
-		constexpr const T& operator*() const/*&*/ noexcept { return Base::operator*().get(); }
+		inline constexpr T* operator->() noexcept { return &reference_wrapper().get(); }
 
-		constexpr T& value() /*&*/ { return Base::operator*().get(); }
-		constexpr const T& value() const /*&*/ { return Base::operator*().get(); }
+		/**
+		* @brief Get a const reference to the wrapped value.
+		*
+		* Returns a const reference to the wrapped value if it is valid, otherwise returns nullptr.
+		*/
+		inline constexpr T& operator*() /*&*/ noexcept { return reference_wrapper().get(); }
+
+		/**
+		* @brief Get a non-const reference to the wrapped value.
+		*
+		* Returns a non-const reference to the wrapped value if it is valid, otherwise returns nullptr.
+		*/
+		inline constexpr const T& operator*() const/*&*/ noexcept { return reference_wrapper().get(); }
+
+		inline constexpr T& value() /*&*/ { return reference_wrapper().get(); }
+		inline constexpr const T& value() const /*&*/ { return reference_wrapper().get(); }
 
 		template< class U >
-		constexpr T value_or( U&& default_value ) const& { return bool(*this) ? Base::operator*().get() : static_cast<T>(std::forward<U>(default_value)); }
+		inline constexpr T value_or( U&& default_value ) const& { return bool(*this) ? reference_wrapper().get() : static_cast<T>(std::forward<U>(default_value)); }
 
 #if __cpp_lib_optional >= 202110L
 		// TODO: Wrap and_then, transform, or_else
@@ -242,7 +246,7 @@ namespace ecs {
 			component_storage(Tcomponent reference = {}, size_t element_count = 5) : component_storage(sizeof(Tcomponent), element_count) {}
 
 			/**
-			* @brief Template function that retrieves a component by its entity index, if it exists and matchesthe expected type.
+			* @brief Template function that retrieves a component by its entity index, if it exists and matches the expected type.
 			*
 			* @tparam Tcomponent The type of component.
 			* @param e The entity index.
@@ -254,14 +258,6 @@ namespace ecs {
 				if (!(e < (data.size() / element_size))) return {};
 				return {*(Tcomponent*)(data.data() + e * element_size)};
 			}
-
-			/**
-			* @brief Template function that retrieves a component by its entity index, if it exists and matches the expected type.
-			*
-			* @tparam Tcomponent The type of component.
-			* @param e The entity index.
-			* @return An optional reference to the retrieved component, or an empty optional if it doesn't exist or doesn't match the expected type.
-			*/
 			template<typename Tcomponent>
 			optional_reference<Tcomponent> get(entity e) {
 				if (auto got = ((const component_storage*)this)->get<Tcomponent>(e); got) return {const_cast<Tcomponent&>(*got)}; else return {};
@@ -308,7 +304,7 @@ namespace ecs {
 			* @brief function which determines how many components are currently stored inside this storage.
 			*
 			* @return How many components are currently stored inside this storage.
-			* @note Some of these components may be unitialized!
+			* @note Some of these components may be uninitialized!
 			*/
 			size_t size() const { return data.size() / element_size; }
 
@@ -353,9 +349,9 @@ namespace ecs {
 		};
 
 		/**
-		* @brief Vector of entity masks, where each mask represents an entity's component indecies in the storage.
+		* @brief Vector of entity masks, where each mask represents an entity's component indices in the storage.
 		*/
-		std::vector<std::vector<entity>> entity_component_indicies;
+		std::vector<std::vector<entity>> entity_component_indices;
 
 		/**
 		* @brief Vector of storage objects for storing and retrieving components.
@@ -375,7 +371,7 @@ namespace ecs {
 		*/
 		template<bool ignoreFree = false>
 		size_t size() const {
-			size_t size = entity_component_indicies.size();
+			size_t size = entity_component_indices.size();
 			if constexpr(!ignoreFree) size -= freelist.size();
 			return size;
 		}
@@ -432,13 +428,13 @@ namespace ecs {
 		*/
 		entity create_entity() {
 			if(freelist.empty()) {
-				entity e = entity_component_indicies.size();
-				entity_component_indicies.emplace_back(std::vector<size_t>{component_storage::invalid});
+				entity e = entity_component_indices.size();
+				entity_component_indices.emplace_back(std::vector<size_t>{component_storage::invalid});
 				return e;
 			}
 
 			entity e = freelist.back();
-			entity_component_indicies[e] = std::vector<size_t>{component_storage::invalid};
+			entity_component_indices[e] = std::vector<size_t>{component_storage::invalid};
 			freelist.pop();
 			return e;
 		}
@@ -450,12 +446,12 @@ namespace ecs {
 		* @return Whether the release was successful.
 		*/
 		bool release_entity(entity e, bool clearMemory = true) {
-			if(e >= entity_component_indicies.size()) return false;
+			if(e >= entity_component_indices.size()) return false;
 
-			if(clearMemory) for(size_t i = storages.size() - 1; --i; )
+			if(clearMemory && !storages.empty()) for(size_t i = storages.size() - 1; i--; )
 				storages[i].remove(*this, e, i);
 
-			entity_component_indicies[e] = std::vector<size_t>{component_storage::invalid};
+			entity_component_indices[e] = std::vector<size_t>{component_storage::invalid};
 			freelist.emplace(e);
 			return true;
 		}
@@ -470,11 +466,11 @@ namespace ecs {
 		template<typename Tcomponent>
 		optional_reference<Tcomponent> add_component(entity e) {
 			size_t id = get_global_component_id<Tcomponent>();
-			auto& indicies = entity_component_indicies[e];
-			if(indicies.empty() || indicies.size() <= id)
-				indicies.resize(id + 1, component_storage::invalid);
-			indicies[id] = get_storage<Tcomponent>()->size();
-			return get_storage<Tcomponent>()->template get_or_allocate<Tcomponent>(indicies[id]);
+			auto& indices = entity_component_indices[e];
+			if(indices.empty() || indices.size() <= id)
+				indices.resize(id + 1, component_storage::invalid);
+			indices[id] = get_storage<Tcomponent>()->size();
+			return get_storage<Tcomponent>()->template get_or_allocate<Tcomponent>(indices[id]);
 		}
 
 		/**
@@ -497,16 +493,18 @@ namespace ecs {
 		template<typename Tcomponent>
 		optional_reference<Tcomponent> get_component(entity e) {
 			size_t id = get_global_component_id<Tcomponent>();
-			if(e >= entity_component_indicies.size()) return {};
-			if(entity_component_indicies[e][id] == component_storage::invalid) return {};
-			return get_storage<Tcomponent>()->template get<Tcomponent>(entity_component_indicies[e][id]);
+			if(e >= entity_component_indices.size()) return {};
+			if(entity_component_indices[e].size() <= id) return {};
+			if(entity_component_indices[e][id] == component_storage::invalid) return {};
+			return get_storage<Tcomponent>()->template get<Tcomponent>(entity_component_indices[e][id]);
 		}
 		template<typename Tcomponent>
 		optional_reference<const Tcomponent> get_component(entity e) const {
 			size_t id = get_global_component_id<Tcomponent>();
-			if(e >= entity_component_indicies.size()) return {};
-			if(entity_component_indicies[e][id] == component_storage::invalid) return {};
-			if(auto s = get_storage<Tcomponent>(); s) return s->template get<Tcomponent>(entity_component_indicies[e][id]);
+			if(e >= entity_component_indices.size()) return {};
+			if(entity_component_indices[e].size() <= id) return {};
+			if(entity_component_indices[e][id] == component_storage::invalid) return {};
+			if(auto s = get_storage<Tcomponent>(); s) return s->template get<Tcomponent>(entity_component_indices[e][id]);
 			return {};
 		}
 
@@ -520,26 +518,26 @@ namespace ecs {
 		template<typename Tcomponent>
 		bool has_component(entity e) const {
 			size_t id = get_global_component_id<Tcomponent>();
-			return entity_component_indicies.size() > e && entity_component_indicies[e].size() > id && entity_component_indicies[e][id] != component_storage::invalid;
+			return entity_component_indices.size() > e && entity_component_indices[e].size() > id && entity_component_indices[e][id] != component_storage::invalid;
 		}
 	};
 
 	inline bool scene::component_storage::remove(scene& scene, entity e, size_t id) {
-		if(e >= scene.entity_component_indicies.size()) return false;
-		auto& indicies = scene.entity_component_indicies[e];
-		if(!(indicies.size() > id)) return false;
+		if(size() == 0) return false;
+		if(e >= scene.entity_component_indices.size()) return false;
+		auto& indices = scene.entity_component_indices[e];
+		if(!(indices.size() > id)) return false;
 
 		size_t lastIndex = size() - 1;
-		for(e = 0; e < scene.entity_component_indicies.size(); ++e)
-			if(indicies[id] == lastIndex) {
-				lastIndex = e;
+		for(e = 0; e < scene.entity_component_indices.size(); ++e)
+			if( scene.entity_component_indices[e][id] == lastIndex)
 				break;
-			}
-		if(e >= scene.entity_component_indicies.size()) return false;
+		if(e >= scene.entity_component_indices.size()) return false;
 
-		swap(indicies[id]);
-		std::swap(indicies[id], scene.entity_component_indicies[lastIndex][id]);
-		data.erase(data.cbegin() + data.size() - element_size - 1, data.cend());
+		if(!swap(indices[id])) return false;
+		std::swap(indices[id], scene.entity_component_indices[e][id]);
+		data.erase(data.cbegin() + data.size() - element_size, data.cend());
+		indices[id] = component_storage::invalid;
 		return true;
 	}
 }

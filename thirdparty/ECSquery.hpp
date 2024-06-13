@@ -210,26 +210,18 @@ namespace ecs {
 				else return scene->get_component<Tcomponent>(e);
 			}
 			template<typename... Tcomps>
-			inline detail::or_to_variant_reference_t<or_<Tcomps...>> get_component_or(or_<Tcomps...>) const {
-				using Variant = detail::or_to_variant_reference_t<or_<Tcomps...>>;
-				Variant out = {};
-				std::apply([this, &out](auto ...elem){ ([this, &out](auto elem) {
+			inline auto get_component_or(or_<Tcomps...>) const {
+				detail::or_to_variant_reference_t<or_<Tcomps...>> out = {};
+				std::apply([this, &out](auto... elems){ ([this, &out](auto elem) {
 					using Tcomponent = decltype(elem);
-					auto res = get_component_or_single<Tcomponent, Tcomps...>({});
-					if(res.index() > 0){
-						out = res;
+					auto res = get_component<Tcomponent, false>();
+					if(res) {
+						out = *res;
 						return false;
 					}
 					return true;
-				}(elem) && ...); }, detail::or_to_tuple_t<or_<Tcomps...>>{});
+				}(elems) && ...); }, detail::or_to_tuple_t<or_<Tcomps...>>{});
 				return out;
-			}
-			template<typename Tcomponent, typename... Tcomps>
-			inline detail::or_to_variant_reference_t<or_<Tcomps...>> get_component_or_single(or_<Tcomps...>) const {
-				// using Variant = detail::or_to_variant_reference_t<or_<Tcomps...>>;
-				auto res = get_component<Tcomponent, false>();
-				if(res) return std::reference_wrapper{*res};
-				return {};
 			}
 			template<typename Tcomponent>
 			inline optional_reference<Tcomponent> get_component_optional(std::optional<Tcomponent>) const {

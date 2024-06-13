@@ -1,9 +1,9 @@
 cmake_minimum_required(VERSION 3.21)
-project(Tokenizer LANGUAGES CXX)
+project(DOIR LANGUAGES CXX)
 
 option(DOIR_ENABLE_TESTS "Weather or not Unit Tests should be built." ${PROJECT_IS_TOP_LEVEL})
 
-file(GLOB sources "src/*.cpp" "thirdparty/*.cpp")
+file(GLOB sources "src/*.cpp" "src/tests/*.cpp" "thirdparty/*.cpp")
 message(${sources})
 add_executable(tst ${sources})
 set_property(TARGET tst PROPERTY CXX_STANDARD 23)
