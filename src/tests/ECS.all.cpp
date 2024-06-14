@@ -2,9 +2,11 @@
 #include "../../thirdparty/ECSquery.hpp"
 
 #include <doctest/doctest.h>
+#include <tracy/Tracy.hpp>
 
 TEST_SUITE("ECS") {
 	TEST_CASE("ECS::Basic") {
+		ZoneScoped;
 		ecs::scene scene;
 		ecs::entity e = scene.create_entity();
 		CHECK(e == 0);
@@ -21,6 +23,7 @@ TEST_SUITE("ECS") {
 	}
 
 	TEST_CASE("ECS::Removal") {
+		ZoneScoped;
 		ecs::scene scene;
 		ecs::entity e = scene.create_entity();
 		CHECK(e == 0);
@@ -49,6 +52,7 @@ TEST_SUITE("ECS") {
 	}
 
 	TEST_CASE("ECS::Query") {
+		ZoneScoped;
 		ecs::scene scene;
 		*scene.add_component<float>(scene.create_entity()) = 1;
 		*scene.add_component<float>(scene.create_entity()) = 2;

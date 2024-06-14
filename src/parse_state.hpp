@@ -147,5 +147,4 @@ namespace doir {
 			return {};
 		}
 	};
-
 }

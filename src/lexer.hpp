@@ -5,6 +5,7 @@
 #ifdef LEXER_CTRE_REGEX
 	#include "../thirdparty/ctre.hpp"
 #endif
+#include <tracy/Tracy.hpp>
 
 namespace doir { inline namespace lex {
 	namespace detail {
@@ -281,6 +282,7 @@ namespace doir { inline namespace lex {
 			const
 #endif
 		{
+			ZoneScoped;
 			if(buffer.empty()) return {std::string::npos, {}, {}};
 
 #ifndef LEXER_IS_STATEFULL

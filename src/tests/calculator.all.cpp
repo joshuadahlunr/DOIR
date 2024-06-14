@@ -6,6 +6,7 @@
 #include "../unicode_identifier_head.hpp"
 
 #include <doctest/doctest.h>
+#include <tracy/Tracy.hpp>
 
 namespace calculator {
 
@@ -65,6 +66,7 @@ namespace calculator {
 		struct Variable {};
 
 		void print_result(doir::ParseModule& module, doir::Token t) {
+			ZoneScoped;
 			static size_t i = 0;
 			std::cout << i++ << ": ";
 			if(module.has_attribute<doir::Error>(t))
@@ -73,6 +75,7 @@ namespace calculator {
 		}
 
 		doir::Token lookup_variable(doir::ParseModule& module, std::string_view target) {
+			ZoneScoped;
 			auto query = doir::query_with_token<Variable, float, doir::Lexeme>(module);
 			auto res = std::ranges::find_if(query, [&module, target](const auto& tuple){
 				// auto [_0, _1, _2, name] = tuple;
@@ -83,12 +86,14 @@ namespace calculator {
 
 		// start ::= expressions
 		bool start(doir::ParseModule& module) {
+			ZoneScoped;
 			if(module.lexer_state.lexeme.empty()) module.lex(lexer);
 			return !module.has_attribute<doir::Error>(expressions(module));
 		}
 
 		// expressions ::= assignment_expression | assignment_expression "\n" expressions;
 		doir::Token expressions(doir::ParseModule& module) {
+			ZoneScoped;
 			if(!module.lexer_state.valid()) return module.make_error();
 			auto t = assignment_expression(module);
 			print_result(module, t);
@@ -103,6 +108,7 @@ namespace calculator {
 
 		// assignment_expression ::= identifier "=" assignment_expression | add_expression;
 		doir::Token assignment_expression(doir::ParseModule& module) {
+			ZoneScoped;
 			if(!module.lexer_state.valid()) return module.make_error();
 
 			if(module.current_lexer_token<LexerTokens>() == Identifier){
@@ -130,6 +136,7 @@ namespace calculator {
 		// add_expression ::= mult_expression add_expression';
 		// add_expression' ::= "+" mult_expression add_expression' | "-" mult_expression add_expression' | eps;
 		doir::Token add_expression_prime(doir::ParseModule& module) {
+			ZoneScoped;
 			if (auto t = module.current_lexer_token<LexerTokens>(); t == Plus || t == Minus) {
 				module.lex(lexer);
 				doir::Token value = mult_expression(module);
@@ -147,6 +154,7 @@ namespace calculator {
 			return 0;
 		}
 		doir::Token add_expression(doir::ParseModule& module) {
+			ZoneScoped;
 			doir::Token value = mult_expression(module);
 			if(module.has_attribute<doir::Error>(value)) return value;
 
@@ -162,6 +170,7 @@ namespace calculator {
 		// mult_expression ::= primary_expression mult_expression';
 		// mult_expression' ::= "*" primary_expression mult_expression' | "/" primary_expression mult_expression' | eps;
 		doir::Token mult_expression_prime(doir::ParseModule& module) {
+			ZoneScoped;
 			if (auto t = module.current_lexer_token<LexerTokens>(); t == Mult || t == Divide) {
 				module.lex(lexer);
 				doir::Token value = primary_expression(module);
@@ -179,6 +188,7 @@ namespace calculator {
 			return 0;
 		}
 		doir::Token mult_expression(doir::ParseModule& module) {
+			ZoneScoped;
 			doir::Token value = primary_expression(module);
 			if(module.has_attribute<doir::Error>(value)) return value;
 
@@ -193,6 +203,7 @@ namespace calculator {
 
 		// primary_expression ::= identifier | literal | "(" assignment_expression ")";
 		doir::Token primary_expression(doir::ParseModule& module) {
+			ZoneScoped;
 			if(!module.lexer_state.valid()) return module.make_error();
 
 			switch(module.lexer_state.token<LexerTokens>()){
@@ -218,6 +229,7 @@ namespace calculator {
 			}
 			break; default: return module.make_error<doir::Error>({"Unexpected token!"});
 			}
+			return 0; // TODO: Why does the the default return in the switch count as all paths returning?
 		}
 	};
 
@@ -238,6 +250,7 @@ TEST_CASE("runtime_strings") {
 	CHECK(res.valid());
 	res = lexRest.lex(res);
 	CHECK(res.valid());
+	FrameMark;
 }
 
 TEST_CASE("Calculator::Parse") {
@@ -245,6 +258,7 @@ TEST_CASE("Calculator::Parse") {
 	calculator::parse p;
 	p.start(module);
 	CHECK(doir::float_equal<float>(*module.get_attribute<float>(1), 3.14159265358979323846) == true);
+	FrameMark;
 }
 
 TEST_CASE("Calculator::REPL" * doctest::skip()) {
@@ -265,6 +279,7 @@ TEST_CASE("Calculator::REPL" * doctest::skip()) {
 		p.start(module);
 		std::cout << "> ";
 		module.source_location.next_line();
+		FrameMark;
 	}
 
 	std::cout << module.token_count() << std::endl;

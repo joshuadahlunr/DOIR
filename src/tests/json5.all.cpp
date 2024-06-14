@@ -6,6 +6,7 @@
 #include "../unicode_identifier_head.hpp"
 
 #include <doctest/doctest.h>
+#include <tracy/Tracy.hpp>
 #include <map>
 
 // https://spec.json5.org/#grammar
@@ -63,12 +64,14 @@ struct parse {
 
 	// Start ::= Value
 	doir::Token start(doir::ParseModule& module) {
+		ZoneScoped;
 		if(module.lexer_state.lexeme.empty()) module.lex(lexer);
 		return value(module);
 	}
 
 	// Value ::= Null | Boolean | String | Number | Object | Array
 	doir::Token value(doir::ParseModule& module) {
+		ZoneScoped;
 		if(!module.lexer_state.valid()) return module.make_error();
 
 		switch (module.current_lexer_token<LexerTokens>()) {
@@ -109,6 +112,7 @@ struct parse {
 
 	// Object ::= "{" (Member ("," Member)*)? "}"
 	doir::Token object(doir::ParseModule& module) {
+		ZoneScoped;
 		if(auto error = module.expect(LexerTokens::ObjectStart)) return *error;
 
 		doir::Token object = module.make_token_and_lex(lexer);
@@ -137,6 +141,7 @@ struct parse {
 
 	// Member ::= (Identifier | String) ":" Value
 	doir::Token member(doir::ParseModule& module) {
+		ZoneScoped;
 		if(!module.lexer_state.valid()) return module.make_error<doir::Error>({"Expected an Identifier or a String!"});
 
 		doir::Token identifier = 0;
@@ -163,6 +168,7 @@ struct parse {
 
 	// Array ::= "[" (Value ("," Value)*)? "]"
 	doir::Token array(doir::ParseModule& module) {
+		ZoneScoped;
 		if(auto error = module.expect(LexerTokens::ArrayStart)) return *error;
 
 		doir::Token array = module.make_token_and_lex(lexer);
@@ -190,6 +196,7 @@ TEST_CASE("JSON::null") {
 	parse p;
 	auto res = p.start(module);
 	CHECK(module.has_attribute<parse::Null>(res) == true);
+	FrameMark;
 }
 
 TEST_CASE("JSON::true") {
@@ -197,6 +204,7 @@ TEST_CASE("JSON::true") {
 	parse p;
 	auto res = p.start(module);
 	CHECK(*module.get_attribute<bool>(res) == true);
+	FrameMark;
 }
 
 TEST_CASE("JSON::false") {
@@ -204,6 +212,7 @@ TEST_CASE("JSON::false") {
 	parse p;
 	auto res = p.start(module);
 	CHECK(*module.get_attribute<bool>(res) == false);
+	FrameMark;
 }
 
 TEST_CASE("JSON::string") {
@@ -211,6 +220,7 @@ TEST_CASE("JSON::string") {
 	parse p;
 	auto res = p.start(module);
 	CHECK(module.get_attribute<doir::ModuleWrapped<doir::Lexeme>>(res)->view() == "Hello");
+	FrameMark;
 }
 
 TEST_CASE("JSON::string (no terminating quote)") {
@@ -218,6 +228,7 @@ TEST_CASE("JSON::string (no terminating quote)") {
 	parse p;
 	auto res = p.start(module);
 	CHECK(module.has_attribute<doir::Error>(res) == true);
+	FrameMark;
 }
 
 TEST_CASE("JSON::number") {
@@ -225,6 +236,7 @@ TEST_CASE("JSON::number") {
 	parse p;
 	auto res = p.start(module);
 	CHECK(*module.get_attribute<double>(res) == 27);
+	FrameMark;
 }
 
 TEST_CASE("JSON::object") {
@@ -235,6 +247,7 @@ TEST_CASE("JSON::object") {
 	CHECK(*module.get_attribute<double>(x) == 5);
 	doir::Token y = module.get_attribute<parse::Object>(res)->children.at("y");
 	CHECK(*module.get_attribute<double>(y) == 6);
+	FrameMark;
 }
 
 TEST_CASE("JSON::array") {
@@ -246,6 +259,7 @@ TEST_CASE("JSON::array") {
 	CHECK(*module.get_attribute<double>(children[1]) == 6);
 	CHECK(*module.get_attribute<double>(children[2]) == 7);
 	CHECK(module.get_attribute<doir::ModuleWrapped<doir::Lexeme>>(children[3])->view() == "Hello World");
+	FrameMark;
 }
 
 TEST_CASE("JSON::nested_object") {
@@ -258,6 +272,7 @@ TEST_CASE("JSON::nested_object") {
 	CHECK(*module.get_attribute<double>(children[1]) == 6);
 	CHECK(*module.get_attribute<double>(children[2]) == 7);
 	CHECK(module.get_attribute<doir::ModuleWrapped<doir::Lexeme>>(children[3])->view() == "Hello World");
+	FrameMark;
 }
 
 // TEST_CASE("JSON Parse") {
