@@ -10,16 +10,25 @@ TEST_SUITE("ECS") {
 		ecs::scene scene;
 		ecs::entity e = scene.create_entity();
 		CHECK(e == 0);
-		CHECK((*scene.add_component<float>(e) = 5) == 5);
-		CHECK(*scene.get_component<float>(e) == 5);
-		*scene.get_component<float>(e) = 6;
-		CHECK(*scene.get_component<float>(e) == 6);
-		CHECK(scene.get_component<int>(e).has_value() == false);
+		{
+			ZoneScoped;
+			CHECK((*scene.add_component<float>(e) = 5) == 5);
+		}
+		{
+			ZoneScoped;
+			CHECK(*scene.get_component<float>(e) == 5);
+			*scene.get_component<float>(e) = 6;
+			CHECK(*scene.get_component<float>(e) == 6);
+			CHECK(scene.get_component<int>(e).has_value() == false);
+		}
 
-		ecs::entity e2 = scene.create_entity();
-		CHECK(e2 == 1);
-		CHECK((*scene.add_component<float>(e2) = 5) == 5);
-		CHECK(*scene.get_component<float>(e) == 6);
+		{
+			ZoneScoped;
+			ecs::entity e2 = scene.create_entity();
+			CHECK(e2 == 1);
+			CHECK((*scene.add_component<float>(e2) = 5) == 5);
+			CHECK(*scene.get_component<float>(e) == 6);
+		}
 	}
 
 	TEST_CASE("ECS::Removal") {
@@ -74,5 +83,53 @@ TEST_SUITE("ECS") {
 		// auto filtered = std::ranges::views::filter( | std::views::take(3), [](float value) { return value == 2; });
 	}
 
+	TEST_CASE("ECS::SortByValue") {
+		ZoneScoped;
+		ecs::scene scene;
+		auto e0 = scene.create_entity();
+		*scene.add_component<float>(e0) = 3;
+		auto e1 = scene.create_entity();
+		*scene.add_component<float>(e1) = 27;
+		auto e2 = scene.create_entity();
+		*scene.add_component<float>(e2) = 5;
+		auto e3 = scene.create_entity();
+		*scene.add_component<float>(e3) = 0;
 
+		auto& storage = *scene.get_storage<float>();
+		storage.sort_by_value<float>(scene);
+		float* storage_as_float = (float*)storage.data.data();
+		CHECK(storage_as_float[0] == 0);
+		CHECK(*scene.get_component<float>(e0) == 3);
+		CHECK(storage_as_float[1] == 3);
+		CHECK(*scene.get_component<float>(e1) == 27);
+		CHECK(storage_as_float[2] == 5);
+		CHECK(*scene.get_component<float>(e2) == 5);
+		CHECK(storage_as_float[3] == 27);
+		CHECK(*scene.get_component<float>(e3) == 0);
+	}
+
+	TEST_CASE("ECS::SortMontonic") {
+		ZoneScoped;
+		ecs::scene scene;
+		auto e0 = scene.create_entity();
+		auto e1 = scene.create_entity();
+		auto e2 = scene.create_entity();
+		auto e3 = scene.create_entity();
+		*scene.add_component<float>(e3) = 0;
+		*scene.add_component<float>(e0) = 3;
+		*scene.add_component<float>(e2) = 5;
+		*scene.add_component<float>(e1) = 27;
+		
+		auto& storage = *scene.get_storage<float>();
+		storage.sort_monotonic<float>(scene);
+		float* storage_as_float = (float*)storage.data.data();
+		CHECK(storage_as_float[0] == 3);
+		CHECK(*scene.get_component<float>(e0) == 3);
+		CHECK(storage_as_float[1] == 27);
+		CHECK(*scene.get_component<float>(e1) == 27);
+		CHECK(storage_as_float[2] == 5);
+		CHECK(*scene.get_component<float>(e2) == 5);
+		CHECK(storage_as_float[3] == 0);
+		CHECK(*scene.get_component<float>(e3) == 0);
+	}
 }

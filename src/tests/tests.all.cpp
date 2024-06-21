@@ -6,6 +6,6 @@
 #define DOCTEST_CONFIG_IMPLEMENT_WITH_MAIN
 #include <doctest/doctest.h>
 
-// TEST_CASE("Keep Alive") {
+// TEST_CASE("KeepAlive") {
 // 	while(true);
 // }
