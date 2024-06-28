@@ -2,6 +2,7 @@
 
 #include <bitset>
 #include <algorithm>
+#include <cctype>
 #ifdef LEXER_CTRE_REGEX
 	#include "../thirdparty/ctre.hpp"
 #endif
@@ -172,11 +173,27 @@ namespace doir { inline namespace lex {
 		template<char match>
 		using case_insensitive_character = basic_case_insensitive_character<char, match>;
 
+		template<typename CharT, bool single = false>
+		struct basic_whitespace {
+			static constexpr bool skip_if_invalid = true;
+			inline static bool next_valid(size_t index, CharT next) {
+				if constexpr(single) if(index > 0) return false;
+				return std::isspace(next);
+			}
+			inline static bool token_valid(std::basic_string_view<CharT> token) {
+				if constexpr(!single) return true;
+				else return token.size() == 1;
+			}
+		};
+		using whitespace = basic_whitespace<char, false>;
+		using single_whitespace = basic_whitespace<char, true>;
+
 #ifdef LEXER_CTRE_REGEX
 		template<typename CharT, ctll::fixed_string regex>
 		struct basic_ctre_regex {
 			static constexpr bool skip_if_invalid = false;
 			inline static bool next_valid(size_t index, CharT next) {
+				ZoneScoped;
 				thread_local std::basic_string<CharT> buffer;
 				if(index == 0) buffer.clear();
 				buffer += next;

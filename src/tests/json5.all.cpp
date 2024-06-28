@@ -38,7 +38,7 @@ constexpr doir::lex::lexer<
 	doir::lex::heads::token<LexerTokens::False, doir::lex::heads::exact_string<"false">>,
 	doir::lex::heads::token<LexerTokens::String, doir::lex::heads::ctre_regex<R"_("(\\"|[^"])*"?)_">>, // Since we have to be able to constantly march forward... the trailing quote needs to be optional and checked as part of the parser!
 	doir::lex::heads::token<LexerTokens::Number, doir::lex::heads::ctre_regex<R"_((\+|-)?(\d+(\.\d*)?|\.\d+)([eE](\+|-)?\d+)?)_">>,
-	doir::lex::heads::skip<doir::lex::heads::ctre_regex<"\\s+">>, // Skip whitespace!
+	doir::lex::heads::skip<doir::lex::heads::whitespace>, // Skip whitespace!
 	doir::lex::heads::token<LexerTokens::Identifier, XIDIdentifierHead<false>>
 > lexer;
 

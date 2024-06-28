@@ -41,7 +41,7 @@ enum LexerTokens {
 	Dot, // .
 	True, // "true"
 	False, // "false"
-	NodotIdentifier, // `%UNICODE_XID_CONTINUE+|(UNICODE_XID_START|_)UNICODE_XID_CONTINUE*`
+	NoDotIdentifier, // `%UNICODE_XID_CONTINUE+|(UNICODE_XID_START|_)UNICODE_XID_CONTINUE*`
 	BinaryNumber, // `0[bB]([01]+|[01]+\.|[01]*\.[01]+)([eE][+-]?[01]+)?`
 	DecimalNumber, // `([0-9]+|[0-9]+\.|[0-9]*\.[0-9]+)([eE][+-]?[0-9]+)?` NOTE: Any valid octal_number string is also a valid decimal_number string!
 	HexadecimalNumber, // `0[xX]([0-9A-F]+|[0-9A-F]+\.|[0-9A-F]*\.[0-9A-F]+)(e[+-]?[0-9A-F]+)?`
@@ -53,8 +53,8 @@ enum LexerTokens {
 };
 
 namespace heads {
-	using SkipWhitespace = doir::lex::heads::skip<doir::lex::heads::ctre_regex<"\\s+">>; // Skip whitespace!
-	using SkipWhitespaceSingle = doir::lex::heads::skip<doir::lex::heads::ctre_regex<"\\s">>; // Skip whitespace!
+	using SkipWhitespace = doir::lex::heads::skip<doir::lex::heads::whitespace>; // Skip whitespace!
+	using SkipSingleWhitespace = doir::lex::heads::skip<doir::lex::heads::single_whitespace>; // Skip whitespace!
 	using Colen = doir::lex::heads::token<LexerTokens::Colen, doir::lex::heads::exact_character<':'>>;
 	using Equals = doir::lex::heads::token<LexerTokens::Equals, doir::lex::heads::exact_character<'='>>;
 	using External = doir::lex::heads::token<LexerTokens::External, doir::lex::heads::exact_string<"external">>;
@@ -89,7 +89,7 @@ namespace heads {
 	using Dot = doir::lex::heads::token<LexerTokens::Dot, doir::lex::heads::exact_character<'.'>>;
 	using True = doir::lex::heads::token<LexerTokens::True, doir::lex::heads::exact_string<"true">>;
 	using False = doir::lex::heads::token<LexerTokens::False, doir::lex::heads::exact_string<"false">>;
-	using NodotIdentifier = doir::lex::heads::token<LexerTokens::NodotIdentifier, XIDIdentifierHead</*leading percent*/true>>;
+	using NoDotIdentifier = doir::lex::heads::token<LexerTokens::NoDotIdentifier, XIDIdentifierHead</*leading percent*/true>>;
 	using BinaryNumber = doir::lex::heads::token<LexerTokens::BinaryNumber, doir::lex::heads::ctre_regex<R"_(0[bB]([01]+|[01]+\.|[01]*\.[01]+)([eE][+-]?[01]+)?)_">>;
 	using DecimalNumber = doir::lex::heads::token<LexerTokens::DecimalNumber, doir::lex::heads::ctre_regex<R"_(([0-9]+|[0-9]+\.|[0-9]*\.[0-9]+)([eE][+-]?[0-9]+)?)_">>;
 	using HexadecimalNumber = doir::lex::heads::token<LexerTokens::HexadecimalNumber, doir::lex::heads::ctre_regex<R"_(0[xX]([0-9A-F]+|[0-9A-F]+\.|[0-9A-F]*\.[0-9A-F]+)(e[+-]?[0-9A-F]+)?)_">>;
@@ -106,9 +106,9 @@ namespace heads {
 		heads::BinaryNumber, heads::DecimalNumber, heads::HexadecimalNumber, heads::String, heads::Character, heads::Documentation
 }
 
-constexpr doir::lex::lexer<EVERGREEN_HEADS, heads::SkipWhitespace, heads::SkipComment, heads::NodotIdentifier> lexer;
-constexpr doir::lex::lexer<EVERGREEN_HEADS, heads::NodotIdentifier> lexerIdentifier;
-constexpr doir::lex::lexer<heads::Semicolon, heads::Newline, EVERGREEN_HEADS, heads::SkipWhitespaceSingle, heads::SkipComment, heads::NodotIdentifier> lexerTerminal;
+constexpr doir::lex::lexer<EVERGREEN_HEADS, heads::SkipWhitespace, heads::SkipComment, heads::NoDotIdentifier> lexer;
+constexpr doir::lex::lexer<EVERGREEN_HEADS, heads::NoDotIdentifier> lexerIdentifier; // NOTE: Doesn't support whitespace
+constexpr doir::lex::lexer<heads::Semicolon, heads::Newline, EVERGREEN_HEADS, heads::SkipSingleWhitespace, heads::SkipComment, heads::NoDotIdentifier> lexerTerminal;
 
 
 

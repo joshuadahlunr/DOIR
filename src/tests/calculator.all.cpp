@@ -34,7 +34,7 @@ namespace calculator {
 		doir::lex::heads::token<LexerTokens::Close, doir::lex::heads::exact_character<')'>>,
 		// doir::lex::heads::token<Tokens::Identifier, doir::lex::heads::ctre_regex<"[_a-zA-z][_a-zA-z0-9]*">>,
 		doir::lex::heads::token<LexerTokens::Literal, doir::lex::heads::ctre_regex<R"_((\+|-)?(\d+(\.\d*)?|\.\d+)([eE](\+|-)?\d+)?)_">>,
-		doir::lex::heads::skip<doir::lex::heads::ctre_regex<"\\s+">>, // Skip whitespace!
+		doir::lex::heads::skip<doir::lex::heads::whitespace>, // Skip whitespace!
 		doir::lex::heads::token<LexerTokens::Identifier, XIDIdentifierHead<false>>
 	> lexer;
 
@@ -49,7 +49,7 @@ namespace calculator {
 		doir::lex::heads::token<LexerTokens::Close, doir::lex::heads::exact_character<')'>>,
 		// doir::lex::heads::token<Tokens::Identifier, doir::lex::heads::ctre_regex<"[_a-zA-z][_a-zA-z0-9]*">>,
 		doir::lex::heads::token<LexerTokens::Literal, doir::lex::heads::ctre_regex<R"_((\+|-)?(\d+(\.\d*)?|\.\d+)([eE](\+|-)?\d+)?)_">>,
-		doir::lex::heads::skip<doir::lex::heads::ctre_regex<"\\s">>, // Skip whitespace (one at a time, excluding newlines)!
+		doir::lex::heads::skip<doir::lex::heads::single_whitespace>, // Skip whitespace (one at a time, excluding newlines)!
 		doir::lex::heads::token<LexerTokens::Identifier, XIDIdentifierHead<false>>
 	> lexerNewline;
 
