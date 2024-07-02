@@ -37,10 +37,10 @@
 
 namespace ecs {
 	/**
-	 * @brief Marker class which marks an entity as valid in the filter if any of the provided components are present.
-	 *
-	 * @tparam Tcomponents List of possible components to check for
-	 */
+	* @brief Marker class which marks an entity as valid in the filter if any of the provided components are present.
+	*
+	* @tparam Tcomponents List of possible components to check for
+	*/
 	template<typename... Tcomponents>
 	struct or_{};
 	template<typename... Tcomponents>
@@ -409,7 +409,7 @@ namespace ecs {
 			*
 			* @tparam Tcomponent The type of the optional component to retrieve.
 			* @param[in] opt An optional component.
-			* @return An optional reference to the retrieved component, or an empty optional if no component is 
+			* @return An optional reference to the retrieved component, or an empty optional if no component is
 			found.
 			*/
 			template<typename Tcomponent>
@@ -429,16 +429,16 @@ namespace ecs {
 			return out;
 		}
 		/**
-		 * @brief Marks the end of an iteration over the matching entities in the scene.
-		 */
+		* @brief Marks the end of an iteration over the matching entities in the scene.
+		*/
 		Sentinel end() { return {}; }
 	};
 
 
 	/**
-	 * @brief Struct which when added to the list of components to filter for, includes the entity in the result
-	 * @note Must be present at the beginning of the filter list
-	 */
+	* @brief Struct which when added to the list of components to filter for, includes the entity in the result
+	* @note Must be present at the beginning of the filter list
+	*/
 	struct include_entity{};
 	using IncludeEntity = include_entity;
 
@@ -461,9 +461,9 @@ namespace ecs {
 	};
 
 	/**
-	 * @brief Struct which when added to the list of components to filter for, includes a reference to the scene in the result
-	 * @note Must be present at the beginning of the filter list
-	 */
+	* @brief Struct which when added to the list of components to filter for, includes a reference to the scene in the result
+	* @note Must be present at the beginning of the filter list
+	*/
 	struct include_scene{};
 	using IncludeScene = include_scene;
 

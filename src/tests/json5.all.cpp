@@ -7,7 +7,6 @@
 
 #include <doctest/doctest.h>
 #include <tracy/Tracy.hpp>
-#include <map>
 
 // https://spec.json5.org/#grammar
 
@@ -55,12 +54,8 @@ constexpr doir::lex::lexer<
 // Identifier ::= XIDIdentifier
 struct parse {
 	struct Null {};
-	struct Object {
-		std::map<std::string_view, doir::Token> children; // Should this be a map on string_views?
-	};
-	struct Array {
-		std::vector<doir::Token> children;
-	};
+	struct ObjectMember : public doir::WithToken<std::string_view> {};
+	struct ArrayMember : public doir::WithToken<size_t> {};
 
 	// Start ::= Value
 	doir::Token start(doir::ParseModule& module) {
@@ -95,7 +90,7 @@ struct parse {
 			auto tmp = module.get_attribute<doir::Lexeme>(t)->view(module.buffer);
 			// Ensure the existence of the trailing quote
 			if(std::ranges::count(tmp, '"') < 2) return module.make_error<doir::Error>({"Expected a terminating `\"`!"});
-			module.add_attribute<doir::ModuleWrapped<doir::Lexeme>>(t) 
+			module.add_attribute<doir::ModuleWrapped<doir::Lexeme>>(t)
 				= {module, *doir::Lexeme::from_view(module.buffer, tmp.substr(1, tmp.size() - 2))};
 			return t;
 		}
@@ -116,7 +111,6 @@ struct parse {
 		if(auto error = module.expect(LexerTokens::ObjectStart)) return *error;
 
 		doir::Token object = module.make_token_and_lex(lexer);
-		module.add_attribute<Object>(object);
 		if(module.current_lexer_token<LexerTokens>() == LexerTokens::ObjectEnd)
 			return object;
 
@@ -125,22 +119,17 @@ struct parse {
 			if(!first) if(auto error = module.expect_and_lex(lexer, LexerTokens::Comma)) return *error;
 			first = false;
 
-			doir::Token mem = member(module);
+			doir::Token mem = member(module, object);
 			if(module.has_attribute<doir::Error>(mem)) return mem;
-			if(module.has_attribute<doir::ModuleWrapped<doir::Lexeme>>(mem))
-				module.get_attribute<Object>(object)->children[*module.get_attribute<doir::ModuleWrapped<doir::Lexeme>>(mem)]
-					= module.get_attribute<doir::TokenReference>(mem)->token();
-			else module.get_attribute<Object>(object)->children[module.get_attribute<doir::Lexeme>(mem)->view(module.buffer)]
-				= module.get_attribute<doir::TokenReference>(mem)->token();
 			module.lex(lexer); // Consume the member
 		} while(module.current_lexer_token<LexerTokens>() == Comma);
 
-		if(auto error = module.expect_and_lex(lexer, LexerTokens::ObjectEnd)) return *error;
+		if(auto error = module.expect(LexerTokens::ObjectEnd)) return *error;
 		return object;
 	}
 
 	// Member ::= (Identifier | String) ":" Value
-	doir::Token member(doir::ParseModule& module) {
+	doir::Token member(doir::ParseModule& module, doir::Token object) {
 		ZoneScoped;
 		if(!module.lexer_state.valid()) return module.make_error<doir::Error>({"Expected an Identifier or a String!"});
 
@@ -160,6 +149,11 @@ struct parse {
 			if(module.has_attribute<doir::Error>(v)) return v;
 			module.add_attribute<doir::TokenReference>(identifier) = v; // Associate this identifier with its value
 
+			std::string_view name = module.get_attribute<doir::Lexeme>(identifier)->view(module.buffer);
+			if(auto str = module.get_attribute<doir::ModuleWrapped<doir::Lexeme>>(identifier); str)
+				name = str->view();
+			module.add_hashtable_attribute<ObjectMember>(identifier) = {name, object};
+
 			return identifier;
 		}
 		break; default: return module.make_error<doir::Error>({"Expected an Identifier or a String!"});
@@ -172,10 +166,10 @@ struct parse {
 		if(auto error = module.expect(LexerTokens::ArrayStart)) return *error;
 
 		doir::Token array = module.make_token_and_lex(lexer);
-		module.add_attribute<Array>(array);
 		if(module.current_lexer_token<LexerTokens>() == LexerTokens::ArrayEnd)
 			return array;
 
+		size_t i = 0;
 		bool first = true;
 		do {
 			if(!first) if(auto error = module.expect_and_lex(lexer, LexerTokens::Comma)) return *error;
@@ -183,13 +177,29 @@ struct parse {
 
 			doir::Token v = value(module);
 			if(module.has_attribute<doir::Error>(v)) return v;
-			module.get_attribute<Array>(array)->children.emplace_back(v);
+			module.add_hashtable_attribute<ArrayMember>(v) = {i++, array};
 			module.lex(lexer); // Consume the value
 		} while(module.current_lexer_token<LexerTokens>() == Comma);
 
+		if(auto error = module.expect(LexerTokens::ArrayEnd)) return *error;
 		return array;
 	}
 };
+
+namespace fnv {
+	template<>
+	struct fnv1a_64<parse::ObjectMember> {
+		inline uint64_t operator()(const parse::ObjectMember& mem) {
+			return fnv1a_64<std::string_view>{}(mem.value) ^ fnv1a_64<doir::Token>{}(mem.entity);
+		}
+	};
+	template<>
+	struct fnv1a_64<parse::ArrayMember> {
+		inline uint64_t operator()(const parse::ArrayMember& mem) {
+			return fnv1a_64<size_t>{}(mem.value) ^ fnv1a_64<doir::Token>{}(mem.entity);
+		}
+	};
+}
 
 TEST_CASE("JSON::null") {
 	doir::ParseModule module("null");
@@ -243,35 +253,68 @@ TEST_CASE("JSON::object") {
 	doir::ParseModule module("{x: 5, \"y\": 6}");
 	parse p;
 	doir::Token res = p.start(module);
-	doir::Token x = module.get_attribute<parse::Object>(res)->children.at("x");
+	auto& hashtable = *module.get_attribute_hashtable<parse::ObjectMember>();
+	auto a = hashtable.find({"x", res});
+	auto b = module.get_attribute<doir::TokenReference>(*a);
+	doir::Token x = b->token();
 	CHECK(*module.get_attribute<double>(x) == 5);
-	doir::Token y = module.get_attribute<parse::Object>(res)->children.at("y");
-	CHECK(*module.get_attribute<double>(y) == 6);
+
+	doir::Token y = module.get_attribute<doir::TokenReference>(*hashtable.find({"y", res}))->token();
+	CHECK(module.get_attribute<double>(y) == 6);
 	FrameMark;
 }
 
 TEST_CASE("JSON::array") {
 	doir::ParseModule module("[5, 6, 7, \"Hello World\"]");
 	parse p;
-	auto res = p.start(module);
-	auto& children = module.get_attribute<parse::Array>(res)->children;
-	CHECK(*module.get_attribute<double>(children[0]) == 5);
-	CHECK(*module.get_attribute<double>(children[1]) == 6);
-	CHECK(*module.get_attribute<double>(children[2]) == 7);
-	CHECK(module.get_attribute<doir::ModuleWrapped<doir::Lexeme>>(children[3])->view() == "Hello World");
+	auto root = p.start(module);
+	auto& hashtable = *module.get_attribute_hashtable<parse::ArrayMember>();
+	CHECK(*module.get_attribute<double>(*hashtable.find({0, root})) == 5);
+	CHECK(*module.get_attribute<double>(*hashtable.find({1, root})) == 6);
+	CHECK(*module.get_attribute<double>(*hashtable.find({2, root})) == 7);
+	CHECK(module.get_attribute<doir::ModuleWrapped<doir::Lexeme>>(*hashtable.find({3, root}))->view() == "Hello World");
+	FrameMark;
+}
+
+TEST_CASE("JSON::nested_array_in_object") {
+	doir::ParseModule module("{x : [5, 6, 7, \"Hello World\"]}");
+	parse p;
+	doir::Token root = p.start(module);
+	auto& objectTable = *module.get_attribute_hashtable<parse::ObjectMember>();
+	auto& arrayTable = *module.get_attribute_hashtable<parse::ArrayMember>();
+	doir::Token x = module.get_attribute<doir::TokenReference>(*objectTable.find({"x", root}))->token();
+	CHECK(*module.get_attribute<double>(*arrayTable.find({0, x})) == 5);
+	CHECK(*module.get_attribute<double>(*arrayTable.find({1, x})) == 6);
+	CHECK(*module.get_attribute<double>(*arrayTable.find({2, x})) == 7);
+	CHECK(module.get_attribute<doir::ModuleWrapped<doir::Lexeme>>(*arrayTable.find({3, x}))->view() == "Hello World");
+	FrameMark;
+}
+
+TEST_CASE("JSON::nested_array") {
+	doir::ParseModule module("[[1, 2], [3, 4]]");
+	parse p;
+	doir::Token root = p.start(module);
+	auto& hashtable = *module.get_attribute_hashtable<parse::ArrayMember>();
+	doir::Token childrenA = *hashtable.find({0, root});
+	doir::Token childrenB = *hashtable.find({1, root});
+	CHECK(*module.get_attribute<double>(*hashtable.find({0, childrenA})) == 1);
+	CHECK(*module.get_attribute<double>(*hashtable.find({1, childrenA})) == 2);
+	CHECK(*module.get_attribute<double>(*hashtable.find({0, childrenB})) == 3);
+	CHECK(*module.get_attribute<double>(*hashtable.find({1, childrenB})) == 4);
 	FrameMark;
 }
 
 TEST_CASE("JSON::nested_object") {
-	doir::ParseModule module("{x : [5, 6, 7, \"Hello World\"]}");
+	doir::ParseModule module("{x: {y: 5, z: 6}}");
 	parse p;
-	doir::Token x = module.get_attribute<parse::Object>(p.start(module))->children.at("x");
-	auto& dbg  = *module.get_attribute<parse::Array>(x);
-	auto& children = module.get_attribute<parse::Array>(x)->children;
-	CHECK(*module.get_attribute<double>(children[0]) == 5);
-	CHECK(*module.get_attribute<double>(children[1]) == 6);
-	CHECK(*module.get_attribute<double>(children[2]) == 7);
-	CHECK(module.get_attribute<doir::ModuleWrapped<doir::Lexeme>>(children[3])->view() == "Hello World");
+	doir::Token root = p.start(module);
+	auto& hashtable = *module.get_attribute_hashtable<parse::ObjectMember>();
+	doir::Token x = module.get_attribute<doir::TokenReference>(*hashtable.find({"x", root}))->token(); // TODO: Why is this not attached to root?
+	doir::Token y = module.get_attribute<doir::TokenReference>(*hashtable.find({"y", x}))->token();
+	doir::Token z = module.get_attribute<doir::TokenReference>(*hashtable.find({"z", x}))->token();
+
+	CHECK(*module.get_attribute<double>(y) == 5);
+	CHECK(*module.get_attribute<double>(z) == 6);
 	FrameMark;
 }
 

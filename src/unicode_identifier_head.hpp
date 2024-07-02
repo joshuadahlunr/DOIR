@@ -14,55 +14,50 @@ struct XIDIdentifierHeadStatics {
 
 template<bool SupportLeadingPercent = false>
 struct XIDIdentifierHead : public XIDIdentifierHeadStatics {
-	static std::optional<std::uint32_t> utf8_to_utf32(std::string_view utf8) {
+	static std::optional<std::uint32_t> single_utf8_to_utf32(std::string_view utf8) {
 		uint32_t ch;
-		// size_t bytes = 0;
 
-		if ((utf8[0] & 0x80) == 0x00) {
-			// Single byte (ASCII)
+		if ((utf8[0] & 0x80) == 0x00)
 			ch = utf8[0];
-			// bytes = 1;
-		} else if ((utf8[0] & 0xE0) == 0xC0) {
-			// Two bytes
+		else if ((utf8[0] & 0xE0) == 0xC0) {
 			if(utf8.size() < 2) return {};
 			ch = (utf8[0] & 0x1F) << 6;
 			ch |= (utf8[1] & 0x3F);
-			// bytes = 2;
 		} else if ((utf8[0] & 0xF0) == 0xE0) {
-			// Three bytes
 			if(utf8.size() < 3) return {};
 			ch = (utf8[0] & 0x0F) << 12;
 			ch |= (utf8[1] & 0x3F) << 6;
 			ch |= (utf8[2] & 0x3F);
-			// bytes = 3;
 		} else if ((utf8[0] & 0xF8) == 0xF0) {
-			// Four bytes
 			if(utf8.size() < 4) return {};
 			ch = (utf8[0] & 0x07) << 18;
 			ch |= (utf8[1] & 0x3F) << 12;
 			ch |= (utf8[2] & 0x3F) << 6;
 			ch |= (utf8[3] & 0x3F);
-			// bytes = 4;
 		} else return {};
+
 		return ch;
 	}
 
 	constexpr static auto skip_if_invalid = true;
 	static bool next_valid(size_t index, char next) {
+		// We save into a temporary string since one utf32 character can be up to 4 utf8 characters
 		if(index == 0) {
 			tmp.clear();
 			first = true;
 		}
 		tmp += next;
-		// std::string debug = tmp;
 
-		auto res = utf8_to_utf32(tmp);
-		if(!res) return true;
-		tmp.clear(); // If nothing went wrong in the conversion then we need to move onto the next character
+		// We try to convert the character to its code point
+		auto res = single_utf8_to_utf32(tmp);
+		if(!res) return true; // NOTE: We mark partial characters as valid
+		tmp.clear(); // If nothing went wrong in the conversion then we need to move onto the next character... thus clearing the buffer
+
+		// If we get a space this is not a valid identififer
 		if(std::isspace(*res)) return false;
-		if(first) {
+		if(first) { // NOTE: We can't use index == 0 here because the first character might last up to index == 3
 			first = false;
-            if constexpr(SupportLeadingPercent) if(*res == '%') return true;
+			if constexpr(SupportLeadingPercent) if(*res == '%') return true;
 			return is_xid_start(*res);
 		}
 		return is_xid_continue(*res);
@@ -70,11 +65,11 @@ struct XIDIdentifierHead : public XIDIdentifierHeadStatics {
 	static bool token_valid(std::string_view token) {
 		if(!token.empty() && std::isspace(token[0])) return false;
 		if(token.size() == 1 && token[0] == '%') return false; // Need a character after the percent!
-		// Make sure that the last character is valid!
-		bool valid = (token.size() >= 4 && utf8_to_utf32(token.substr(token.size() - 4)).has_value())
-			|| (token.size() >= 3 && utf8_to_utf32(token.substr(token.size() - 3)).has_value())
-			|| (token.size() >= 2 && utf8_to_utf32(token.substr(token.size() - 2)).has_value())
-			|| (token.size() >= 1 && utf8_to_utf32(token.substr(token.size() - 1)).has_value());
+		// Make sure that the last character is valid (the next_valid step treats partial characters as valid... so if we are given a partial character on the end the string is not valid...)
+		bool valid = (token.size() >= 1 && single_utf8_to_utf32(token.substr(token.size() - 1)).has_value())
+			|| (token.size() >= 2 && single_utf8_to_utf32(token.substr(token.size() - 2)).has_value())
+			|| (token.size() >= 3 && single_utf8_to_utf32(token.substr(token.size() - 3)).has_value())
+			|| (token.size() >= 4 && single_utf8_to_utf32(token.substr(token.size() - 4)).has_value());
 		return valid;
 	}
 };

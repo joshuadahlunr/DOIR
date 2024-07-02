@@ -15,10 +15,10 @@ namespace doir {
 		}
 		ParseState(const lex::lexer_generic_result& lexer_result, const NamedSourceLocation& location) : lexer_state(lexer_result), source_location(location) {}
 
-		ParseState save_state() {
+		inline ParseState save_state() {
 			return *this;
 		}
-		void restore_state(ParseState saved) {
+		inline void restore_state(ParseState saved) {
 			*this = saved;
 		}
 
@@ -90,7 +90,7 @@ namespace doir {
 		inline Token make_error(Module& module) const { return make_error<doir::Error>(module, {"An error has occurred!"}); }
 
 		// Make a token with the current state and then lex the next lexer token
-		Token make_token_and_lex(/*doir::lex::detail::instantiation_of_lexer<doir::lex::basic_lexer>*/ auto& lexer, const ParseState& state, Module& module) {
+		inline Token make_token_and_lex(/*doir::lex::detail::instantiation_of_lexer<doir::lex::basic_lexer>*/ auto& lexer, const ParseState& state, Module& module) {
 			lex(lexer, state);
 			return make_token(state, module);
 		}
@@ -99,7 +99,7 @@ namespace doir {
 		}
 
 		template<typename Token>
-		static Token current_lexer_token(const ParseState& state) { return state.lexer_state.token<Token>(); }
+		inline static Token current_lexer_token(const ParseState& state) { return state.lexer_state.token<Token>(); }
 		template<typename Token>
 		inline Token current_lexer_token() const { return current_lexer_token<Token>(*this); }
 	};
@@ -132,7 +132,7 @@ namespace doir {
 
 		// Returns a token representing an error if the current lexer token doesn't match!
 		template<typename Token, typename Error = doir::Error>
-		std::optional<doir::Token> expect(Token what, std::string_view error = "Expected token not found") {
+		inline std::optional<doir::Token> expect(Token what, std::string_view error = "Expected token not found") {
 			if( !(lexer_state.valid() && current_lexer_token<Token>() == what) )
 				return make_error<Error>({std::string(error)});
 
@@ -141,7 +141,7 @@ namespace doir {
 
 		// Returns a token representing an error if the current lexer token doesn't match, lexes the next token if it does match
 		template<typename Token, typename Error = doir::Error>
-		std::optional<doir::Token> expect_and_lex(auto lexer, Token what, std::string_view error = "Expected token not found") {
+		inline std::optional<doir::Token> expect_and_lex(auto lexer, Token what, std::string_view error = "Expected token not found") {
 			if(auto fail = expect<Token, Error>(what, error)) return fail;
 			lex(lexer);
 			return {};

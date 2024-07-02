@@ -28,6 +28,8 @@
 
 #include <algorithm>
 #include <cassert>
+#include <compare>
+#include <concepts>
 #include <cstring>
 #include <functional>
 #include <limits>
@@ -36,6 +38,7 @@
 #include <queue>
 #include <stdexcept>
 #include <string>
+#include <type_traits>
 #include <unordered_map>
 
 #ifdef __GNUC__
@@ -212,6 +215,46 @@ namespace ecs {
 	using entity = ECS_ENTITY_TYPE;
 
 
+	template<typename T>
+	struct with_entity {
+		T value;
+		ecs::entity entity;
+		operator T() { return value; }
+		operator const T() const { return value; }
+		T* operator->() { return &value; }
+		const T* operator->() const { return &value; }
+
+		template<std::convertible_to<with_entity> To>
+		std::partial_ordering operator<=>(const To& other) const requires(requires(T t) {
+			{ t <=> t };
+		}) {
+			if(other.entity == entity) return other.value <=> value;
+			return other.entity <=> entity;
+		}
+		bool operator==(const with_entity& other) const requires(requires(T t) {
+			{ t == t };
+		}) {
+			return other.entity == entity && other.value == value;
+		}
+	};
+
+	namespace detail {
+		template<typename T>
+		struct is_with_entity : public std::false_type {};
+		template<typename T>
+		struct is_with_entity<with_entity<T>> : public std::true_type {};
+		template<typename T>
+		constexpr static bool is_with_entity_v = is_with_entity<T>::value;
+
+		template<typename T>
+		struct remove_with_entity { using type = T; };
+		template<typename T>
+		struct remove_with_entity<with_entity<T>> { using type = typename remove_with_entity<T>::type; };
+		template<typename T>
+		using remove_with_entity_t = typename remove_with_entity<T>::type;
+	}
+
+
 	/**
 	* @brief Scene structure for storing and managing entities and components.
 	*/
@@ -225,14 +268,14 @@ namespace ecs {
 			*/
 			static constexpr size_t invalid = std::numeric_limits<size_t>::max();
 			/**
-			 * @brief Size (in bytes) of the stored type
-			 * @note this is one of the few points of validation we have
-			 */
+			* @brief Size (in bytes) of the stored type
+			* @note this is one of the few points of validation we have
+			*/
 			size_t element_size = invalid;
 			/**
-			 * @brief types stored as a container of raw bytes
-			 * @note the scene will track offsets indicating where certain elements begin
-			 */
+			* @brief types stored as a container of raw bytes
+			* @note the scene will track offsets indicating where certain elements begin
+			*/
 			std::vector<std::byte> data;
 
 			/**
@@ -329,32 +372,32 @@ namespace ecs {
 
 
 			/**
-			 * @brief Function which removes the value associated with the provided entity
-			 * @note performs a swap with the last stored value thus needs to update offset information stored in the scene
-			 * 
-			 * @tparam Tcomponent The component type to remove (calculates the component_id automatically if provided)
-			 * @param scene The scene storing offset information
-			 * @param e The entity to remove
-			 * @param component_id The component id to remove if a type is not automatically provided!
-			 * @return true if the element was successfully removed, false if an error occured
-			 */
+			* @brief Function which removes the value associated with the provided entity
+			* @note performs a swap with the last stored value thus needs to update offset information stored in the scene
+			*
+			* @tparam Tcomponent The component type to remove (calculates the component_id automatically if provided)
+			* @param scene The scene storing offset information
+			* @param e The entity to remove
+			* @param component_id The component id to remove if a type is not automatically provided!
+			* @return true if the element was successfully removed, false if an error occured
+			*/
 			template<typename Tcomponent>
 			bool remove(struct scene& scene, entity e) { return remove(scene, e, get_global_component_id<Tcomponent>()); }
 			bool remove(struct scene&, entity, size_t component_id);
 
 			/**
-			 * @brief Sorts the elements stored in this storage based on a comparison function.
-			 * 
-			 * @tparam Tcomponent The type of element stored in the component
-			 * @tparam with_entites Weather or not the comparator should be given the entities as well as void pointers
-			 * @param scene The scene where book keeping information about entities is stored
-			 * @param component_id Id associated with the elements stored in this component (needed if Tcomponent not provided)
-			 * @tparam F type of the comparator
-			 * @param comparator Comparision function which returns weather or not a is less than b...
-			 *	has signature: bool(Tcomponent* a, entity A'sEntity, Tcomponent* b, entity B'sEntity) 
-			 *	or bool(Tcomponent* a, Tcomponent* b) if with_entities is false 
-			 * @note if Tcomponent is not provided the components instead come as a void*
-			 */
+			* @brief Sorts the elements stored in this storage based on a comparison function.
+			*
+			* @tparam Tcomponent The type of element stored in the component
+			* @tparam with_entites Weather or not the comparator should be given the entities as well as void pointers
+			* @param scene The scene where book keeping information about entities is stored
+			* @param component_id Id associated with the elements stored in this component (needed if Tcomponent not provided)
+			* @tparam F type of the comparator
+			* @param comparator Comparision function which returns weather or not a is less than b...
+			*	has signature: bool(Tcomponent* a, entity A'sEntity, Tcomponent* b, entity B'sEntity)
+			*	or bool(Tcomponent* a, Tcomponent* b) if with_entities is false
+			* @note if Tcomponent is not provided the components instead come as a void*
+			*/
 			template<typename F, bool with_entities = false>
 			void sort(struct scene& scene, size_t component_id, const F& comparator);
 			template<typename Tcomponent, typename F, bool with_entities = false>
@@ -363,46 +406,46 @@ namespace ecs {
 					auto comparator = [&_comparator](void* a, entity aE, void* b, entity bE) {
 						return _comparator((Tcomponent*)a, aE, (Tcomponent*)b, bE);
 					};
-					return sort<decltype(comparator), with_entities>(scene, get_global_component_id<Tcomponent>(), comparator); 
+					return sort<decltype(comparator), with_entities>(scene, get_global_component_id<Tcomponent>(), comparator);
 				} else {
 					auto comparator = [&_comparator](void* a, void* b) {
 						return _comparator((Tcomponent*)a, (Tcomponent*)b);
 					};
-					return sort<decltype(comparator), with_entities>(scene, get_global_component_id<Tcomponent>(), comparator); 
+					return sort<decltype(comparator), with_entities>(scene, get_global_component_id<Tcomponent>(), comparator);
 				}
 			}
 
 			/**
-			 * @brief Sorts all components stored in this storage by their values (smallest first)
-			 * 
-			 * @tparam Tcomponent the type of component stored in this storage
-			 * @param scene The scene where book keeping information about entities is stored
-			 */
+			* @brief Sorts all components stored in this storage by their values (smallest first)
+			*
+			* @tparam Tcomponent the type of component stored in this storage
+			* @param scene The scene where book keeping information about entities is stored
+			*/
 			template<typename Tcomponent>
-			void sort_by_value(struct scene& scene) { 
+			void sort_by_value(struct scene& scene) {
 				constexpr static auto comparator = [](Tcomponent* a, Tcomponent* b) {
 					return std::less<Tcomponent>{}(*a, *b);
 				};
-				sort<Tcomponent, decltype(comparator), false>(scene, comparator); 
+				sort<Tcomponent, decltype(comparator), false>(scene, comparator);
 			}
 
 			/**
-			 * Sorts all components stored in this storage monotonically, or in other words sorts them so that they are in the same order as
-			 *	their associated entities.
-			 * For example if entities 5, 6, and 7 add components of this type, and then later entity 4 also adds it, this function ensures that
-			 *	the components are stored in this order: #4's, #5's, #6's, #7's instead of #5's, #6's, #7's, #4's as would be implied by the order of addition.
-			 *
-			 * @brief Sorts all components stored in this storage monotonically
-			 * 
-			 * @tparam Tcomponent the type of component stored in this storage
-			 * @param scene The scene where book keeping information about entities is stored
-			 */
+			* Sorts all components stored in this storage monotonically, or in other words sorts them so that they are in the same order as
+			*	their associated entities.
+			* For example if entities 5, 6, and 7 add components of this type, and then later entity 4 also adds it, this function ensures that
+			*	the components are stored in this order: #4's, #5's, #6's, #7's instead of #5's, #6's, #7's, #4's as would be implied by the order of addition.
+			*
+			* @brief Sorts all components stored in this storage monotonically
+			*
+			* @tparam Tcomponent the type of component stored in this storage
+			* @param scene The scene where book keeping information about entities is stored
+			*/
 			template<typename Tcomponent>
 			void sort_monotonic(struct scene& scene) {
 				auto comparator = [](Tcomponent* a, entity eA, Tcomponent* b, entity eB) {
 					return std::less<entity>{}(eA, eB);
 				};
-				sort<Tcomponent, decltype(comparator), true>(scene, comparator); 
+				sort<Tcomponent, decltype(comparator), true>(scene, comparator);
 			}
 
 		friend struct scene;
@@ -423,15 +466,15 @@ namespace ecs {
 				if(a > size()) return false;
 				if(b > size()) return false;
 
-				Tcomponent* aPtr = data.data() + a * sizeof(Tcomponent);
-				Tcomponent* bPtr = data.data() + b * sizeof(Tcomponent);
+				Tcomponent* aPtr = (Tcomponent*)(data.data() + a * sizeof(Tcomponent));
+				Tcomponent* bPtr = (Tcomponent*)(data.data() + b * sizeof(Tcomponent));
 				std::swap(*aPtr, *bPtr);
 				return true;
 			}
-			bool swap(size_t a, std::optional<size_t> _b = {}, std::vector<std::byte>& buffer = []() -> std::vector<std::byte>& { 
+			bool swap(size_t a, std::optional<size_t> _b = {}, std::vector<std::byte>& buffer = []() -> std::vector<std::byte>& {
 				static std::vector<std::byte> global;
 				global.clear();
-				return global; 
+				return global;
 			}()) {
 				if(buffer.empty()) buffer.resize(element_size);
 				if(buffer.size() < element_size) return false;
@@ -459,13 +502,14 @@ namespace ecs {
 			* @note providing a buffer is useful for reuse when multiple swaps are performed in sequence
 			* @return false if an error occured, true otherwise
 			*/
-			template<typename Tcomponent>
-			bool swap(struct scene& scene, size_t a, std::optional<size_t> _b = {});
-			bool swap(struct scene& scene, size_t component_id, size_t a, std::optional<size_t> _b = {}, std::vector<std::byte>& buffer = []() -> std::vector<std::byte>& { 
+			constexpr static auto default_buffer = []() -> std::vector<std::byte>& {
 				static std::vector<std::byte> global;
 				global.clear();
-				return global; 
-			}());
+				return global;
+			};
+			template<typename Tcomponent>
+			bool swap(struct scene& scene, size_t a, std::optional<size_t> _b = {}, bool swap_if_one_elementless = false);
+			bool swap(struct scene& scene, size_t component_id, size_t a, std::optional<size_t> _b = {}, std::vector<std::byte>& buffer = default_buffer(), bool swap_if_one_elementless = false);
 		};
 
 		/**
@@ -584,7 +628,10 @@ namespace ecs {
 			if(indices.empty() || indices.size() <= id)
 				indices.resize(id + 1, component_storage::invalid);
 			indices[id] = get_storage<Tcomponent>()->size();
-			return get_storage<Tcomponent>()->template get_or_allocate<Tcomponent>(indices[id]);
+			auto opt = get_storage<Tcomponent>()->template get_or_allocate<Tcomponent>(indices[id]);
+			if constexpr(detail::is_with_entity_v<Tcomponent>)
+				if(opt) opt->entity = e;
+			return opt;
 		}
 
 		/**
@@ -641,7 +688,7 @@ namespace ecs {
 		// Gets the entity associated with a specific component index
 		inline entity get_entity(scene& scene, size_t index, size_t component_id) {
 			for(size_t e = 0; e < scene.entity_component_indices.size(); ++e)
-				if(scene.entity_component_indices[e][component_id] == index)
+				if(scene.entity_component_indices[e].size() >= component_id && scene.entity_component_indices[e][component_id] == index)
 					return e;
 			return std::numeric_limits<entity>::max();
 		}
@@ -662,33 +709,48 @@ namespace ecs {
 	* @note providing a buffer is useful for reuse when multiple swaps are performed in sequence
 	* @return false if an error occured, true otherwise
 	*/
+#define ECS_SWAP_BODY(_swap, _component_id, _Tcomponent)\
+	size_t b = _b.value_or(size() - 1);\
+	size_t component_id = _component_id;\
+	entity eA, eB;\
+	if constexpr(detail::is_with_entity_v<_Tcomponent>) {\
+		eA = ((_Tcomponent*)(data.data() + a * element_size))->entity;\
+		eB = ((_Tcomponent*)(data.data() + b * element_size))->entity;\
+	} else {\
+		eA = detail::get_entity(scene, a, component_id);\
+		eB = detail::get_entity(scene, b, component_id);\
+	}\
+	if (swap_if_one_elementless) {\
+		if (eA == std::numeric_limits<entity>::max() && eB == std::numeric_limits<entity>::max()) return false;\
+	}\
+	else if (eA == std::numeric_limits<entity>::max() || eB == std::numeric_limits<entity>::max()) return false;\
+\
+	if (!_swap(a, b)) return false;\
+	if (swap_if_one_elementless && eA == std::numeric_limits<entity>::max())\
+		scene.entity_component_indices[eB][component_id] = a;\
+	else if (swap_if_one_elementless && eB == std::numeric_limits<entity>::max())\
+		scene.entity_component_indices[eA][component_id] = b;\
+	else std::swap(\
+		scene.entity_component_indices[eA][component_id],\
+		scene.entity_component_indices[eB][component_id]\
+	)
+
 	template<typename Tcomponent>
-	bool scene::component_storage::swap(struct scene& scene, size_t a, std::optional<size_t> _b /*= {}*/) {
-		size_t b = _b.value_or(size() - 1);
-		size_t component_id = get_global_component_id<Tcomponent>();
-		if(!swap<Tcomponent>(a, b)) return false;
-		std::swap(
-			scene.entity_component_indices[detail::get_entity<Tcomponent>(scene, a)][component_id], 
-			scene.entity_component_indices[detail::get_entity<Tcomponent>(scene, b)][component_id]
-		);
+	bool scene::component_storage::swap(struct scene& scene, size_t a, std::optional<size_t> _b /*= {}*/, bool swap_if_one_elementless /*= false*/) {
+		ECS_SWAP_BODY(swap<Tcomponent>, get_global_component_id<Tcomponent>(), Tcomponent);
 		return true;
 	}
-	inline bool scene::component_storage::swap(struct scene& scene, size_t component_id, size_t a, std::optional<size_t> _b /*= {}*/, std::vector<std::byte>& buffer) {
-		size_t b = _b.value_or(size() - 1);
-		if(!swap(a, b, buffer)) return false;
-		auto eA = detail::get_entity(scene, a, component_id);
-		auto eB = detail::get_entity(scene, b, component_id);
-		std::swap(
-			scene.entity_component_indices[eA][component_id], 
-			scene.entity_component_indices[eB][component_id]
-		);
+	inline bool scene::component_storage::swap(struct scene& scene, size_t _component_id, size_t a, std::optional<size_t> _b /*= {}*/, std::vector<std::byte>& buffer /*= {}*/, bool swap_if_one_elementless /*= false*/) {
+		struct DummyWithEntity { ecs::entity entity; };
+		ECS_SWAP_BODY(swap, _component_id, DummyWithEntity);
 		return true;
 	}
+#undef ECS_SWAP_BODY
 
 	/**
 	* @brief Function which removes the value associated with the provided entity
 	* @note performs a swap with the last stored value thus needs to update offset information stored in the scene
-	* 
+	*
 	* @param scene The scene storing offset information
 	* @param e The entity to remove
 	* @param component_id The component id to remove if a type is not automatically provided!
@@ -697,7 +759,7 @@ namespace ecs {
 	inline bool scene::component_storage::remove(scene& scene, entity e, size_t component_id) {\
 		size_t size = this->size();
 		if(size == 0 || e >= scene.entity_component_indices.size()) return false;
-		
+
 		auto& indices = scene.entity_component_indices[e];
 		if(indices.size() <= component_id) return false;
 
@@ -715,15 +777,15 @@ namespace ecs {
 
 	/**
 	* @brief Sorts the elements stored in this storage based on a comparison function.
-	* 
+	*
 	* @tparam Tcomponent The type of element stored in the component
 	* @tparam with_entites Weather or not the comparator should be given the entities as well as void pointers
 	* @param scene The scene where book keeping information about entities is stored
 	* @param component_id Id associated with the elements stored in this component (needed if Tcomponent not provided)
 	* @tparam F type of the comparator
 	* @param comparator Comparision function which returns weather or not a is less than b...
-	*	has signature: bool(Tcomponent* a, entity A'sEntity, Tcomponent* b, entity B'sEntity) 
-	*	or bool(Tcomponent* a, Tcomponent* b) if with_entities is false 
+	*	has signature: bool(Tcomponent* a, entity A'sEntity, Tcomponent* b, entity B'sEntity)
+	*	or bool(Tcomponent* a, Tcomponent* b) if with_entities is false
 	* @note if Tcomponent is not provided the components instead come as a void*
 	*/
 	template<typename F, bool with_entitites>
@@ -761,7 +823,7 @@ namespace ecs {
 			indicies = i2;
 		}
 
-		// Update the data storage and book keeping to represent the 
+		// Update the data storage and book keeping to represent the
 		std::vector<std::byte> swapBuffer(element_size, {});
 		for(size_t i = 0; i < size; ++i)
 			if(indicies[i] != i) {

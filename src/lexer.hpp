@@ -75,8 +75,8 @@ namespace doir { inline namespace lex {
 		template<typename CharT>
 		struct basic_null {
 			constexpr static auto skip_if_invalid = true;
-			static bool next_valid(size_t index, CharT next) { return false; }
-			static bool token_valid(std::basic_string_view<CharT> token) { return false; }
+			inline static bool next_valid(size_t index, CharT next) { return false; }
+			inline static bool token_valid(std::basic_string_view<CharT> token) { return false; }
 		};
 		using null = basic_null<char>;
 
@@ -85,8 +85,8 @@ namespace doir { inline namespace lex {
 			using head = Head;
 			constexpr static size_t token = Token;
 			constexpr static auto skip_if_invalid = head::skip_if_invalid;
-			static bool next_valid(size_t index, CharT next) { return head::next_valid(index, next); }
-			static bool token_valid(std::basic_string_view<CharT> token) { return head::token_valid(token); }
+			inline static bool next_valid(size_t index, CharT next) { return head::next_valid(index, next); }
+			inline static bool token_valid(std::basic_string_view<CharT> token) { return head::token_valid(token); }
 		};
 		template<size_t Token, lexer_head<char> Head>
 		using token = basic_token<char, Token, Head>;
@@ -95,8 +95,8 @@ namespace doir { inline namespace lex {
 		struct basic_skip {
 			using head = Head;
 			constexpr static auto skip_if_invalid = head::skip_if_invalid;
-			static bool next_valid(size_t index, CharT next) { return head::next_valid(index, next); }
-			static bool token_valid(std::basic_string_view<CharT> token) { return head::token_valid(token); }
+			inline static bool next_valid(size_t index, CharT next) { return head::next_valid(index, next); }
+			inline static bool token_valid(std::basic_string_view<CharT> token) { return head::token_valid(token); }
 		};
 		template<lexer_head<char> Head>
 		using skip = basic_skip<char, Head>;
@@ -104,10 +104,10 @@ namespace doir { inline namespace lex {
 		template<typename CharT, detail::string_literal match>
 		struct basic_exact_string {
 			static constexpr bool skip_if_invalid = true;
-			static bool next_valid(size_t index, CharT next) {
+			inline static bool next_valid(size_t index, CharT next) {
 				return match.view()[index] == next;
 			}
-			static bool token_valid(std::basic_string_view<CharT> token) {
+			inline static bool token_valid(std::basic_string_view<CharT> token) {
 				return match.view().size() == token.size();
 			}
 		};
@@ -117,10 +117,10 @@ namespace doir { inline namespace lex {
 		template<typename CharT, detail::string_literal match>
 		struct basic_case_insensitive_string {
 			static constexpr bool skip_if_invalid = true;
-			static bool next_valid(size_t index, CharT next) {
+			inline static bool next_valid(size_t index, CharT next) {
 				return std::tolower(match.view()[index]) == std::tolower(next);
 			}
-			static bool token_valid(std::basic_string_view<CharT> token) {
+			inline static bool token_valid(std::basic_string_view<CharT> token) {
 				return match.view().size() == token.size();
 			}
 		};
@@ -130,16 +130,16 @@ namespace doir { inline namespace lex {
 		template<typename CharT, size_t ID, bool View = false>
 		struct basic_runtime_string {
 			static std::conditional_t<View, std::string_view, std::string> match;
-			static void set(std::string_view runtime) { match = std::conditional_t<View, std::string_view, std::string>{runtime}; }
-			static void set(const std::string& runtime) { match = runtime; }
-			static void reset() { match = ""; }
+			inline static void set(std::string_view runtime) { match = std::conditional_t<View, std::string_view, std::string>{runtime}; }
+			inline static void set(const std::string& runtime) { match = runtime; }
+			inline static void reset() { match = ""; }
 
 			static constexpr bool skip_if_invalid = true;
-			static bool next_valid(size_t index, CharT next) {
+			inline static bool next_valid(size_t index, CharT next) {
 				if(index >= match.size()) return false;
 				return match[index] == next;
 			}
-			static bool token_valid(std::basic_string_view<CharT> token) {
+			inline static bool token_valid(std::basic_string_view<CharT> token) {
 				return match.size() == token.size();
 			}
 		};
@@ -149,10 +149,10 @@ namespace doir { inline namespace lex {
 		template<typename CharT, CharT match>
 		struct basic_exact_character {
 			static constexpr bool skip_if_invalid = true;
-			static bool next_valid(size_t index, CharT next) {
+			inline static bool next_valid(size_t index, CharT next) {
 				return index == 0 && match == next;
 			}
-			static bool token_valid(std::basic_string_view<CharT> token) {
+			inline static bool token_valid(std::basic_string_view<CharT> token) {
 				return token.size() == 1;
 			}
 		};
@@ -162,10 +162,10 @@ namespace doir { inline namespace lex {
 		template<typename CharT, CharT match>
 		struct basic_case_insensitive_character {
 			static constexpr bool skip_if_invalid = true;
-			static bool next_valid(size_t index, CharT next) {
+			inline static bool next_valid(size_t index, CharT next) {
 				return index == 0 && std::tolower(match) == std::tolower(next);
 			}
-			static bool token_valid(std::basic_string_view<CharT> token) {
+			inline static bool token_valid(std::basic_string_view<CharT> token) {
 				return token.size() == 1;
 			}
 		};
@@ -176,13 +176,13 @@ namespace doir { inline namespace lex {
 		template<typename CharT, ctll::fixed_string regex>
 		struct basic_ctre_regex {
 			static constexpr bool skip_if_invalid = false;
-			static bool next_valid(size_t index, CharT next) {
+			inline static bool next_valid(size_t index, CharT next) {
 				thread_local std::basic_string<CharT> buffer;
 				if(index == 0) buffer.clear();
 				buffer += next;
 				return ctre::match<regex>(buffer);
 			}
-			static bool token_valid(std::basic_string_view<CharT> token) {
+			inline static bool token_valid(std::basic_string_view<CharT> token) {
 				return true;
 			}
 		};
@@ -209,16 +209,16 @@ namespace doir { inline namespace lex {
 			result(generic&& g) requires (!std::is_same_v<detail::nth_type<0, Heads...>, heads::basic_null<CharT>>)
 				: head(g.head), lexeme(g.lexeme), remaining(g.remaining) {}
 			result& operator=(const result&) = default;
-			result& operator=(const generic& g) requires (!std::is_same_v<detail::nth_type<0, Heads...>, heads::basic_null<CharT>>) { return *this = result(g); }
+			inline result& operator=(const generic& g) requires (!std::is_same_v<detail::nth_type<0, Heads...>, heads::basic_null<CharT>>) { return *this = result(g); }
 			result& operator=(result&&) = default;
-			result& operator=(generic&& g) requires (!std::is_same_v<detail::nth_type<0, Heads...>, heads::basic_null<CharT>>) { return *this = result(g); }
+			inline result& operator=(generic&& g) requires (!std::is_same_v<detail::nth_type<0, Heads...>, heads::basic_null<CharT>>) { return *this = result(g); }
 
 			template<std::convertible_to<size_t> Token>
-			Token token() const { return (Token)head; }
-			bool valid() const { return head != std::string::npos && !lexeme.empty(); }
-			bool valid_or_end() const { return valid() || remaining.empty(); }
+			inline Token token() const { return (Token)head; }
+			inline bool valid() const { return head != std::string::npos && !lexeme.empty(); }
+			inline bool valid_or_end() const { return valid() || remaining.empty(); }
 
-			operator generic() const { return generic{head, lexeme, remaining}; }
+			inline operator generic() const { return generic{head, lexeme, remaining}; }
 		};
 	protected:
 #ifdef LEXER_IS_STATEFULL
@@ -226,7 +226,7 @@ namespace doir { inline namespace lex {
 #endif
 
 		// If any of the heads are token_heads remap the returned result from the head index to the associated token
-		size_t apply_tokens(size_t i) const {
+		inline size_t apply_tokens(size_t i) const {
 			[&, this]<std::size_t... I>(std::index_sequence<I...>) {
 				(ApplyTokenOp<I>{}(i) && ...);
 			}(std::make_index_sequence<sizeof...(Heads)>{});
@@ -245,7 +245,7 @@ namespace doir { inline namespace lex {
 		};
 
 		// Checks that the finished token is in fact valid for all its supposedly valid heads (prevents matching strings which are too short)
-		bool confirm_valid(std::bitset<sizeof...(Heads)>& lastValid, std::basic_string_view<CharT> token) const {
+		inline bool confirm_valid(std::bitset<sizeof...(Heads)>& lastValid, std::basic_string_view<CharT> token) const {
 			[&, this]<std::size_t... I>(std::index_sequence<I...>) {
 				(ConfirmValidOp<I>{}(lastValid, token) && ...);
 			}(std::make_index_sequence<sizeof...(Heads)>{});
@@ -261,7 +261,7 @@ namespace doir { inline namespace lex {
 		};
 
 		// Checks if the given head is a skip_head
-		bool is_skip(size_t headIndex) const {
+		inline bool is_skip(size_t headIndex) const {
 			return ![&, this]<std::size_t... I>(std::index_sequence<I...>) {
 				return (IsSkipOp<I>{}(headIndex) && ...);
 			}(std::make_index_sequence<sizeof...(Heads)>{});

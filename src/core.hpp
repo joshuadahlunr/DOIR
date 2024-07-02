@@ -5,6 +5,8 @@
 #endif
 #include "../thirdparty/ECS.hpp"
 #include "../thirdparty/ECSquery.hpp"
+#include "../thirdparty/ECSadapter.hpp"
+#include "fnv1a.hpp"
 
 #include <iostream>
 #include <map>
@@ -15,6 +17,8 @@ namespace doir {
 	using ecs::optional;
 
 	using Token = ecs::entity;
+	template<typename T>
+	using WithToken = ecs::with_entity<T>;
 
 	template<std::floating_point T>
 	bool float_equal(T a, T b, T epsilon = .00001) {
@@ -28,23 +32,38 @@ namespace doir {
 			assert(make_token() == 0); // Reserve token 0 for errors!
 		}
 
-		size_t token_count() const { return size(); }
+		inline size_t token_count() const { return size(); }
 
-		Token make_token() { return create_entity(); }
-
-		template<typename Tattr>
-		Tattr& add_attribute(Token t) { return *add_component<Tattr>(t); }
+		inline Token make_token() { return create_entity(); }
 
 		template<typename Tattr>
-		ecs::optional_reference<Tattr> get_attribute(Token t) { return get_component<Tattr>(t); }
-		template<typename Tattr>
-		ecs::optional_reference<const Tattr> get_attribute(Token t) const { return get_component<Tattr>(t); }
+		inline Tattr& add_attribute(Token t) { return *add_component<Tattr>(t); }
 
 		template<typename Tattr>
-		bool has_attribute(Token t) const { return has_component<Tattr>(t); }
+		inline Tattr& add_hashtable_attribute(Token t) {
+			return ecs::hashtable::get_key_and_mark_occupied<Tattr>(
+				add_attribute<typename ecs::hashtable::component_storage<Tattr>::component_type>(t)
+			);
+		}
+
+		template<typename Tattr>
+		inline ecs::optional_reference<Tattr> get_attribute(Token t) { return get_component<Tattr>(t); }
+		template<typename Tattr>
+		inline ecs::optional_reference<const Tattr> get_attribute(Token t) const { return get_component<Tattr>(t); }
+
+		template<typename Tattr>
+		optional_reference<ecs::hashtable::component_storage<Tattr, void, fnv::fnv1a_64<Tattr>>> get_attribute_hashtable(bool skip_rehash = false) {
+			auto hashtable = ecs::get_adapted_component_storage<ecs::hashtable::component_storage<Tattr, void, fnv::fnv1a_64<Tattr>>>(*this);
+			if(!hashtable) return {};
+			if(!skip_rehash) hashtable->rehash(*this);
+			return hashtable;
+		}
+
+		template<typename Tattr>
+		inline bool has_attribute(Token t) const { return has_component<Tattr>(t); }
 
 		template<typename... Tattrs>
-		ecs::scene_view<Tattrs...> view() { return {*this}; }
+		inline ecs::scene_view<Tattrs...> view() { return {*this}; }
 	};
 
 	// A module wrapped value assumes that the associated module won't move!
@@ -103,27 +122,30 @@ namespace doir {
 	struct ModuleWrapped<Lexeme> : public Lexeme {
 		DOIR_MODULE_WRAPPED_BODY_IMPLEMENTATION(Lexeme);
 
-		std::string_view view() const { return Lexeme::view(module->buffer); }
-		operator std::string_view() const { return view(); }	
+		inline std::string_view view() const { return Lexeme::view(module->buffer); }
+		inline operator std::string_view() const { return view(); }
+		inline bool operator==(std::string_view other) { return view() == other; }
 	};
 
 	struct TokenReference : public std::variant<Token, Lexeme> {
 		using std::variant<Token, Lexeme>::variant;
 
-		bool looked_up() const { return index() == 0; }
-		operator bool() const { return looked_up(); }
+		inline bool looked_up() const { return index() == 0; }
+		inline operator bool() const { return looked_up(); }
 
-		Token& token() { return std::get<Token>(*this); }
-		const Token& token() const { return std::get<Token>(*this); }
-		Lexeme& lexeme() { return std::get<Lexeme>(*this); }
-		const Lexeme& lexeme() const { return std::get<Lexeme>(*this); }
+		inline Token& token() { return std::get<Token>(*this); }
+		inline const Token& token() const { return std::get<Token>(*this); }
+		inline Lexeme& lexeme() { return std::get<Lexeme>(*this); }
+		inline const Lexeme& lexeme() const { return std::get<Lexeme>(*this); }
 	};
 
 	struct Error {
 		std::string message;
 
-#if __cpp_exceptions >= 199711 
+#if __cpp_exceptions >= 199711
 		void Throw() { throw std::runtime_error(message); }
+#else
+		void Throw() { std::terminate(); }
 #endif
 	};
 

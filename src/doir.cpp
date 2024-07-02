@@ -8,55 +8,55 @@
 #include "unicode_identifier_head.hpp"
 
 enum LexerTokens {
-    Whitespace, // `[ \t\n\r]+` or `\s` (if looking for a terminator)
-    Colen, // :
-    Equals, // =
-    External, // "external"
-    Or, // |
-    OpenParen, // (
-    CloseParen, // )
-    Auto, // "auto"
-    Type, // "type"
-    Block, // "block"
-    OpenAngle, // <
-    CloseAngle, // >
-    Comma, // ,
-    Pointer, // *
-    FatPointer, // [*]
-    Constant, // "const" or "constant"
-    Implicit, // "implicit"
-    Ellipses, // ...
-    Terminator, // ; or "\n"
-    Dash, // -
-    OpenBrace, // {
-    CloseBrace, // }
-    If, // "if"
-    Else, // "else"
-    Inline, // "inline"
-    NoInline, // "noinline"
-    Comptime, // "comptime"
-    NoComptime, // "nocomptime"
-    Terminating, // "terminating"
-    Assembler, // "assembler"
-    Dot, // .
-    True, // "true"
-    False, // "false"
-    NodotIdentifier, // `%UNICODE_XID_CONTINUE+|(UNICODE_XID_START|_)UNICODE_XID_CONTINUE*`
-    BinaryNumber, // `0[bB]([01]+|[01]+\.|[01]*\.[01]+)([eE][+-]?[01]+)?`
-    DecimalNumber, // `([0-9]+|[0-9]+\.|[0-9]*\.[0-9]+)([eE][+-]?[0-9]+)?` NOTE: Any valid octal_number string is also a valid decimal_number string!
-    HexadecimalNumber, // `0[xX]([0-9A-F]+|[0-9A-F]+\.|[0-9A-F]*\.[0-9A-F]+)(e[+-]?[0-9A-F]+)?`
-    String, // `"(\\"|[^"])*"`
-    Character, // `'(\\'|[^'])'` NOTE: Any single valid UTF-32 character
-    Documentation, // `(/\*\*(.*?)\*/)`
-    Comment, // `(//[^\n]*\n)|(/\*(.*?)\*/)`
-    Filename, // `[^:]+?`
+	Whitespace, // `[ \t\n\r]+` or `\s` (if looking for a terminator)
+	Colen, // :
+	Equals, // =
+	External, // "external"
+	Or, // |
+	OpenParen, // (
+	CloseParen, // )
+	Auto, // "auto"
+	Type, // "type"
+	Block, // "block"
+	OpenAngle, // <
+	CloseAngle, // >
+	Comma, // ,
+	Pointer, // *
+	FatPointer, // [*]
+	Constant, // "const" or "constant"
+	Implicit, // "implicit"
+	Ellipses, // ...
+	Terminator, // ; or "\n"
+	Dash, // -
+	OpenBrace, // {
+	CloseBrace, // }
+	If, // "if"
+	Else, // "else"
+	Inline, // "inline"
+	NoInline, // "noinline"
+	Comptime, // "comptime"
+	NoComptime, // "nocomptime"
+	Terminating, // "terminating"
+	Assembler, // "assembler"
+	Dot, // .
+	True, // "true"
+	False, // "false"
+	NodotIdentifier, // `%UNICODE_XID_CONTINUE+|(UNICODE_XID_START|_)UNICODE_XID_CONTINUE*`
+	BinaryNumber, // `0[bB]([01]+|[01]+\.|[01]*\.[01]+)([eE][+-]?[01]+)?`
+	DecimalNumber, // `([0-9]+|[0-9]+\.|[0-9]*\.[0-9]+)([eE][+-]?[0-9]+)?` NOTE: Any valid octal_number string is also a valid decimal_number string!
+	HexadecimalNumber, // `0[xX]([0-9A-F]+|[0-9A-F]+\.|[0-9A-F]*\.[0-9A-F]+)(e[+-]?[0-9A-F]+)?`
+	String, // `"(\\"|[^"])*"`
+	Character, // `'(\\'|[^'])'` NOTE: Any single valid UTF-32 character
+	Documentation, // `(/\*\*(.*?)\*/)`
+	Comment, // `(//[^\n]*\n)|(/\*(.*?)\*/)`
+	Filename, // `[^:]+?`
 };
 
 namespace heads {
 	using SkipWhitespace = doir::lex::heads::skip<doir::lex::heads::ctre_regex<"\\s+">>; // Skip whitespace!
 	using SkipWhitespaceSingle = doir::lex::heads::skip<doir::lex::heads::ctre_regex<"\\s">>; // Skip whitespace!
 	using Colen = doir::lex::heads::token<LexerTokens::Colen, doir::lex::heads::exact_character<':'>>;
-    using Equals = doir::lex::heads::token<LexerTokens::Equals, doir::lex::heads::exact_character<'='>>;
+	using Equals = doir::lex::heads::token<LexerTokens::Equals, doir::lex::heads::exact_character<'='>>;
 	using External = doir::lex::heads::token<LexerTokens::External, doir::lex::heads::exact_string<"external">>;
 	using Or = doir::lex::heads::token<LexerTokens::Or, doir::lex::heads::exact_character<'|'>>;
 	using OpenParen = doir::lex::heads::token<LexerTokens::OpenParen, doir::lex::heads::exact_character<'('>>;

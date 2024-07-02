@@ -117,7 +117,7 @@ TEST_CASE("Lex Error") {
 	CAPTURE_CONSOLE_BEGIN
 	lexTest("2 % 2;");
 	CAPTURE_CONSOLE_END
-	
+
 	CHECK(capture.str() == R"p(2
 !ERROR!
 2
@@ -130,7 +130,7 @@ TEST_CASE("Lex Multi") {
 	CAPTURE_CONSOLE_BEGIN
 	lexTest("2 + 2; 4 / 2; 5 - 6;");
 	CAPTURE_CONSOLE_END
-	
+
 	CHECK(capture.str() == R"p(2
 +
 2
@@ -206,7 +206,7 @@ TEST_CASE("Yacc Error") {
 	CAPTURE_ERROR_CONSOLE_BEGIN
 	yaccTest("2 % 2;");
 	CAPTURE_ERROR_CONSOLE_END
-	
+
 	CHECK(capture.str() == "syntax error\n");
 	FrameMark;
 }
