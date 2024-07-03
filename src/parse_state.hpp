@@ -79,7 +79,7 @@ namespace doir {
 		static Token make_error(const ParseState& state, Module& module, Terror&& error) {
 			Token t = 0;
 			module.add_attribute<Terror>(t) = error;
-			if(!state.lexer_state.valid()) return t;
+			// if(!state.lexer_state.valid()) return t;
 
 			module.add_attribute<Lexeme>(t) = *Lexeme::from_view(module.buffer, state.lexer_state.lexeme);
 			module.add_attribute<NamedSourceLocation>(t) = state.source_location;

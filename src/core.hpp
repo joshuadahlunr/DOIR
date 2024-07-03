@@ -3,6 +3,7 @@
 #ifdef DOIR_IMPLEMENTATION
 	#define ECS_IMPLEMENTATION
 #endif
+#include "utility.hpp"
 #include "../thirdparty/ECS.hpp"
 #include "../thirdparty/ECSquery.hpp"
 #include "../thirdparty/ECSadapter.hpp"
@@ -20,16 +21,12 @@ namespace doir {
 	template<typename T>
 	using WithToken = ecs::with_entity<T>;
 
-	template<std::floating_point T>
-	bool float_equal(T a, T b, T epsilon = .00001) {
-		return std::abs(a - b) < epsilon;
-	}
-
 	struct Module: protected ecs::scene {
 		std::string buffer;
 
 		Module(const std::string& buffer = "") : buffer(buffer) {
-			assert(make_token() == 0); // Reserve token 0 for errors!
+			volatile Token t = make_token(); // When not stored in a volatile the optimizer likes to get rid of this call!
+			assert(t == 0); // Reserve token 0 for errors!
 		}
 
 		inline size_t token_count() const { return size(); }
@@ -55,8 +52,16 @@ namespace doir {
 		optional_reference<ecs::hashtable::component_storage<Tattr, void, fnv::fnv1a_64<Tattr>>> get_attribute_hashtable(bool skip_rehash = false) {
 			auto hashtable = ecs::get_adapted_component_storage<ecs::hashtable::component_storage<Tattr, void, fnv::fnv1a_64<Tattr>>>(*this);
 			if(!hashtable) return {};
-			if(!skip_rehash) hashtable->rehash(*this);
+			if(!skip_rehash) if(!hashtable->rehash(*this)) return {};
 			return hashtable;
+		}
+
+		template<typename Tattr>
+		auto get_attribute_hashtable_as_span() {
+			using component_t = ecs::hashtable::component_storage<Tattr, void, fnv::fnv1a_64<Tattr>>::component_type;
+			auto storage = ecs::get_adapted_component_storage<ecs::typed::component_storage<component_t>>(*this);
+			if(!storage) return decltype(storage->span()){};
+			return storage->span();
 		}
 
 		template<typename Tattr>
