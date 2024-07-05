@@ -229,7 +229,7 @@ namespace json5 {
 		break; case LexerTokens::ObjectStart: {
 			std::string out = "{";
 			bool empty = true;
-			for(auto& mem: module.get_attribute_hashtable_as_span<parse::ObjectMember>())
+			for(auto& mem: module.get_hashtable_attribute_as_span<parse::ObjectMember>())
 				if(mem->key.entity == root) {
 					empty = false;
 					out += "\"" + std::string(mem->key.value) + "\": " 
@@ -241,13 +241,13 @@ namespace json5 {
 		break; case LexerTokens::ArrayStart: {
 			std::string out = "[";
 			std::vector<parse::ArrayMember> members;
-			for(auto& mem: module.get_attribute_hashtable_as_span<parse::ArrayMember>())
+			for(auto& mem: module.get_hashtable_attribute_as_span<parse::ArrayMember>())
 				if(mem->key.entity == root)
 					members.emplace_back(mem->key);
 			std::sort(members.begin(), members.end(), [](const parse::ArrayMember& a, const parse::ArrayMember& b){
 				return a.value < b.value;
 			});
-			auto& hashtable = *module.get_attribute_hashtable<parse::ArrayMember>();
+			auto& hashtable = *module.get_hashtable<parse::ArrayMember>();
 			for(auto& mem: members)
 				out += print(module, *hashtable.find(mem)) + ", ";
 			if(!members.empty()) out.resize(out.size() - 2);
@@ -332,7 +332,7 @@ TEST_CASE("JSON5::object") {
 	doir::ParseModule module("{x: 5, \"y\": 6}");
 	json5::parse p;
 	doir::Token root = p.start(module);
-	auto& hashtable = *module.get_attribute_hashtable<json5::parse::ObjectMember>();
+	auto& hashtable = *module.get_hashtable<json5::parse::ObjectMember>();
 	auto a = hashtable.find({"x", root});
 	auto b = module.get_attribute<doir::TokenReference>(*a);
 	doir::Token x = b->token();
@@ -348,7 +348,7 @@ TEST_CASE("JSON5::array") {
 	doir::ParseModule module("[5, 6, 7, \"Hello World\"]");
 	json5::parse p;
 	auto root = p.start(module);
-	auto& hashtable = *module.get_attribute_hashtable<json5::parse::ArrayMember>();
+	auto& hashtable = *module.get_hashtable<json5::parse::ArrayMember>();
 	CHECK(*module.get_attribute<double>(*hashtable.find({0, root})) == 5);
 	CHECK(*module.get_attribute<double>(*hashtable.find({1, root})) == 6);
 	CHECK(*module.get_attribute<double>(*hashtable.find({2, root})) == 7);
@@ -361,8 +361,8 @@ TEST_CASE("JSON5::nested_array_in_object") {
 	doir::ParseModule module("{x : [5, 6, 7, \"Hello World\"]}");
 	json5::parse p;
 	doir::Token root = p.start(module);
-	auto& objectTable = *module.get_attribute_hashtable<json5::parse::ObjectMember>();
-	auto& arrayTable = *module.get_attribute_hashtable<json5::parse::ArrayMember>();
+	auto& objectTable = *module.get_hashtable<json5::parse::ObjectMember>();
+	auto& arrayTable = *module.get_hashtable<json5::parse::ArrayMember>();
 	doir::Token x = module.get_attribute<doir::TokenReference>(*objectTable.find({"x", root}))->token();
 	CHECK(*module.get_attribute<double>(*arrayTable.find({0, x})) == 5);
 	CHECK(*module.get_attribute<double>(*arrayTable.find({1, x})) == 6);
@@ -376,7 +376,7 @@ TEST_CASE("JSON5::nested_array") {
 	doir::ParseModule module("[[1, 2], [3, 4]]");
 	json5::parse p;
 	doir::Token root = p.start(module);
-	auto& hashtable = *module.get_attribute_hashtable<json5::parse::ArrayMember>();
+	auto& hashtable = *module.get_hashtable<json5::parse::ArrayMember>();
 	doir::Token childrenA = *hashtable.find({0, root});
 	doir::Token childrenB = *hashtable.find({1, root});
 	CHECK(*module.get_attribute<double>(*hashtable.find({0, childrenA})) == 1);
@@ -391,7 +391,7 @@ TEST_CASE("JSON5::nested_object") {
 	doir::ParseModule module("{x: {y: 5, z: 6}}");
 	json5::parse p;
 	doir::Token root = p.start(module);
-	auto& hashtable = *module.get_attribute_hashtable<json5::parse::ObjectMember>();
+	auto& hashtable = *module.get_hashtable<json5::parse::ObjectMember>();
 	doir::Token x = module.get_attribute<doir::TokenReference>(*hashtable.find({"x", root}))->token(); // TODO: Why is this not attached to root?
 	doir::Token y = module.get_attribute<doir::TokenReference>(*hashtable.find({"y", x}))->token();
 	doir::Token z = module.get_attribute<doir::TokenReference>(*hashtable.find({"z", x}))->token();

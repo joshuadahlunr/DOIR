@@ -2,6 +2,7 @@
 
 #include "core.hpp"
 #include "lexer.hpp"
+#include <initializer_list>
 #include <string_view>
 
 namespace doir {
@@ -20,6 +21,13 @@ namespace doir {
 		}
 		inline void restore_state(ParseState saved) {
 			*this = saved;
+		}
+
+		inline static bool has_more_input(ParseState saved) {
+			return !saved.lexer_state.remaining.empty();
+		}
+		inline bool has_more_input() {
+			return has_more_input(*this);
 		}
 
 		static NamedSourceLocation update_location_from_lexem(std::string_view lexeme, const ParseState& state) {
@@ -139,9 +147,29 @@ namespace doir {
 			return {};
 		}
 
+		template<typename Token, typename Error = doir::Error>
+		inline std::optional<doir::Token> expect(std::initializer_list<Token> what, std::string_view error = "None of expected tokens found") {
+			bool found = false;
+			for(Token t: what) 
+				if(current_lexer_token<Token>() == what) {
+					found = true;
+					break;
+				}
+				
+			if(!lexer_state.valid() || !found)
+				return make_error<Error>({std::string(error)});
+			return {};
+		}
+
 		// Returns a token representing an error if the current lexer token doesn't match, lexes the next token if it does match
 		template<typename Token, typename Error = doir::Error>
 		inline std::optional<doir::Token> expect_and_lex(auto lexer, Token what, std::string_view error = "Expected token not found") {
+			if(auto fail = expect<Token, Error>(what, error)) return fail;
+			lex(lexer);
+			return {};
+		}
+		template<typename Token, typename Error = doir::Error>
+		inline std::optional<doir::Token> expect_and_lex(auto lexer, std::initializer_list<Token> what, std::string_view error = "Expected token not found") {
 			if(auto fail = expect<Token, Error>(what, error)) return fail;
 			lex(lexer);
 			return {};

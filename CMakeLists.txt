@@ -1,8 +1,15 @@
 cmake_minimum_required(VERSION 3.21)
 project(DOIR LANGUAGES CXX)
 
+if(CMAKE_BUILD_TYPE MATCHES Debug)
+	set(DOIR_PROFILE_DEFAULT false)
+else()
+	set(CMAKE_INTERPROCEDURAL_OPTIMIZATION true)
+	set(DOIR_PROFILE_DEFAULT ${PROJECT_IS_TOP_LEVEL})
+endif()
+
 option(DOIR_ENABLE_TESTS "Weather or not Unit Tests should be built." ${PROJECT_IS_TOP_LEVEL})
-option(DOIR_ENABLE_PROFILING "Weather or not profiling instrumentation will be added." ${PROJECT_IS_TOP_LEVEL})
+option(DOIR_ENABLE_PROFILING "Weather or not profiling instrumentation will be added." ${DOIR_PROFILE_DEFAULT})
 
 file(GLOB sources "src/*.cpp" "thirdparty/*.cpp")
 add_executable(doir ${sources})

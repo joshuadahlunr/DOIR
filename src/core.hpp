@@ -49,7 +49,18 @@ namespace doir {
 		inline ecs::optional_reference<const Tattr> get_attribute(Token t) const { return get_component<Tattr>(t); }
 
 		template<typename Tattr>
-		optional_reference<ecs::hashtable::component_storage<Tattr, void, fnv::fnv1a_64<Tattr>>> get_attribute_hashtable(bool skip_rehash = false) {
+		inline auto get_hashtable_attribute(Token t) { 
+			using component_t = ecs::hashtable::component_storage<Tattr, void, fnv::fnv1a_64<Tattr>>::component_type;
+			return get_component<component_t>(t); 
+		}
+		template<typename Tattr>
+		inline auto get_hashtable_attribute(Token t) const {
+			using component_t = ecs::hashtable::component_storage<Tattr, void, fnv::fnv1a_64<Tattr>>::component_type; 
+			return get_component<component_t>(t); 
+		}
+
+		template<typename Tattr>
+		optional_reference<ecs::hashtable::component_storage<Tattr, void, fnv::fnv1a_64<Tattr>>> get_hashtable(bool skip_rehash = false) {
 			auto hashtable = ecs::get_adapted_component_storage<ecs::hashtable::component_storage<Tattr, void, fnv::fnv1a_64<Tattr>>>(*this);
 			if(!hashtable) return {};
 			if(!skip_rehash) if(!hashtable->rehash(*this)) return {};
@@ -57,15 +68,28 @@ namespace doir {
 		}
 
 		template<typename Tattr>
-		auto get_attribute_hashtable_as_span() {
+		inline bool has_attribute(Token t) const { return has_component<Tattr>(t); }
+
+		template<typename Tattr>
+		inline bool has_hashtable_attribute(Token t) const { 
 			using component_t = ecs::hashtable::component_storage<Tattr, void, fnv::fnv1a_64<Tattr>>::component_type;
-			auto storage = ecs::get_adapted_component_storage<ecs::typed::component_storage<component_t>>(*this);
+			return has_component<component_t>(t); 
+		}
+
+		template<typename Tattr>
+		auto get_attribute_as_span() {
+			auto storage = ecs::get_adapted_component_storage<ecs::typed::component_storage<Tattr>>(*this);
 			if(!storage) return decltype(storage->span()){};
 			return storage->span();
 		}
 
 		template<typename Tattr>
-		inline bool has_attribute(Token t) const { return has_component<Tattr>(t); }
+		auto get_hashtable_attribute_as_span() {
+			using component_t = ecs::hashtable::component_storage<Tattr, void, fnv::fnv1a_64<Tattr>>::component_type;
+			auto storage = ecs::get_adapted_component_storage<ecs::typed::component_storage<component_t>>(*this);
+			if(!storage) return decltype(storage->span()){};
+			return storage->span();
+		}
 
 		template<typename... Tattrs>
 		inline ecs::scene_view<Tattrs...> view() { return {*this}; }
