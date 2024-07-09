@@ -44,8 +44,8 @@ namespace ecs {
 
 	namespace typed {
 		template<typename Tcomponent>
-		struct component_storage : public ecs::scene::component_storage {
-			using Base = ecs::scene::component_storage;
+		struct component_storage : public scene::component_storage {
+			using Base = scene::component_storage;
 			using component_type = Tcomponent;
 			using Base::Base;
 			optional_reference<const Tcomponent> get(entity e) const { return Base::get<Tcomponent>(e); }
@@ -108,7 +108,7 @@ namespace ecs {
 		}
 
 		template<typename Tkey, typename Tvalue = void>
-		using component_wrapper = ecs::with_entity<std::conditional_t<
+		using component_wrapper = with_entity<std::conditional_t<
 			is_costly_to_compare_v<Tkey>, detail::hash_entry_with_hash<Tkey, Tvalue>, detail::hash_entry<Tkey, Tvalue>>
 		>;
 
@@ -125,7 +125,7 @@ namespace ecs {
 		// An adapter over a component storage which treats the underlying data as a hopscotch hash table
 		template<typename Tkey, typename Tvalue = void, typename Hash = std::hash<Tkey>, size_t OneOverOneMinusMaxLoadFactor = /*one_over_one_minus(.95)*/20, size_t NeighborhoodSize = 8, size_t MaxRetries = 5>
 		class component_storage
-			: public ecs::typed::component_storage<
+			: public typed::component_storage<
 				component_wrapper<ecs::detail::remove_with_entity_t<Tkey>, ecs::detail::remove_with_entity_t<Tvalue>>
 			>
 		{
@@ -133,7 +133,7 @@ namespace ecs {
 			using key_type = ecs::detail::remove_with_entity_t<Tkey>;
 			using value_type = ecs::detail::remove_with_entity_t<Tvalue>;
 			using component_t = component_wrapper<key_type, value_type>;
-			using Base = ecs::typed::component_storage<component_t>;
+			using Base = typed::component_storage<component_t>;
 
 			// static constexpr bool has_value_type = std::is_same_v<value_type, void>;
 			// using kv_pair = std::conditional_t<has_value_type, key_type, std::pair<key_type, value_type>>;
@@ -195,7 +195,7 @@ namespace ecs {
 			inline bool is_in_neighborhood(size_t start, size_t needle) const {
 				if(NeighborhoodSize > Base::size()) return true;
 				size_t end = (start + NeighborhoodSize) % Base::size();
-				if (start <= end)
+				if(start <= end)
 					return needle >= start && needle <= end; // TODO: should be < instead?
 				else // The neighborhood range wraps around the end of the table
 					return needle >= start || needle <= end;
@@ -227,6 +227,10 @@ namespace ecs {
 			inline bool resize_and_rehash(scene& scene, size_t retries = 0) {
 				auto& raw = scene::component_storage::data;
 				raw.resize(std::max(raw.size() * 2, scene::component_storage::element_size));
+				// Make sure all of the new cells are initialized with invalid entities
+				for(size_t i = 0; i < Base::size(); ++i)
+					if(!Base::data()[i]->is_occupied())
+						Base::data()[i].entity = invalid_entity;
 				return rehash(scene, retries, true);
 			}
 
@@ -237,41 +241,42 @@ namespace ecs {
 					bool occupied = Base::data()[i]->is_occupied();
 					Base::data()[i]->hopInfo = 0;
 					if(resized && occupied && i < half && (i % 2) == 1) { // Distribute every other element to the second half of the newly resized space
-						bool success = Base::swap(scene, i, size - i, true);
+						if(!Base::swap(scene, i, size - i, true)) return false;
 						Base::data()[size - i]->set_occupied(occupied);
 						Base::data()[i]->set_occupied(false);
 					} else Base::data()[i]->set_occupied(occupied);
 				}
 
 				// Traverse through the old table and "reinsert" elements into the table
-				for (size_t i = 0; i < Base::size(); ++i)
-					if (Base::data()[i]->is_occupied()) {
+				for(size_t i = 0; i < size; ++i)
+					if(Base::data()[i]->is_occupied()) {
 						size_t hash = this->hash(Base::data()[i]->key);
 
 						// If the value is already in the correct neighborhood... no need to move around just mark as present
 						if(is_in_neighborhood(hash, i)) {
 							if constexpr(store_hash) Base::data()[i]->hash = hash;
-							size_t distance = i > hash ? i - hash : Base::size() - (hash - i);
+							size_t distance = i > hash ? i - hash : size - (hash - i);
 							Base::data()[hash]->hopInfo |= (1 << distance);
 							continue;
 						}
 
 						// Find an empty spot in the new table starting from the new hash value
 						auto emptyIndex = find_empty_spot(hash);
-						if (!emptyIndex) {
+						if(!emptyIndex) {
 							if(retries >= MaxRetries) return false;
 							return resize_and_rehash(scene, retries + 1); // TODO: We can probably use a better strategy than "resize and try again"
 						}
 
 						// Move the element to its new position in the table
-						size_t hopInfo = Base::data()[i]->hopInfo;
-						bool success = Base::swap(scene, *emptyIndex, i, true);
-						Base::data()[i]->hopInfo = hopInfo;
-						Base::data()[*emptyIndex]->set_occupied(true);
+						size_t hopInfoI = Base::data()[i]->hopInfo, hopInfoEmpty = Base::data()[*emptyIndex]->hopInfo;
+						if(!Base::swap(scene, *emptyIndex, i, true)) return false;
+						Base::data()[i]->hopInfo = hopInfoI;
 						Base::data()[i]->set_occupied(false);
+						Base::data()[*emptyIndex]->hopInfo = hopInfoEmpty;
+						Base::data()[*emptyIndex]->set_occupied(true);
 
 						// Mark it as present in the element it hashes to
-						size_t distance = *emptyIndex > hash ? *emptyIndex - hash : Base::size() - (hash - *emptyIndex);
+						size_t distance = *emptyIndex > hash ? *emptyIndex - hash : size - (hash - *emptyIndex);
 						Base::data()[hash]->hopInfo |= (1 << distance);
 					}
 
@@ -312,7 +317,7 @@ namespace ecs {
 				if(!index)
 					return false;  // Key not found
 
-				// TODO: need to modify the scene to mark that the entity no long has a component
+				// TODO: need to modify the scene to mark that the entity no longer has a component
 
 				Base::data()[*index].set_occupied(false);
 

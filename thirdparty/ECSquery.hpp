@@ -233,7 +233,7 @@ namespace ecs {
 	template<typename... Tcomponents>
 	struct scene_view {
 		/**
-		* @var ecs::scene& scene
+		* @var scene& scene
 		* The underlying ECS scene.
 		*/
 		ecs::scene& scene;

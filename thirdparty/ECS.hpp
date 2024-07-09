@@ -50,37 +50,37 @@
 
 #ifdef ECS_IMPLEMENTATION
 /**
-* @var ecs::globalComponentCounter
+* @var globalComponentCounter
 * Global component counter.
 */
 size_t globalComponentCounter = 0;
 
 /**
-* @var ecs::globalComponentForwardLookup
+* @var globalComponentForwardLookup
 * Forward lookup map for components by name to their IDs.
 */
 std::unordered_map<std::string, size_t> globalComponentForwardLookup = {};
 
 /**
-* @var ecs::globalComponentReverseLookup
+* @var globalComponentReverseLookup
 * Reverse lookup map for components by ID to their names.
 */
 std::unordered_map<size_t, std::string> globalComponentReverseLookup = {};
 #else
 /**
-* @var ecs::globalComponentCounter
+* @var globalComponentCounter
 * Global component counter.
 */
 extern size_t globalComponentCounter;
 
 /**
-* @var ecs::globalComponentForwardLookup
+* @var globalComponentForwardLookup
 * Forward lookup map for components by name to their IDs.
 */
 extern std::unordered_map<std::string, size_t> globalComponentForwardLookup;
 
 /**
-* @var ecs::globalComponentReverseLookup
+* @var globalComponentReverseLookup
 * Reverse lookup map for components by ID to their names.
 */
 extern std::unordered_map<size_t, std::string> globalComponentReverseLookup;
@@ -214,11 +214,16 @@ namespace ecs {
 #endif
 	using entity = ECS_ENTITY_TYPE;
 
+	/**
+	 * @brief An invalid entity
+	 */
+	static constexpr size_t invalid_entity = std::numeric_limits<entity>::max();
+
 
 	template<typename T>
 	struct with_entity {
 		T value;
-		ecs::entity entity;
+		ecs::entity entity = invalid_entity;
 		operator T() { return value; }
 		operator const T() const { return value; }
 		T* operator->() { return &value; }
@@ -690,7 +695,7 @@ namespace ecs {
 			for(size_t e = 0; e < scene.entity_component_indices.size(); ++e)
 				if(scene.entity_component_indices[e].size() >= component_id && scene.entity_component_indices[e][component_id] == index)
 					return e;
-			return std::numeric_limits<entity>::max();
+			return invalid_entity;
 		}
 		template<typename Tcomponent>
 		inline entity get_entity(scene& scene, size_t index) {
@@ -721,14 +726,14 @@ namespace ecs {
 		eB = detail::get_entity(scene, b, component_id);\
 	}\
 	if (swap_if_one_elementless) {\
-		if (eA == std::numeric_limits<entity>::max() && eB == std::numeric_limits<entity>::max()) return false;\
+		if (eA == invalid_entity && eB == invalid_entity) return false;\
 	}\
-	else if (eA == std::numeric_limits<entity>::max() || eB == std::numeric_limits<entity>::max()) return false;\
+	else if (eA == invalid_entity || eB == invalid_entity) return false;\
 \
 	if (!_swap(a, b)) return false;\
-	if (swap_if_one_elementless && eA == std::numeric_limits<entity>::max())\
+	if (swap_if_one_elementless && eA == invalid_entity)\
 		scene.entity_component_indices[eB][component_id] = a;\
-	else if (swap_if_one_elementless && eB == std::numeric_limits<entity>::max())\
+	else if (swap_if_one_elementless && eB == invalid_entity)\
 		scene.entity_component_indices[eA][component_id] = b;\
 	else std::swap(\
 		scene.entity_component_indices[eA][component_id],\

@@ -16,8 +16,10 @@ namespace doir { inline namespace lex {
 				std::copy_n(str, N, value);
 			}
 
-			std::string_view view() { return {value, N - 1}; }
-			const std::string_view view() const { return {value, N - 1}; }
+			constexpr size_t size() const { return N - 1; }
+
+			std::string_view view() { return {value, size()}; }
+			constexpr std::string_view view() const { return {value, size()}; }
 
 			std::string runtime() { return std::string(view()); }
 			const std::string runtime() const { return std::string(view()); }
@@ -106,10 +108,10 @@ namespace doir { inline namespace lex {
 		struct basic_exact_string {
 			static constexpr bool skip_if_invalid = true;
 			inline static bool next_valid(size_t index, CharT next) {
-				return match.view()[index] == next;
+				return index < match.size() && match.view()[index] == next;
 			}
 			inline static bool token_valid(std::basic_string_view<CharT> token) {
-				return match.view().size() == token.size();
+				return match.size() == token.size();
 			}
 		};
 		template<detail::string_literal match>
@@ -119,10 +121,10 @@ namespace doir { inline namespace lex {
 		struct basic_case_insensitive_string {
 			static constexpr bool skip_if_invalid = true;
 			inline static bool next_valid(size_t index, CharT next) {
-				return std::tolower(match.view()[index]) == std::tolower(next);
+				return index < match.size() && std::tolower(match.view()[index]) == std::tolower(next);
 			}
 			inline static bool token_valid(std::basic_string_view<CharT> token) {
-				return match.view().size() == token.size();
+				return match.size() == token.size();
 			}
 		};
 		template<detail::string_literal match>
@@ -310,11 +312,11 @@ namespace doir { inline namespace lex {
 			// For each character we check if it is valid for each head, and disable any heads that are no longer valid
 			// This repeats until we run out of characters or valid heads... we have to track which heads were valid on the last iteration
 			//	so that in the case where we run out of heads we can look back a step and use the last known set of valid heads
-			size_t i = 0;
+			size_t i = bufferOffset;
 			for( ; i < buffer.size() && valid.any(); ++i) {
 				lastValid = valid;
 				[&, this]<std::size_t... I>(std::index_sequence<I...>) {
-					(LexerOp<I>{}(valid, i, buffer, bufferOffset) && ...);
+					(LexerOp<I>{}(valid, i, buffer) && ...);
 				}(std::make_index_sequence<sizeof...(Heads)>{});
 			}
 
@@ -332,9 +334,9 @@ namespace doir { inline namespace lex {
 	protected:
 		template<size_t Idx>
 		struct LexerOp {
-			inline bool operator()(std::bitset<sizeof...(Heads)>& valid, size_t i, std::basic_string_view<CharT> buffer, size_t bufferOffset) const {
+			inline bool operator()(std::bitset<sizeof...(Heads)>& valid, size_t i, std::basic_string_view<CharT> buffer) const {
 				if(valid[Idx] || !detail::nth_type<Idx, Heads...>::skip_if_invalid)
-					valid[Idx] = detail::nth_type<Idx, Heads...>::next_valid(i, buffer[i + bufferOffset]);
+					valid[Idx] = detail::nth_type<Idx, Heads...>::next_valid(i, buffer[i]);
 				return true;
 			}
 		};
