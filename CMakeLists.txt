@@ -19,7 +19,7 @@ if(${DOIR_ENABLE_TESTS})
 	include(FetchContent) # once in the project to include the module
 
 
-	file(GLOB sources "src/tests/*.all.cpp" "thirdparty/*.cpp")
+	file(GLOB sources "src/tests/*.all.cpp" "src/tests/lox/*.cpp" "thirdparty/*.cpp")
 	if(WIN32)
 		set(unix_only_sources "")
 	else()

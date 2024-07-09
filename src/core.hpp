@@ -21,6 +21,13 @@ namespace doir {
 	template<typename T>
 	using WithToken = ecs::with_entity<T>;
 
+	struct Module;
+#ifdef DOIR_IMPLEMENTATION
+	thread_local Module* hash_lookup_module;
+#else
+	extern thread_local Module* hash_lookup_module;
+#endif
+
 	struct Module: protected ecs::scene {
 		std::string buffer;
 
@@ -63,6 +70,7 @@ namespace doir {
 		optional_reference<ecs::hashtable::component_storage<Tattr, void, fnv::fnv1a_64<Tattr>>> get_hashtable(bool skip_rehash = false) {
 			auto hashtable = ecs::get_adapted_component_storage<ecs::hashtable::component_storage<Tattr, void, fnv::fnv1a_64<Tattr>>>(*this);
 			if(!hashtable) return {};
+			doir::hash_lookup_module = this;
 			if(!skip_rehash) if(!hashtable->rehash(*this)) return {};
 			return hashtable;
 		}
