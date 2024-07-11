@@ -21,6 +21,9 @@ namespace doir {
 	template<typename T>
 	using WithToken = ecs::with_entity<T>;
 
+	template<typename T>
+	using hashtable_t = ecs::hashtable::component_storage<T>::component_type;
+
 	struct Module;
 #ifdef DOIR_IMPLEMENTATION
 	thread_local Module* hash_lookup_module;
@@ -46,7 +49,7 @@ namespace doir {
 		template<typename Tattr>
 		inline Tattr& add_hashtable_attribute(Token t) {
 			return ecs::hashtable::get_key_and_mark_occupied<Tattr>(
-				add_attribute<typename ecs::hashtable::component_storage<Tattr>::component_type>(t)
+				add_attribute<hashtable_t<Tattr>>(t)
 			);
 		}
 
@@ -56,15 +59,9 @@ namespace doir {
 		inline ecs::optional_reference<const Tattr> get_attribute(Token t) const { return get_component<Tattr>(t); }
 
 		template<typename Tattr>
-		inline auto get_hashtable_attribute(Token t) { 
-			using component_t = ecs::hashtable::component_storage<Tattr, void, fnv::fnv1a_64<Tattr>>::component_type;
-			return get_component<component_t>(t); 
-		}
+		inline auto get_hashtable_attribute(Token t) { return get_component<hashtable_t<Tattr>>(t); }
 		template<typename Tattr>
-		inline auto get_hashtable_attribute(Token t) const {
-			using component_t = ecs::hashtable::component_storage<Tattr, void, fnv::fnv1a_64<Tattr>>::component_type; 
-			return get_component<component_t>(t); 
-		}
+		inline auto get_hashtable_attribute(Token t) const { return get_component<hashtable_t<Tattr>>(t); }
 
 		template<typename Tattr>
 		optional_reference<ecs::hashtable::component_storage<Tattr, void, fnv::fnv1a_64<Tattr>>> get_hashtable(bool skip_rehash = false) {
@@ -79,10 +76,7 @@ namespace doir {
 		inline bool has_attribute(Token t) const { return has_component<Tattr>(t); }
 
 		template<typename Tattr>
-		inline bool has_hashtable_attribute(Token t) const { 
-			using component_t = ecs::hashtable::component_storage<Tattr, void, fnv::fnv1a_64<Tattr>>::component_type;
-			return has_component<component_t>(t); 
-		}
+		inline bool has_hashtable_attribute(Token t) const { return has_component<hashtable_t<Tattr>>(t); }
 
 		template<typename Tattr>
 		auto get_attribute_as_span() {
@@ -93,8 +87,7 @@ namespace doir {
 
 		template<typename Tattr>
 		auto get_hashtable_attribute_as_span() {
-			using component_t = ecs::hashtable::component_storage<Tattr, void, fnv::fnv1a_64<Tattr>>::component_type;
-			auto storage = ecs::get_adapted_component_storage<ecs::typed::component_storage<component_t>>(*this);
+			auto storage = ecs::get_adapted_component_storage<ecs::typed::component_storage<hashtable_t<Tattr>>>(*this);
 			if(!storage) return decltype(storage->span()){};
 			return storage->span();
 		}

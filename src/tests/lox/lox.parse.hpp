@@ -103,10 +103,32 @@ namespace lox {
 		struct Function {};
 		struct String {};
 
-		struct Operation { doir::Token left = 0, right = 0; };
-		struct OperationIf : public std::array<doir::Token, 3> {};
+		struct Operation {
+			doir::Token left = 0, right = 0;
+			static void swap_entities(Operation& op, ecs::entity eA, ecs::entity eB) {
+				if(op.left == eA) op.left = eB;
+				else if(op.left == eB) op.left = eA;
 
-		struct Block { doir::Token parent; std::vector<doir::Token> children; };
+				if(op.right == eA) op.right = eB;
+				else if(op.right == eB) op.right = eA;
+			}
+		};
+		struct OperationIf : public std::array<doir::Token, 3> {
+			static void swap_entities(OperationIf& op, ecs::entity eA, ecs::entity eB) {
+				for(auto& child: op)
+					if(child == eA) child = eB;
+					else if(child == eB) child = eA;
+			}
+		};
+
+		struct Block { 
+			doir::Token parent; std::vector<doir::Token> children; 
+			static void swap_entities(Block& b, ecs::entity eA, ecs::entity eB) {
+				for(auto& child: b.children)
+					if(child == eA) child = eB;
+					else if(child == eB) child = eA;
+			}
+		};
 		using Call = Block; // TODO: How bad of an idea is it for calls to reuse block's storage?
 		struct VariableDeclaire { 
 			doir::Lexeme name; 
@@ -250,7 +272,7 @@ namespace lox {
 			comp::Parameters params;
 			if(module.current_lexer_token<LexerTokens>() != LexerTokens::CloseParenthesis) {
 				params = parameters(module);
-				if(params.size() == 1 && params[0].looked_up() && module.has_attribute<doir::Error>(params[0].token())) 
+				if(params.size() == 1 && params[0].looked_up() && module.has_attribute<doir::Error>(params[0].token()))
 					return params[0].token();
 				// module.lex(lexer);
 			}
@@ -738,9 +760,9 @@ namespace lox {
 			if(!module.lexer_state.valid()) return module.make_error();
 
 			auto prim = primary(module);
-			
+
 			for(auto next = module.lookahead(lexer);
-				module.current_lexer_token<LexerTokens>(next) == OpenParenthesis 
+				module.current_lexer_token<LexerTokens>(next) == OpenParenthesis
 					|| module.current_lexer_token<LexerTokens>(next) == Dot;
 				next = module.lookahead(lexer)
 			) {
