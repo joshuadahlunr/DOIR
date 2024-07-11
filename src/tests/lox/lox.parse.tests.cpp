@@ -388,7 +388,7 @@ TEST_CASE("Lox::Var") {
 	CHECK(module.has_attribute<lox::components::Operation>(root) == false);
 
 	auto& hashtable = *module.get_hashtable<lox::components::VariableDeclaire>();
-	CHECK(*hashtable.find({{module.buffer.find("x"), 1}}) == root);
+	CHECK(*hashtable.find({{module.buffer.find("x"), 1}, 1}) == root);
 }
 
 TEST_CASE("Lox::VarDefault") {
@@ -400,7 +400,7 @@ TEST_CASE("Lox::VarDefault") {
 	CHECK(*module.get_attribute<double>(target) == 5);
 
 	auto& hashtable = *module.get_hashtable<lox::components::VariableDeclaire>();
-	CHECK(*hashtable.find({{module.buffer.find("x"), 1}}) == root);
+	CHECK(*hashtable.find({{module.buffer.find("x"), 1}, 1}) == root);
 }
 
 TEST_CASE("Lox::Fun") {
@@ -411,8 +411,10 @@ TEST_CASE("Lox::Fun") {
 	{
 		auto& params = *module.get_attribute<lox::components::Parameters>(root);
 		CHECK(params.size() == 2);
-		CHECK(params[0].lexeme().view(module.buffer) == "x");
-		CHECK(params[1].lexeme().view(module.buffer) == "y");
+		CHECK(module.has_hashtable_attribute<lox::components::ParameterDeclaire>(params[0]));
+		CHECK(module.get_attribute<doir::Lexeme>(params[0])->view(module.buffer) == "x");
+		CHECK(module.has_hashtable_attribute<lox::components::ParameterDeclaire>(params[1]));
+		CHECK(module.get_attribute<doir::Lexeme>(params[1])->view(module.buffer) == "y");
 	}
 	{
 		auto body = module.get_attribute<lox::components::Operation>(root)->left;
@@ -424,7 +426,7 @@ TEST_CASE("Lox::Fun") {
 	}
 
 	auto& hashtable = *module.get_hashtable<lox::components::FunctionDeclaire>();
-	CHECK(*hashtable.find({{module.buffer.find("f"), 1}}) == root);
+	CHECK(*hashtable.find({{module.buffer.find("f"), 1}, 1}) == root);
 }
 
 TEST_CASE("Lox::Call") {

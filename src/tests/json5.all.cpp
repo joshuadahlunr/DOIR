@@ -4,6 +4,7 @@
 #include "../core.hpp"
 #include "../parse_state.hpp"
 #include "../unicode_identifier_head.hpp"
+#include "../diagnostics.hpp"
 
 #include <doctest/doctest.h>
 #include <tracy/Tracy.hpp>
@@ -408,12 +409,8 @@ TEST_CASE("JSON5::nested_object") {
 // 	);
 // 	json5::parse p;
 // 	doir::Token root = p.start(module);
-// 	if(module.has_attribute<doir::Error>(root)) {
-// 		auto& loc = *module.get_attribute<doir::NamedSourceLocation>(root);
-// 		std::cerr << doir::split(module.buffer, "\n")[loc.line - 1].substr(loc.column, 30) << std::endl;
-// 		std::cerr << loc.to_string() << " !!ERROR!! "
-// 			<< module.get_attribute<doir::Error>(root)->message << std::endl;
-// 	}
+// 	if(module.has_attribute<doir::Error>(root)) 
+// 		doir::print_diagnostic(module, root);
 // 	CHECK(root != 0);
 // 	CHECK(module.get_attribute_hashtable<json5::parse::ObjectMember>().has_value());
 // 	CHECK(module.get_attribute_hashtable<json5::parse::ArrayMember>().has_value());

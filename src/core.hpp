@@ -157,6 +157,10 @@ namespace doir {
 		inline bool operator==(std::string_view other) { return view() == other; }
 	};
 
+	struct Children {
+		size_t immediate, total;
+	};
+
 	struct TokenReference : public std::variant<Token, Lexeme> {
 		using std::variant<Token, Lexeme>::variant;
 

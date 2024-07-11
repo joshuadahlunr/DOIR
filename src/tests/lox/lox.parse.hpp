@@ -4,6 +4,7 @@
 #include "../../core.hpp"
 #include "../../parse_state.hpp"
 #include "../../unicode_identifier_head.hpp"
+#include "../../diagnostics.hpp"
 
 #include <doctest/doctest.h>
 #include <tracy/Tracy.hpp>
@@ -124,6 +125,9 @@ namespace lox {
 		struct Block { 
 			doir::Token parent; std::vector<doir::Token> children; 
 			static void swap_entities(Block& b, ecs::entity eA, ecs::entity eB) {
+				if(b.parent == eA) b.parent = eB;
+				else if(b.parent == eB) b.parent = eA;
+				
 				for(auto& child: b.children)
 					if(child == eA) child = eB;
 					else if(child == eB) child = eA;
@@ -132,21 +136,41 @@ namespace lox {
 		using Call = Block; // TODO: How bad of an idea is it for calls to reuse block's storage?
 		struct VariableDeclaire { 
 			doir::Lexeme name; 
+			doir::Token parent; // Parent block
 			bool operator==(const VariableDeclaire& o) const { 
-				return name.view(doir::hash_lookup_module->buffer) 
+				return parent == o.parent && name.view(doir::hash_lookup_module->buffer) 
 					== o.name.view(doir::hash_lookup_module->buffer); 
 			} 
+			static void swap_entities(VariableDeclaire& decl, ecs::entity eA, ecs::entity eB) {
+				if(decl.parent == eA) decl.parent = eB;
+				else if(decl.parent == eB) decl.parent = eA;
+			}
 		};
 		struct FunctionDeclaire { 
 			doir::Lexeme name; 
+			doir::Token parent; // Parent block
 			bool operator==(const FunctionDeclaire& o) const { 
-				return name.view(doir::hash_lookup_module->buffer) 
+				return parent == o.parent && name.view(doir::hash_lookup_module->buffer) 
 					== o.name.view(doir::hash_lookup_module->buffer); 
 			} 
+			static void swap_entities(FunctionDeclaire& decl, ecs::entity eA, ecs::entity eB) {
+				if(decl.parent == eA) decl.parent = eB;
+				else if(decl.parent == eB) decl.parent = eA;
+			}
 		};
-		using Arguments = std::vector<doir::Token>;
-		using Parameters = std::vector<doir::TokenReference>;
-		// struct Call { doir::Token function; Arguments args; };
+		struct ParameterDeclaire { 
+			doir::Lexeme name; 
+			doir::Token parent; // Parent function
+			bool operator==(const ParameterDeclaire& o) const { 
+				return parent == o.parent && name.view(doir::hash_lookup_module->buffer) 
+					== o.name.view(doir::hash_lookup_module->buffer); 
+			} 
+			static void swap_entities(ParameterDeclaire& decl, ecs::entity eA, ecs::entity eB) {
+				if(decl.parent == eA) decl.parent = eB;
+				else if(decl.parent == eB) decl.parent = eA;
+			}
+		};
+		using Parameters = std::vector<doir::Token>;
 
 		struct Not {};
 		struct Negate {};
@@ -228,6 +252,7 @@ namespace lox {
 				doir::Token decl = declaration(module);
 				if(module.has_attribute<doir::Error>(decl)) {
 					error = decl;
+					doir::print_diagnostic(module, decl) << std::endl;
 					// Show Error
 					// Synchronize
 				} else {
@@ -271,39 +296,41 @@ namespace lox {
 
 			comp::Parameters params;
 			if(module.current_lexer_token<LexerTokens>() != LexerTokens::CloseParenthesis) {
-				params = parameters(module);
-				if(params.size() == 1 && params[0].looked_up() && module.has_attribute<doir::Error>(params[0].token()))
-					return params[0].token();
+				params = parameters(module, t);
+				if(params.size() == 1 && module.has_attribute<doir::Error>(params[0]))
+					return params[0];
 				// module.lex(lexer);
 			}
 
 			PROPIGATE_OPTIONAL_ERROR(module.expect_and_lex(lexer, LexerTokens::CloseParenthesis));
 			auto body = block(module); PROPIGATE_ERROR(body);
 
-			module.add_hashtable_attribute<comp::FunctionDeclaire>(t) = {*module.get_attribute<doir::Lexeme>(t)};
+			module.add_hashtable_attribute<comp::FunctionDeclaire>(t) = {*module.get_attribute<doir::Lexeme>(t), currentBlock};
 			module.add_attribute<comp::Parameters>(t) = params;
 			module.add_attribute<comp::Operation>(t) = {body};
 			return t;
 		}
 
 		// parameters ::= IDENTIFIER ( "," IDENTIFIER )*;
-		comp::Parameters parameters(doir::ParseModule& module) {
+		comp::Parameters parameters(doir::ParseModule& module, doir::Token function) {
 			comp::Parameters params;
 			do {
-				if(auto e = module.expect(LexerTokens::Identifier); e) return {*e};
+				doir::Token t = module.make_token();
+				if(auto e = module.expect_and_lex(lexer, LexerTokens::Identifier); e) return {*e};
 
-				params.emplace_back(*doir::Lexeme::from_view(module.buffer, module.lexer_state.lexeme));
-				module.lex(lexer); // TODO: Do we need to lookahead here?
+				params.emplace_back(t);
+				module.add_hashtable_attribute<comp::ParameterDeclaire>(t) = {*module.get_attribute<doir::Lexeme>(t), function};
+
 				if(module.current_lexer_token<LexerTokens>() != Comma) break;
-				module.lex(lexer);
+				module.lex(lexer);				
 			} while(module.has_more_input());
 
 			return params;
 		}
 
 		// arguments ::= expression ( "," expression )*;
-		comp::Arguments arguments(doir::ParseModule& module) {
-			comp::Arguments args;
+		comp::Parameters arguments(doir::ParseModule& module) {
+			comp::Parameters args;
 			do {
 				if(auto e = module.expect(LexerTokens::Identifier); e) return {*e};
 
@@ -336,7 +363,7 @@ namespace lox {
 			module.lex(lexer);
 			PROPIGATE_OPTIONAL_ERROR(module.expect(LexerTokens::Semicolon));
 
-			module.add_hashtable_attribute<comp::VariableDeclaire>(t) = {*module.get_attribute<doir::Lexeme>(t)};
+			module.add_hashtable_attribute<comp::VariableDeclaire>(t) = {*module.get_attribute<doir::Lexeme>(t), currentBlock};
 			if(defaultValue != 0)
 				module.add_attribute<comp::Operation>(t) = {defaultValue};
 			return t;
@@ -864,13 +891,22 @@ namespace fnv {
 	template<>
 	struct fnv1a_64<lox::comp::VariableDeclaire> {
 		inline uint64_t operator()(const lox::comp::VariableDeclaire& v) {
-			return fnv1a_64<std::string_view>{}(v.name.view(doir::hash_lookup_module->buffer));
+			return fnv1a_64<std::string_view>{}(v.name.view(doir::hash_lookup_module->buffer))
+				^ fnv1a_64<doir::Token>{}(v.parent);
 		}
 	};
 	template<>
 	struct fnv1a_64<lox::comp::FunctionDeclaire> {
 		inline uint64_t operator()(const lox::comp::FunctionDeclaire& f) {
-			return fnv1a_64<std::string_view>{}(f.name.view(doir::hash_lookup_module->buffer));
+			return fnv1a_64<std::string_view>{}(f.name.view(doir::hash_lookup_module->buffer))
+				^ fnv1a_64<doir::Token>{}(f.parent);
+		}
+	};
+	template<>
+	struct fnv1a_64<lox::comp::ParameterDeclaire> {
+		inline uint64_t operator()(const lox::comp::ParameterDeclaire& p) {
+			return fnv1a_64<std::string_view>{}(p.name.view(doir::hash_lookup_module->buffer))
+				^ fnv1a_64<doir::Token>{}(p.parent);
 		}
 	};
 }
