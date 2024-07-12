@@ -2,7 +2,6 @@
 #include "lox.parse.hpp"
 
 namespace lox {
-
 	enum class Type {
 		Invalid = 0,
 		Null,
@@ -105,3 +104,6 @@ namespace lox {
 }
 
 void print(doir::Module& module, doir::Token root, bool show_token = false, size_t indent_size = 3, int64_t indent = 0);
+void canonicalize(doir::Module& module, doir::Token root, bool clear_references = true);
+bool verify_references(doir::Module& module);
+bool verify_call_arrities(doir::Module& module);

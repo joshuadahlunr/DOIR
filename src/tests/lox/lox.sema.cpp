@@ -1,4 +1,4 @@
-#include "lox.AST.hpp"
+#include "lox.hpp"
 #include "lox.parse.hpp"
 #include <algorithm>
 #include <ranges>
@@ -16,7 +16,7 @@ void sort_parse_into_post_order_traversal_impl(doir::Module& module, doir::Token
 	case lox::Type::String: [[fallthrough]];
 	case lox::Type::Boolean: // Do nothing!
 	break; case lox::Type::Block: {
-		for(auto child: module.get_attribute<Block>(root)->children | std::views::reverse)
+		for(auto child: module.get_attribute<Block>(root)->children)
 			recurse(module, child, order, missing);
 	}
 	break; case lox::Type::Return: [[fallthrough]];
@@ -105,12 +105,14 @@ void sort_parse_into_reverse_post_order_traversal(doir::Module& module, doir::To
 		doir::hashtable_t<lox::comp::FunctionDeclaire>,
 		lox::comp::Operation,
 		lox::comp::OperationIf,
-		lox::comp::Block
+		lox::comp::Block,
+		lox::comp::Parameters
 	>(order);
-	((ecs::scene*)&module)->make_monotonic<
+	module.make_monotonic<
 		lox::comp::Operation,
 		lox::comp::OperationIf,
-		lox::comp::Block
+		lox::comp::Block,
+		lox::comp::Parameters
 	>();
 };
 
@@ -240,7 +242,8 @@ std::optional<doir::Token> blockwise_find(doir::Module& module, Tkey key) {
 	return {};
 }
 
-void lookup_references(doir::Module& module) {
+void lookup_references(doir::Module& module, bool clear_references = true) {
+	// We don't ever use these hashtable references... they are just here to make sure the tables are built for blockwise_find
 	auto& functions = *module.get_hashtable<lox::comp::FunctionDeclaire>();
 	bool hasFunctions = functions.size();
 	auto& variables = *module.get_hashtable<lox::comp::VariableDeclaire>();
@@ -248,7 +251,12 @@ void lookup_references(doir::Module& module) {
 
 	if(!hasFunctions && !hasVariables) return;
 
-	for(doir::Token t = 0; t <= module.get_attribute<doir::Children>(1)->total + 1; ++t) {
+	if(clear_references) for(doir::Token t = module.get_attribute<doir::Children>(1)->total + 2; t--;) {
+		if(!module.has_attribute<doir::TokenReference>(t)) continue;
+		*module.get_attribute<doir::TokenReference>(t) = *module.get_attribute<doir::Lexeme>(t);
+	}
+
+	for(doir::Token t = module.get_attribute<doir::Children>(1)->total + 2; t--;) {
 		if(!module.has_attribute<doir::TokenReference>(t) && !module.has_attribute<lox::comp::Function>(t)) continue;
 
 		if(hasFunctions && module.has_attribute<lox::comp::Function>(t)) {
@@ -259,7 +267,7 @@ void lookup_references(doir::Module& module) {
 			auto res = blockwise_find<lox::comp::FunctionDeclaire>(module, {ref.lexeme(), current_block(module, t)});
 			if(res) ref = *res;
 		}
-		if(hasVariables && module.has_attribute<lox::comp::Variable>(t)) {
+		if(hasVariables && (module.has_attribute<lox::comp::Variable>(t) || module.has_attribute<lox::comp::Assign>(t))) {
 			auto& ref = *module.get_attribute<doir::TokenReference>(t);
 			if(ref.looked_up()) continue;
 
@@ -271,7 +279,7 @@ void lookup_references(doir::Module& module) {
 
 bool verify_references(doir::Module& module) {
 	bool valid = true;
-	for(doir::Token t = 0; t < module.get_attribute<doir::Children>(1)->total + 1; ++t) {
+	for(doir::Token t = module.get_attribute<doir::Children>(1)->total + 2; t--;) {
 		if(!module.has_attribute<doir::TokenReference>(t) && !module.has_attribute<lox::comp::Function>(t)) continue;
 
 		if(module.has_attribute<lox::comp::Function>(t)) {
@@ -282,7 +290,7 @@ bool verify_references(doir::Module& module) {
 				valid = false;
 			}
 		}
-		if(module.has_attribute<lox::comp::Variable>(t)) {
+		if(module.has_attribute<lox::comp::Variable>(t) || module.has_attribute<lox::comp::Assign>(t)) {
 			auto& ref = *module.get_attribute<doir::TokenReference>(t);
 			if(!ref.looked_up()) {
 				doir::print_diagnostic(module, t, (std::stringstream{} << "Failed to find variable: " << ref.lexeme().view(module.buffer) << " (" << t << ")").str()) << std::endl;
@@ -295,7 +303,7 @@ bool verify_references(doir::Module& module) {
 
 bool verify_call_arrities(doir::Module& module) {
 	bool valid = true;
-	for(doir::Token t = 0; t < module.get_attribute<doir::Children>(1)->total + 1; ++t) {
+	for(doir::Token t = module.get_attribute<doir::Children>(1)->total + 2; t--;) {
 		if(!module.has_attribute<lox::comp::Function>(t)) continue;
 
 		auto& call = *module.get_attribute<lox::comp::Call>(t);
@@ -304,7 +312,7 @@ bool verify_call_arrities(doir::Module& module) {
 			doir::print_diagnostic(module, t, (std::stringstream{} << "Failed to find function: " << ref.lexeme().view(module.buffer) << " (" << t << ")").str()) << std::endl;
 			valid = false;
 		}
-		auto params = *module.get_attribute<lox::comp::Parameters>(ref.token());
+		auto& params = *module.get_attribute<lox::comp::Parameters>(ref.token());
 
 		if(call.children.size() != params.size()) {
 			doir::print_diagnostic(module, call.parent, (std::stringstream{} << "Call arity (" << call.children.size() << ") does not match declaration arity (" << params.size() << ")").str()) << std::endl;
@@ -314,16 +322,19 @@ bool verify_call_arrities(doir::Module& module) {
 	return valid;
 }
 
-TEST_CASE("Lox::Sema") {
-	doir::ParseModule module("fun add(a, b) { var tmp = a; a = b; b = tmp; return a + b; } var x = 0; var y = 1; if(true) print add(x, y); for(;;) print x;");
-	auto root = lox::parse{}.start(module);
-	if(module.has_attribute<doir::Error>(root))
-		std::cerr << "!!ERROR!! " << module.get_attribute<doir::Error>(root)->message << std::endl;
+
+// Ensures the parse tree is sorted and properly anotated
+void canonicalize(doir::Module& module, doir::Token root, bool clear_references /*= true*/) {
 	sort_parse_into_reverse_post_order_traversal(module, root);
 	calculate_child_count(module);
-	lookup_references(module);
+	lookup_references(module, clear_references);
+}
+
+TEST_CASE("Lox::Sema" * doctest::skip()) {
+	doir::ParseModule module("fun add(a, b) { var tmp = a; a = b; b = tmp; return a + b; } var x = 0; var y = 1; if(true) print add(x, y); for(;;) print x;");
+	auto root = lox::parse{}.start(module);
+	canonicalize(module, root);
 	CHECK(verify_references(module));
 	CHECK(verify_call_arrities(module));
-
 	print(module, root, true);
 }

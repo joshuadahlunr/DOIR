@@ -14,7 +14,7 @@ struct XIDIdentifierHeadStatics {
 
 template<bool SupportLeadingPercent = false>
 struct XIDIdentifierHead : public XIDIdentifierHeadStatics {
-	static std::optional<std::uint32_t> single_utf8_to_utf32(std::string_view utf8) {
+	static std::optional<std::uint32_t> utf8_to_single_utf32(std::string_view utf8) {
 		uint32_t ch;
 
 		if ((utf8[0] & 0x80) == 0x00)
@@ -49,7 +49,7 @@ struct XIDIdentifierHead : public XIDIdentifierHeadStatics {
 		tmp += next;
 
 		// We try to convert the character to its code point
-		auto res = single_utf8_to_utf32(tmp);
+		auto res = utf8_to_single_utf32(tmp);
 		if(!res) return true; // NOTE: We mark partial characters as valid
 		tmp.clear(); // If nothing went wrong in the conversion then we need to move onto the next character... thus clearing the buffer
 
@@ -66,10 +66,10 @@ struct XIDIdentifierHead : public XIDIdentifierHeadStatics {
 		if(!token.empty() && std::isspace(token[0])) return false;
 		if(token.size() == 1 && token[0] == '%') return false; // Need a character after the percent!
 		// Make sure that the last character is valid (the next_valid step treats partial characters as valid... so if we are given a partial character on the end the string is not valid...)
-		bool valid = (token.size() >= 1 && single_utf8_to_utf32(token.substr(token.size() - 1)).has_value())
-			|| (token.size() >= 2 && single_utf8_to_utf32(token.substr(token.size() - 2)).has_value())
-			|| (token.size() >= 3 && single_utf8_to_utf32(token.substr(token.size() - 3)).has_value())
-			|| (token.size() >= 4 && single_utf8_to_utf32(token.substr(token.size() - 4)).has_value());
+		bool valid = (token.size() >= 1 && utf8_to_single_utf32(token.substr(token.size() - 1)).has_value())
+			|| (token.size() >= 2 && utf8_to_single_utf32(token.substr(token.size() - 2)).has_value())
+			|| (token.size() >= 3 && utf8_to_single_utf32(token.substr(token.size() - 3)).has_value())
+			|| (token.size() >= 4 && utf8_to_single_utf32(token.substr(token.size() - 4)).has_value());
 		return valid;
 	}
 };

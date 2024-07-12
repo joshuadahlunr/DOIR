@@ -54,6 +54,11 @@ namespace doir {
 		}
 
 		template<typename Tattr>
+		bool remove_attribute(Token t) { return remove_component<Tattr>(t); }
+		template<typename Tattr>
+		bool remove_hashtable_attribute(Token t) { return remove_component<hashtable_t<Tattr>>(t); }
+
+		template<typename Tattr>
 		inline ecs::optional_reference<Tattr> get_attribute(Token t) { return get_component<Tattr>(t); }
 		template<typename Tattr>
 		inline ecs::optional_reference<const Tattr> get_attribute(Token t) const { return get_component<Tattr>(t); }
@@ -91,6 +96,9 @@ namespace doir {
 			if(!storage) return decltype(storage->span()){};
 			return storage->span();
 		}
+
+		template<typename... Tattrs>
+		void make_monotonic() { ecs::scene::make_monotonic<Tattrs...>(); }
 
 		template<typename... Tattrs>
 		inline ecs::scene_view<Tattrs...> view() { return {*this}; }
@@ -202,4 +210,9 @@ namespace doir {
 		using View = decltype(v);
 		return std::ranges::subrange<typename View::Iterator, typename View::Sentinel, std::ranges::subrange_kind::unsized>(v.begin(), v.end());
 	}
+}
+
+namespace ecs::hashtable {
+	template<>
+	struct is_costly_to_compare<doir::Lexeme> : public std::true_type {};
 }

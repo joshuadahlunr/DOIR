@@ -74,6 +74,8 @@ namespace ecs {
 		struct is_costly_to_compare : public std::false_type {};
 		template<>
 		struct is_costly_to_compare<std::string> : public std::true_type {};
+		template<>
+		struct is_costly_to_compare<std::string_view> : public std::true_type {};
 
 		template<typename T>
 		constexpr static bool is_costly_to_compare_v = is_costly_to_compare<T>::value;
@@ -95,22 +97,52 @@ namespace ecs {
 			struct hash_entry : public hash_entry_base {
 				Tkey key;
 				Tvalue value;
+
+				static inline void swap_entities(hash_entry& e, ecs::entity eA, ecs::entity eB)
+					requires(requires(Tkey t){Tkey::swap_entities(t, eA, eB);} || requires(Tvalue t){Tvalue::swap_entities(t, eA, eB);})
+				{
+					if constexpr(requires(Tkey t){Tkey::swap_entities(t, eA, eB);})
+						Tkey::swap_entities(e.key, eA, eB);
+					if constexpr(requires(Tvalue t){Tvalue::swap_entities(t, eA, eB);})
+						Tvalue::swap_entities(e.value, eA, eB);
+				}
 			};
 			template<typename Tkey>
 			struct hash_entry<Tkey, void> : public hash_entry_base {
 				Tkey key;
+
+				static inline void swap_entities(hash_entry& e, ecs::entity eA, ecs::entity eB)
+					requires(requires(Tkey t){Tkey::swap_entities(t, eA, eB);})
+				{
+					Tkey::swap_entities(e.key, eA, eB);
+				}
 			};
 
 			template<typename Tkey, typename Tvalue>
 			struct hash_entry_with_hash: public hash_entry<Tkey, Tvalue> {
 				size_t hash;
+
+				using Entry = hash_entry<Tkey, Tvalue>;
+				static inline void swap_entities(hash_entry_with_hash& e, ecs::entity eA, ecs::entity eB)
+					requires(requires(Entry e){Entry::swap_entities(e, eA, eB);})
+				{
+					Entry::swap_entities(e, eA, eB);
+				}
 			};
 		}
 
 		template<typename Tkey, typename Tvalue = void>
-		using component_wrapper = with_entity<std::conditional_t<
+		struct component_wrapper : public with_entity<std::conditional_t<
 			is_costly_to_compare_v<Tkey>, detail::hash_entry_with_hash<Tkey, Tvalue>, detail::hash_entry<Tkey, Tvalue>>
-		>;
+		> {
+			using Entry = std::conditional_t<is_costly_to_compare_v<Tkey>, detail::hash_entry_with_hash<Tkey, Tvalue>, detail::hash_entry<Tkey, Tvalue>>;
+			using Base = with_entity<Entry>;
+			static inline void swap_entities(component_wrapper& w, ecs::entity eA, ecs::entity eB) {
+				Base::swap_entities(w, eA, eB);
+				if constexpr(requires(Entry e){Entry::swap_entities(e, eA, eB);})
+					Entry::swap_entities(w.value, eA, eB);
+			}
+		};
 
 		/*constexpr*/ size_t one_over_one_minus(float factor)
 #ifdef ECS_IMPLEMENTATION
@@ -372,6 +404,12 @@ namespace ecs {
 		inline Tvalue& get_value(optional_reference<component_wrapper<Tkey, Tvalue>> comp) {
 			return comp.value().value.value;
 		}
+	}
+
+	namespace detail {
+		// Make sure machinery in scene can detect that component wrapers are a type of with_entity
+		template<typename Tkey, typename Tvalue>
+		struct is_with_entity<ecs::hashtable::component_wrapper<Tkey, Tvalue>> : public std::true_type {};
 	}
 
 	using hashtable::get_key;

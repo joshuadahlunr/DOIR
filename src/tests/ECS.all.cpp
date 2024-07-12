@@ -173,7 +173,7 @@ TEST_SUITE("ECS") {
 		CHECK(*storage.get(e) == 5);
 	}
 
-	TEST_CASE("ECC::hashtable") {
+	TEST_CASE("ECS::hashtable") {
 		ZoneScoped;
 		using C = ecs::hashtable::component_storage<int>::component_type;
 

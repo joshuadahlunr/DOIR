@@ -103,6 +103,65 @@ namespace lox {
 		struct Variable {};
 		struct Function {};
 		struct String {};
+		struct Literal {};
+
+		struct Block {
+			doir::Token parent; std::vector<doir::Token> children;
+			static void swap_entities(Block& b, ecs::entity eA, ecs::entity eB) {
+				if(b.parent == eA) b.parent = eB;
+				else if(b.parent == eB) b.parent = eA;
+
+				for(auto& child: b.children)
+					if(child == eA) child = eB;
+					else if(child == eB) child = eA;
+			}
+		};
+		using Call = Block; // TODO: How bad of an idea is it for calls to reuse block's storage?
+
+		struct VariableDeclaire {
+			doir::Lexeme name;
+			doir::Token parent; // Parent block
+			bool operator==(const VariableDeclaire& o) const {
+				return parent == o.parent && name.view(doir::hash_lookup_module->buffer)
+					== o.name.view(doir::hash_lookup_module->buffer);
+			}
+			static void swap_entities(VariableDeclaire& decl, ecs::entity eA, ecs::entity eB) {
+				if(decl.parent == eA) decl.parent = eB;
+				else if(decl.parent == eB) decl.parent = eA;
+			}
+		};
+		struct FunctionDeclaire {
+			doir::Lexeme name;
+			doir::Token parent; // Parent block
+			bool operator==(const FunctionDeclaire& o) const {
+				return parent == o.parent && name.view(doir::hash_lookup_module->buffer)
+					== o.name.view(doir::hash_lookup_module->buffer);
+			}
+			static void swap_entities(FunctionDeclaire& decl, ecs::entity eA, ecs::entity eB) {
+				if(decl.parent == eA) decl.parent = eB;
+				else if(decl.parent == eB) decl.parent = eA;
+			}
+		};
+		struct ParameterDeclaire {
+			doir::Lexeme name;
+			doir::Token parent; // Parent function
+			bool operator==(const ParameterDeclaire& o) const {
+				return parent == o.parent && name.view(doir::hash_lookup_module->buffer)
+					== o.name.view(doir::hash_lookup_module->buffer);
+			}
+			static void swap_entities(ParameterDeclaire& decl, ecs::entity eA, ecs::entity eB) {
+				if(decl.parent == eA) decl.parent = eB;
+				else if(decl.parent == eB) decl.parent = eA;
+			}
+		};
+		struct Parameters : public std::vector<doir::Token> {
+			using std::vector<doir::Token>::vector;
+			static void swap_entities(Parameters& params, ecs::entity eA, ecs::entity eB) {
+				for(auto& param: params)
+					if(param == eA) param = eB;
+					else if(param == eB) param = eA;
+			}
+		};
 
 		struct Operation {
 			doir::Token left = 0, right = 0;
@@ -121,56 +180,6 @@ namespace lox {
 					else if(child == eB) child = eA;
 			}
 		};
-
-		struct Block { 
-			doir::Token parent; std::vector<doir::Token> children; 
-			static void swap_entities(Block& b, ecs::entity eA, ecs::entity eB) {
-				if(b.parent == eA) b.parent = eB;
-				else if(b.parent == eB) b.parent = eA;
-				
-				for(auto& child: b.children)
-					if(child == eA) child = eB;
-					else if(child == eB) child = eA;
-			}
-		};
-		using Call = Block; // TODO: How bad of an idea is it for calls to reuse block's storage?
-		struct VariableDeclaire { 
-			doir::Lexeme name; 
-			doir::Token parent; // Parent block
-			bool operator==(const VariableDeclaire& o) const { 
-				return parent == o.parent && name.view(doir::hash_lookup_module->buffer) 
-					== o.name.view(doir::hash_lookup_module->buffer); 
-			} 
-			static void swap_entities(VariableDeclaire& decl, ecs::entity eA, ecs::entity eB) {
-				if(decl.parent == eA) decl.parent = eB;
-				else if(decl.parent == eB) decl.parent = eA;
-			}
-		};
-		struct FunctionDeclaire { 
-			doir::Lexeme name; 
-			doir::Token parent; // Parent block
-			bool operator==(const FunctionDeclaire& o) const { 
-				return parent == o.parent && name.view(doir::hash_lookup_module->buffer) 
-					== o.name.view(doir::hash_lookup_module->buffer); 
-			} 
-			static void swap_entities(FunctionDeclaire& decl, ecs::entity eA, ecs::entity eB) {
-				if(decl.parent == eA) decl.parent = eB;
-				else if(decl.parent == eB) decl.parent = eA;
-			}
-		};
-		struct ParameterDeclaire { 
-			doir::Lexeme name; 
-			doir::Token parent; // Parent function
-			bool operator==(const ParameterDeclaire& o) const { 
-				return parent == o.parent && name.view(doir::hash_lookup_module->buffer) 
-					== o.name.view(doir::hash_lookup_module->buffer); 
-			} 
-			static void swap_entities(ParameterDeclaire& decl, ecs::entity eA, ecs::entity eB) {
-				if(decl.parent == eA) decl.parent = eB;
-				else if(decl.parent == eB) decl.parent = eA;
-			}
-		};
-		using Parameters = std::vector<doir::Token>;
 
 		struct Not {};
 		struct Negate {};
@@ -322,7 +331,7 @@ namespace lox {
 				module.add_hashtable_attribute<comp::ParameterDeclaire>(t) = {*module.get_attribute<doir::Lexeme>(t), function};
 
 				if(module.current_lexer_token<LexerTokens>() != Comma) break;
-				module.lex(lexer);				
+				module.lex(lexer);
 			} while(module.has_more_input());
 
 			return params;
@@ -833,16 +842,19 @@ namespace lox {
 			}
 			case LexerTokens::Nil: {
 				auto t = module.make_token();
+				module.add_attribute<comp::Literal>(t);
 				module.add_attribute<comp::Null>(t);
 				return t;
 			}
 			case LexerTokens::True: {
 				auto t = module.make_token();
+				module.add_attribute<comp::Literal>(t);
 				module.add_attribute<bool>(t) = true;
 				return t;
 			}
 			case LexerTokens::False: {
 				auto t = module.make_token();
+				module.add_attribute<comp::Literal>(t);
 				module.add_attribute<bool>(t) = false;
 				return t;
 			}
@@ -852,6 +864,7 @@ namespace lox {
 				// Ensure the existence of the trailing quote
 				if(std::ranges::count(lexem.view(module.buffer), '"') < 2)
 					return module.make_error<doir::Error>({"Expected a terminating `\"`!"});
+				module.add_attribute<comp::Literal>(t);
 				module.add_attribute<comp::String>(t);
 
 				// Remove the quotes from the token
@@ -861,6 +874,7 @@ namespace lox {
 			}
 			case LexerTokens::Number: {
 				auto t = module.make_token();
+				module.add_attribute<comp::Literal>(t);
 				module.add_attribute<double>(t) = std::strtold(module.get_attribute<doir::Lexeme>(t)->view(module.buffer).data(), nullptr);
 				return t;
 			}
