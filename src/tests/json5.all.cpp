@@ -264,7 +264,7 @@ TEST_CASE("JSON5::null") {
 	json5::parse p;
 	auto root = p.start(module);
 	CHECK(module.has_attribute<json5::parse::Null>(root) == true);
-	// std::cout << json5::print(module, root) << std::endl;
+	// nowide::cout << json5::print(module, root) << std::endl;
 	FrameMark;
 }
 
@@ -273,7 +273,7 @@ TEST_CASE("JSON5::true") {
 	json5::parse p;
 	auto root = p.start(module);
 	CHECK(*module.get_attribute<bool>(root) == true);
-	// std::cout << json5::print(module, root) << std::endl;
+	// nowide::cout << json5::print(module, root) << std::endl;
 	FrameMark;
 }
 
@@ -282,7 +282,7 @@ TEST_CASE("JSON5::false") {
 	json5::parse p;
 	auto root = p.start(module);
 	CHECK(*module.get_attribute<bool>(root) == false);
-	// std::cout << json5::print(module, root) << std::endl;
+	// nowide::cout << json5::print(module, root) << std::endl;
 	FrameMark;
 }
 
@@ -291,7 +291,7 @@ TEST_CASE("JSON5::string") {
 	json5::parse p;
 	auto root = p.start(module);
 	CHECK(module.get_attribute<doir::ModuleWrapped<doir::Lexeme>>(root)->view() == "Hello");
-	// std::cout << json5::print(module, root) << std::endl;
+	// nowide::cout << json5::print(module, root) << std::endl;
 	FrameMark;
 }
 
@@ -300,7 +300,7 @@ TEST_CASE("JSON5::string (no terminating quote)") {
 	json5::parse p;
 	auto root = p.start(module);
 	CHECK(module.has_attribute<doir::Error>(root) == true);
-	// std::cout << json5::print(module, root) << std::endl;
+	// nowide::cout << json5::print(module, root) << std::endl;
 	FrameMark;
 }
 
@@ -309,7 +309,7 @@ TEST_CASE("JSON5::number") {
 	json5::parse p;
 	auto root = p.start(module);
 	CHECK(*module.get_attribute<double>(root) == 27);
-	// std::cout << json5::print(module, root) << std::endl;
+	// nowide::cout << json5::print(module, root) << std::endl;
 	FrameMark;
 }
 
@@ -318,7 +318,7 @@ TEST_CASE("JSON5::negative_number") {
 	json5::parse p;
 	auto root = p.start(module);
 	CHECK(*module.get_attribute<double>(root) == -27);
-	// std::cout << json5::print(module, root) << std::endl;
+	// nowide::cout << json5::print(module, root) << std::endl;
 	FrameMark;
 }
 
@@ -341,7 +341,7 @@ TEST_CASE("JSON5::object") {
 
 	doir::Token y = module.get_attribute<doir::TokenReference>(*hashtable.find({"y", root}))->token();
 	CHECK(module.get_attribute<double>(y) == 6);
-	// std::cout << json5::print(module, root) << std::endl;
+	// nowide::cout << json5::print(module, root) << std::endl;
 	FrameMark;
 }
 
@@ -354,7 +354,7 @@ TEST_CASE("JSON5::array") {
 	CHECK(*module.get_attribute<double>(*hashtable.find({1, root})) == 6);
 	CHECK(*module.get_attribute<double>(*hashtable.find({2, root})) == 7);
 	CHECK(module.get_attribute<doir::ModuleWrapped<doir::Lexeme>>(*hashtable.find({3, root}))->view() == "Hello World");
-	// std::cout << json5::print(module, root) << std::endl;
+	// nowide::cout << json5::print(module, root) << std::endl;
 	FrameMark;
 }
 
@@ -369,7 +369,7 @@ TEST_CASE("JSON5::nested_array_in_object") {
 	CHECK(*module.get_attribute<double>(*arrayTable.find({1, x})) == 6);
 	CHECK(*module.get_attribute<double>(*arrayTable.find({2, x})) == 7);
 	CHECK(module.get_attribute<doir::ModuleWrapped<doir::Lexeme>>(*arrayTable.find({3, x}))->view() == "Hello World");
-	// std::cout << json5::print(module, root) << std::endl;
+	// nowide::cout << json5::print(module, root) << std::endl;
 	FrameMark;
 }
 
@@ -384,7 +384,7 @@ TEST_CASE("JSON5::nested_array") {
 	CHECK(*module.get_attribute<double>(*hashtable.find({1, childrenA})) == 2);
 	CHECK(*module.get_attribute<double>(*hashtable.find({0, childrenB})) == 3);
 	CHECK(*module.get_attribute<double>(*hashtable.find({1, childrenB})) == 4);
-	// std::cout << json5::print(module, root) << std::endl;
+	// nowide::cout << json5::print(module, root) << std::endl;
 	FrameMark;
 }
 
@@ -399,7 +399,7 @@ TEST_CASE("JSON5::nested_object") {
 
 	CHECK(*module.get_attribute<double>(y) == 5);
 	CHECK(*module.get_attribute<double>(z) == 6);
-	// std::cout << json5::print(module, root) << std::endl;
+	// nowide::cout << json5::print(module, root) << std::endl;
 	FrameMark;
 }
 

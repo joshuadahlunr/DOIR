@@ -136,5 +136,5 @@ struct parse {
 };
 
 int main() {
-	std::cout << "Hello World" << std::endl;
+	nowide::cout << "Hello World" << std::endl;
 }

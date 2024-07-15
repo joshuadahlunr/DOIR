@@ -188,16 +188,16 @@ bool interpret_not_equal(doir::Module& module, doir::Token eq) {
 bool interpret_print(doir::Module& module, doir::Token print) {
 	auto& op = *module.get_attribute<lox::comp::Operation>(print);
 	if(module.has_attribute<lox::comp::Null>(op.left)) {
-		std::cout << "nil" << std::endl;
+		nowide::cout << "nil" << std::endl;
 		return true;
 	} else if(module.has_attribute<double>(op.left)) {
-		std::cout << *module.get_attribute<double>(op.left) << std::endl;
+		nowide::cout << *module.get_attribute<double>(op.left) << std::endl;
 		return true;
 	} else if(module.has_attribute<bool>(op.left)) {
-		std::cout << (*module.get_attribute<bool>(op.left) ? "true" : "false") << std::endl;
+		nowide::cout << (*module.get_attribute<bool>(op.left) ? "true" : "false") << std::endl;
 		return true;
 	} else if(module.has_attribute<lox::comp::String>(op.left)) {
-		std::cout << get_token_string(module, op.left) << std::endl;
+		nowide::cout << get_token_string(module, op.left) << std::endl;
 		return true;
 	}
 	return false;

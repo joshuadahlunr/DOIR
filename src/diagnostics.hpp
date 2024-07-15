@@ -65,22 +65,22 @@ namespace doir {
 	}
 	
 	inline std::ostream& print_diagnostic(doir::Module& module, doir::Token loc, std::string_view message, diagnostic_type type = diagnostic_type::Error, int exit_status = -1) {
-		auto& ret = (type >= diagnostic_type::Error ? std::cerr : std::cout) << generate_diagnostic(module, loc, message, type);
+		auto& ret = (type >= diagnostic_type::Error ? nowide::cerr : nowide::cout) << generate_diagnostic(module, loc, message, type);
 		if(type == diagnostic_type::Fatal) 
 #ifdef __cpp_exceptions
 			throw Diagnostic(generate_diagnostic(module, loc, message, type), exit_status);
 #else
-			std::quick_exit(status);
+			std::quick_exit(exit_status);
 #endif
 		return ret;
 	}
 	inline std::ostream& print_diagnostic(doir::Module& module, doir::Token loc, diagnostic_type type = diagnostic_type::Error, int exit_status = -1) {
-		auto& ret = (type >= diagnostic_type::Error ? std::cerr : std::cout) << generate_diagnostic(module, loc, type);
+		auto& ret = (type >= diagnostic_type::Error ? nowide::cerr : nowide::cout) << generate_diagnostic(module, loc, type);
 		if(type == diagnostic_type::Fatal)
 #ifdef __cpp_exceptions
 			throw Diagnostic(generate_diagnostic(module, loc, type), exit_status);
 #else
-			std::quick_exit(status);
+			std::quick_exit(exit_status);
 #endif
 		return ret;
 	}

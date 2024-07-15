@@ -9,7 +9,7 @@
 #include "../thirdparty/ECSadapter.hpp"
 #include "fnv1a.hpp"
 
-#include <iostream>
+#include <nowide/iostream.hpp>
 #include <map>
 #include <deque>
 

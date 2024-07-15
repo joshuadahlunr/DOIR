@@ -11,9 +11,12 @@ endif()
 option(DOIR_ENABLE_TESTS "Weather or not Unit Tests should be built." ${PROJECT_IS_TOP_LEVEL})
 option(DOIR_ENABLE_PROFILING "Weather or not profiling instrumentation will be added." ${DOIR_PROFILE_DEFAULT})
 
+add_subdirectory(thirdparty/nowide)
+
 file(GLOB sources "src/*.cpp" "thirdparty/*.cpp")
 add_executable(doir ${sources})
 set_property(TARGET doir PROPERTY CXX_STANDARD 23)
+target_link_libraries(doir PUBLIC nowide::nowide)
 
 if(${DOIR_ENABLE_TESTS})
 	include(FetchContent) # once in the project to include the module
@@ -28,6 +31,7 @@ if(${DOIR_ENABLE_TESTS})
 
 	add_executable(tst ${sources} ${unix_only_sources})
 	set_property(TARGET tst PROPERTY CXX_STANDARD 23)
+	target_link_libraries(tst PUBLIC nowide::nowide)
 
 	FetchContent_Declare(fetch_doctest GIT_REPOSITORY https://github.com/doctest/doctest.git GIT_SHALLOW true)
 	FetchContent_MakeAvailable(fetch_doctest)

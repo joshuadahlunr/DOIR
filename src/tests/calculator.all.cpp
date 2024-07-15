@@ -4,6 +4,7 @@
 #include "../core.hpp"
 #include "../parse_state.hpp"
 #include "../unicode_identifier_head.hpp"
+#include "../diagnostics.hpp"
 
 #include <doctest/doctest.h>
 #include <tracy/Tracy.hpp>
@@ -68,10 +69,10 @@ namespace calculator {
 		void print_result(doir::ParseModule& module, doir::Token t) {
 			ZoneScoped;
 			static size_t i = 0;
-			std::cout << i++ << ": ";
+			nowide::cout << i++ << ": ";
 			if(module.has_attribute<doir::Error>(t))
-				std::cerr << "!!ERROR!! " << module.get_attribute<doir::Error>(t)->message << std::endl;
-			else std::cout << *module.get_attribute<float>(t) << std::endl;
+				doir::print_diagnostic(module, t) << std::endl;
+			else nowide::cout << *module.get_attribute<float>(t) << std::endl;
 		}
 
 		doir::Token lookup_variable(doir::ParseModule& module, std::string_view target) {
@@ -265,10 +266,10 @@ TEST_CASE("Calculator::REPL" * doctest::skip()) {
 	doir::ParseModule module("");
 	calculator::parse p;
 
-	std::cout << "> ";
+	nowide::cout << "> ";
 	size_t start = module.buffer.size();
 	std::string temp;
-	while(std::getline(std::cin, temp)) {
+	while(std::getline(nowide::cin, temp)) {
 		if(temp == "\\q") break;
 
 		module.buffer = module.buffer + temp + "\n";
@@ -277,14 +278,14 @@ TEST_CASE("Calculator::REPL" * doctest::skip()) {
 		start = module.buffer.size();
 
 		p.start(module);
-		std::cout << "> ";
+		nowide::cout << "> ";
 		module.source_location.next_line();
 		FrameMark;
 	}
 
-	std::cout << module.token_count() << std::endl;
+	nowide::cout << module.token_count() << std::endl;
 	size_t i = 0;
 	for(auto [t, lexeme, location, value]: doir::query_with_token<doir::Lexeme, doir::NamedSourceLocation, float>(module))
 	// for(auto [t, lexeme, location, value]: doir::query_with_token<doir::Lexeme, doir::NamedSourceLocation, doir::or_<float, double>>(data))
-		std::cout << i++ << " (" << t << "): `" << lexeme.view(module.buffer) << "` = " << value << "; " << doir::SourceLocation(location).to_string(lexeme.length) << std::endl;
+		nowide::cout << i++ << " (" << t << "): `" << lexeme.view(module.buffer) << "` = " << value << "; " << doir::SourceLocation(location).to_string(lexeme.length) << std::endl;
 }

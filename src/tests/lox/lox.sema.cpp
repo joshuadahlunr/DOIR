@@ -75,7 +75,7 @@ void sort_parse_into_post_order_traversal_impl(doir::Module& module, doir::Token
 			recurse(module, elem, order, missing);
 	}
 	break; case lox::Type::ParameterDeclaire: [[fallthrough]];
-	default: {}// std::cout << "<unknown node>" << std::endl;
+	default: {}
 	}
 
 	order.push_back(root);

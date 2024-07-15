@@ -198,7 +198,7 @@ TEST_CASE("Lox::ClassAssign") {
 	lox::parse p;
 	auto root = p.start(module);
 	if(module.has_attribute<doir::Error>(root))
-		std::cerr << "!!ERROR!! " << module.get_attribute<doir::Error>(root)->message << std::endl;
+		doir::print_diagnostic(module, root);
 	CHECK(module.has_attribute<doir::Error>(root));
 }
 
