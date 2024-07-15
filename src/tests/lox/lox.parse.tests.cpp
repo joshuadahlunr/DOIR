@@ -418,7 +418,10 @@ TEST_CASE("Lox::Fun") {
 	}
 	{
 		auto body = module.get_attribute<lox::components::Operation>(root)->left;
-		auto stmt = module.get_attribute<lox::components::Block>(body)->children[0];
+		auto marker = module.get_attribute<lox::components::Block>(body)->children[0];
+		CHECK(module.has_attribute<lox::components::FunctionMarker>(marker));
+		CHECK(module.get_attribute<lox::components::FunctionMarker>(marker)->function == root);
+		auto stmt = module.get_attribute<lox::components::Block>(body)->children[1];
 		CHECK(module.has_attribute<lox::components::Return>(stmt));
 		auto target = module.get_attribute<lox::components::Operation>(stmt)->left;
 		CHECK(module.has_attribute<lox::components::Variable>(target));

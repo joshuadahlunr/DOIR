@@ -23,7 +23,8 @@ void sort_parse_into_post_order_traversal_impl(doir::Module& module, doir::Token
 	case lox::Type::Print: [[fallthrough]];
 	case lox::Type::Not: [[fallthrough]];
 	case lox::Type::Negate: {
-		recurse(module, module.get_attribute<Operation>(root)->left, order, missing);
+		if(module.has_attribute<Operation>(root))
+			recurse(module, module.get_attribute<Operation>(root)->left, order, missing);
 	}
 	break; case lox::Type::Divide: [[fallthrough]];
 	case lox::Type::Multiply: [[fallthrough]];
@@ -103,12 +104,14 @@ void sort_parse_into_reverse_post_order_traversal(doir::Module& module, doir::To
 	((ecs::scene*)&module)->reorder_entities<
 		doir::hashtable_t<lox::comp::VariableDeclaire>,
 		doir::hashtable_t<lox::comp::FunctionDeclaire>,
+		lox::comp::FunctionMarker,
 		lox::comp::Operation,
 		lox::comp::OperationIf,
 		lox::comp::Block,
 		lox::comp::Parameters
 	>(order);
 	module.make_monotonic<
+		lox::comp::FunctionMarker,
 		lox::comp::Operation,
 		lox::comp::OperationIf,
 		lox::comp::Block,
@@ -131,8 +134,10 @@ size_t calculate_child_count(doir::Module& module, doir::Token root = 1, bool an
 	case lox::Type::Print: [[fallthrough]];
 	case lox::Type::Not: [[fallthrough]];
 	case lox::Type::Negate: {
-		immediate = 1;
-		inChildren = calculate_child_count(module, module.get_attribute<Operation>(root)->left, anotate);
+		if(module.has_attribute<Operation>(root)) {
+			immediate = 1;
+			inChildren = calculate_child_count(module, module.get_attribute<Operation>(root)->left, anotate);
+		}
 	}
 	break; case lox::Type::Divide: [[fallthrough]];
 	case lox::Type::Multiply: [[fallthrough]];
@@ -226,11 +231,11 @@ doir::Token current_function(doir::Module& module, doir::Token root) {
 }
 
 template<typename Tkey>
-std::optional<doir::Token> blockwise_find(doir::Module& module, Tkey key) {
+std::optional<doir::Token> blockwise_find(doir::Module& module, Tkey key, bool has) {
 	auto& hashtable = module.get_hashtable<Tkey>(true).value();
 	while(key.parent > 0) {
 		auto dbg = key.name.view(module.buffer);
-		if(auto res = hashtable.find(key); res) return *res;
+		if(has) if(auto res = hashtable.find(key); res) return *res;
 
 		if(auto f = current_function(module, key.parent); f) {
 			for(auto& param: *module.get_attribute<lox::comp::Parameters>(f))
@@ -259,19 +264,19 @@ void lookup_references(doir::Module& module, bool clear_references = true) {
 	for(doir::Token t = module.get_attribute<doir::Children>(1)->total + 2; t--;) {
 		if(!module.has_attribute<doir::TokenReference>(t) && !module.has_attribute<lox::comp::Function>(t)) continue;
 
-		if(hasFunctions && module.has_attribute<lox::comp::Function>(t)) {
+		if(module.has_attribute<lox::comp::Function>(t)) {
 			auto& call = *module.get_attribute<lox::comp::Call>(t);
 			auto& ref = *module.get_attribute<doir::TokenReference>(call.parent);
 			if(ref.looked_up()) continue;
 
-			auto res = blockwise_find<lox::comp::FunctionDeclaire>(module, {ref.lexeme(), current_block(module, t)});
+			auto res = blockwise_find<lox::comp::FunctionDeclaire>(module, {ref.lexeme(), current_block(module, t)}, hasFunctions);
 			if(res) ref = *res;
 		}
-		if(hasVariables && (module.has_attribute<lox::comp::Variable>(t) || module.has_attribute<lox::comp::Assign>(t))) {
+		if((module.has_attribute<lox::comp::Variable>(t) || module.has_attribute<lox::comp::Assign>(t))) {
 			auto& ref = *module.get_attribute<doir::TokenReference>(t);
 			if(ref.looked_up()) continue;
 
-			auto res = blockwise_find<lox::comp::VariableDeclaire>(module, {ref.lexeme(), current_block(module, t)});
+			auto res = blockwise_find<lox::comp::VariableDeclaire>(module, {ref.lexeme(), current_block(module, t)}, hasVariables);
 			if(res) ref = *res;
 		}
 	}
@@ -333,6 +338,7 @@ void canonicalize(doir::Module& module, doir::Token root, bool clear_references 
 TEST_CASE("Lox::Sema" * doctest::skip()) {
 	doir::ParseModule module("fun add(a, b) { var tmp = a; a = b; b = tmp; return a + b; } var x = 0; var y = 1; if(true) print add(x, y); for(;;) print x;");
 	auto root = lox::parse{}.start(module);
+	REQUIRE(root != 0);
 	canonicalize(module, root);
 	CHECK(verify_references(module));
 	CHECK(verify_call_arrities(module));

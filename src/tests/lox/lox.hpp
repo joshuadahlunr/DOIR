@@ -12,6 +12,7 @@ namespace lox {
 		VariableDeclaire,
 		FunctionDeclaire,
 		ParameterDeclaire,
+		FunctionMarker,
 		Not,
 		Negate,
 		Divide,
@@ -46,6 +47,7 @@ namespace lox {
 		case Type::VariableDeclaire: return "variable_declaire";
 		case Type::FunctionDeclaire: return "function_declaire";
 		case Type::ParameterDeclaire: return "parameter_declaire";
+		case Type::FunctionMarker: return "function_marker";
 		case Type::Not: return "not";
 		case Type::Negate: return "negate";
 		case Type::Divide: return "divide";
@@ -81,6 +83,7 @@ namespace lox {
 		else if(module.has_hashtable_attribute<lox::comp::VariableDeclaire>(t)) return Type::VariableDeclaire;
 		else if(module.has_hashtable_attribute<lox::comp::FunctionDeclaire>(t)) return Type::FunctionDeclaire;
 		else if(module.has_hashtable_attribute<lox::comp::ParameterDeclaire>(t)) return Type::ParameterDeclaire;
+		else if(module.has_attribute<lox::comp::FunctionMarker>(t)) return Type::FunctionMarker;
 		else if(module.has_attribute<lox::comp::Not>(t)) return Type::Not;
 		else if(module.has_attribute<lox::comp::Negate>(t)) return Type::Negate;
 		else if(module.has_attribute<lox::comp::Divide>(t)) return Type::Divide;

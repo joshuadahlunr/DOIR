@@ -29,7 +29,7 @@ void print(doir::Module& module, doir::Token root, bool show_tokens /*=false*/, 
 		if(ref.looked_up()) std::cout << " -> " << std::to_string(ref.token());
 		std::cout << end(module, root);
 	}
-	break; case lox::Type::Null: std::cout << "literal:null" << std::endl;
+	break; case lox::Type::Null: std::cout << "literal:null" << end(module, root);
 	break; case lox::Type::Number: std::cout << "literal:" << *module.get_attribute<double>(root) << end(module, root);
 	break; case lox::Type::String: std::cout << "literal:\"" << module.get_attribute<doir::Lexeme>(root)->view(module.buffer) << '"' << end(module, root);
 	break; case lox::Type::Boolean: std::cout << "literal:" << (*module.get_attribute<bool>(root) ? "true" : "false") << end(module, root);
@@ -44,7 +44,8 @@ void print(doir::Module& module, doir::Token root, bool show_tokens /*=false*/, 
 	case lox::Type::Not: [[fallthrough]];
 	case lox::Type::Negate: {
 		std::cout << to_string(t) << end(module, root);
-		print(module, module.get_attribute<Operation>(root)->left, show_tokens, indent_size, indent + 1);
+		if(module.has_attribute<Operation>(root))
+			print(module, module.get_attribute<Operation>(root)->left, show_tokens, indent_size, indent + 1);
 	}
 	break; case lox::Type::Divide: [[fallthrough]];
 	case lox::Type::Multiply: [[fallthrough]];
@@ -77,6 +78,10 @@ void print(doir::Module& module, doir::Token root, bool show_tokens /*=false*/, 
 	}
 	break; case lox::Type::ParameterDeclaire: {
 		std::cout << "param:" << reference2view(module, root) << end(module, root);
+	}
+	break; case lox::Type::FunctionMarker: {
+		auto& marker = *module.get_attribute<FunctionMarker>(root);
+		std::cout << "marker:" << module.get_attribute<doir::Lexeme>(marker.function)->view(module.buffer) << " -> " << marker.function << end(module, root);
 	}
 	break; case lox::Type::Call: {
 		auto& call = *module.get_attribute<Call>(root);
@@ -115,5 +120,6 @@ void print(doir::Module& module, doir::Token root, bool show_tokens /*=false*/, 
 TEST_CASE("Lox::Print" * doctest::skip()) {
 	doir::ParseModule module("fun add(a, b) { var tmp = a; a = b; b = tmp; return a + b; } var x = 0; var y = 1; if(true) print add(x, y); for(;;) print x;");
 	auto root = lox::parse{}.start(module);
+	REQUIRE(root != 0);
 	print(module, root);
 }

@@ -142,6 +142,13 @@ namespace lox {
 				else if(decl.parent == eB) decl.parent = eA;
 			}
 		};
+		struct FunctionMarker { 
+			doir::Token function; 
+			static void swap_entities(FunctionMarker& mark, ecs::entity eA, ecs::entity eB) {
+				if(mark.function == eA) mark.function = eB;
+				else if(mark.function == eB) mark.function = eA;
+			}
+		};
 		struct ParameterDeclaire {
 			doir::Lexeme name;
 			doir::Token parent; // Parent function
@@ -312,7 +319,7 @@ namespace lox {
 			}
 
 			PROPIGATE_OPTIONAL_ERROR(module.expect_and_lex(lexer, LexerTokens::CloseParenthesis));
-			auto body = block(module); PROPIGATE_ERROR(body);
+			auto body = block(module, t); PROPIGATE_ERROR(body);
 
 			module.add_hashtable_attribute<comp::FunctionDeclaire>(t) = {*module.get_attribute<doir::Lexeme>(t), currentBlock};
 			module.add_attribute<comp::Parameters>(t) = params;
@@ -341,9 +348,9 @@ namespace lox {
 		comp::Parameters arguments(doir::ParseModule& module) {
 			comp::Parameters args;
 			do {
-				if(auto e = module.expect(LexerTokens::Identifier); e) return {*e};
+				auto e = expression(module); if(module.has_attribute<doir::Error>(e)) return {e};
+				args.emplace_back(e);
 
-				args.emplace_back(expression(module));
 				if(module.has_attribute<doir::Error>(args.back())) return {args.back()};
 				module.lex(lexer); // TODO: Do we need to lookahead here?
 				if(module.current_lexer_token<LexerTokens>() != Comma) break;
@@ -543,11 +550,17 @@ namespace lox {
 		}
 
 		// block ::= "{" declaration* "}";
-		doir::Token block(doir::ParseModule& module) {
+		doir::Token block(doir::ParseModule& module, doir::Token withFunctionMarker = false) {
 			doir::Token oldBlock = currentBlock;
 			// defer currentBlock = oldBlock;
 			comp::Block& block = make_block(module);
 			PROPIGATE_OPTIONAL_ERROR(module.expect_and_lex(lexer, LexerTokens::OpenCurly));
+
+			if(withFunctionMarker) {
+				doir::Token marker = module.make_token();
+				module.add_attribute<components::FunctionMarker>(marker) = {withFunctionMarker};
+				block.children.emplace_back(marker);
+			}
 
 			while(module.current_lexer_token<LexerTokens>() != CloseCurly && module.has_more_input()) {
 				doir::Token decl = declaration(module);
