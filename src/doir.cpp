@@ -3,7 +3,7 @@
 #define DOIR_IMPLEMENTATION
 #define ECS_IMPLEMENTATION
 #define LEXER_CTRE_REGEX
-// #define LEXER_IS_STATEFULL
+// #define LEXER_IS_STATEFUL
 #include "parse_state.hpp"
 #include "unicode_identifier_head.hpp"
 

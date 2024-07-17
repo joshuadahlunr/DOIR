@@ -123,7 +123,7 @@ void sort_parse_into_reverse_post_order_traversal(doir::Module& module, doir::To
 	// >();
 };
 
-size_t calculate_child_count(doir::Module& module, doir::Token root = 1, bool anotate = true) {
+size_t calculate_child_count(doir::Module& module, doir::Token root = 1, bool annotate = true) {
 	ZoneScoped;
 	using namespace lox::components;
 	size_t immediate = 0, inChildren = 0;
@@ -132,7 +132,7 @@ size_t calculate_child_count(doir::Module& module, doir::Token root = 1, bool an
 	break; case lox::Type::Block: {
 		for(auto child: module.get_attribute<Block>(root)->children) {
 			++immediate;
-			inChildren += calculate_child_count(module, child, anotate);
+			inChildren += calculate_child_count(module, child, annotate);
 		}
 	}
 	break; case lox::Type::Return: [[fallthrough]];
@@ -141,7 +141,7 @@ size_t calculate_child_count(doir::Module& module, doir::Token root = 1, bool an
 	case lox::Type::Negate: {
 		if(module.has_attribute<Operation>(root)) {
 			immediate = 1;
-			inChildren = calculate_child_count(module, module.get_attribute<Operation>(root)->left, anotate);
+			inChildren = calculate_child_count(module, module.get_attribute<Operation>(root)->left, annotate);
 		}
 	}
 	break; case lox::Type::Divide: [[fallthrough]];
@@ -156,37 +156,37 @@ size_t calculate_child_count(doir::Module& module, doir::Token root = 1, bool an
 	case lox::Type::NotEqualTo: [[fallthrough]];
 	case lox::Type::While: {
 		immediate = 2;
-		inChildren = calculate_child_count(module, module.get_attribute<Operation>(root)->left, anotate);
-		inChildren += calculate_child_count(module, module.get_attribute<Operation>(root)->right, anotate);
+		inChildren = calculate_child_count(module, module.get_attribute<Operation>(root)->left, annotate);
+		inChildren += calculate_child_count(module, module.get_attribute<Operation>(root)->right, annotate);
 	}
 	break; case lox::Type::VariableDeclaire: {
 		if(auto op = module.get_attribute<Operation>(root); op) {
 			immediate = 1;
-			inChildren = calculate_child_count(module, op->left, anotate);
+			inChildren = calculate_child_count(module, op->left, annotate);
 		}
 	}
 	break; case lox::Type::FunctionDeclaire: {
 		if(auto op = module.get_attribute<Operation>(root); op) {
 			immediate = 1;
-			inChildren = calculate_child_count(module, op->left, anotate);
+			inChildren = calculate_child_count(module, op->left, annotate);
 		}
 		for(auto param: *module.get_attribute<Parameters>(root)) {
 			++immediate;
-			inChildren += calculate_child_count(module, param, anotate);
+			inChildren += calculate_child_count(module, param, annotate);
 		}
 	}
 	break; case lox::Type::Call: {
 		auto& call = *module.get_attribute<Call>(root);
 		immediate = 1;
-		inChildren += calculate_child_count(module, call.parent, anotate);
+		inChildren += calculate_child_count(module, call.parent, annotate);
 		for(auto& param: call.children) {
 			++immediate;
-			inChildren += calculate_child_count(module, param, anotate);
+			inChildren += calculate_child_count(module, param, annotate);
 		}
 	}
 	break; case lox::Type::Assign: {
 		immediate = 1;
-		inChildren = calculate_child_count(module, module.get_attribute<Operation>(root)->left, anotate);
+		inChildren = calculate_child_count(module, module.get_attribute<Operation>(root)->left, annotate);
 	}
 	break; case lox::Type::And: [[fallthrough]];
 	case lox::Type::Or: [[fallthrough]];
@@ -194,7 +194,7 @@ size_t calculate_child_count(doir::Module& module, doir::Token root = 1, bool an
 		for(auto& elem: *module.get_attribute<OperationIf>(root)) {
 			if(elem == 0) continue; // Skip else
 			++immediate;
-			inChildren += calculate_child_count(module, elem, anotate);
+			inChildren += calculate_child_count(module, elem, annotate);
 		}
 	}
 	break; case lox::Type::Variable: [[fallthrough]];
@@ -206,7 +206,7 @@ size_t calculate_child_count(doir::Module& module, doir::Token root = 1, bool an
 	default: immediate = 0; inChildren = 0;
 	}
 
-	if(anotate) module.add_attribute<doir::Children>(root) = {immediate, inChildren + immediate};
+	if(annotate) module.add_attribute<doir::Children>(root) = {immediate, inChildren + immediate};
 	return inChildren + immediate;
 }
 
@@ -393,7 +393,7 @@ bool identify_trailing_calls(doir::Module& module) {
 // TODO: Detecting direct recursion at semantic analysis time should be possible!
 
 
-// Ensures the parse tree is sorted and properly anotated
+// Ensures the parse tree is sorted and properly annotated
 void canonicalize(doir::Module& module, doir::Token root, bool clear_references /*= true*/) {
 	ZoneScoped;
 	sort_parse_into_reverse_post_order_traversal(module, root);
@@ -417,7 +417,7 @@ TEST_CASE("Lox::Sema::Redeclaration") {
 		CAPTURE_ERROR_CONSOLE_END
 		error = capture.str();
 	CAPTURE_CONSOLE_END
-	CHECK(error == R"(An error has occured at <transient>:1:16-17
+	CHECK(error == R"(An error has occurred at <transient>:1:16-17
    var x = 0; var x = nil;
                   ^
 Variable x redeclaired!

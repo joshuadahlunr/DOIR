@@ -245,8 +245,8 @@ namespace lox {
 	//			| NUMBER | STRING | IDENTIFIER | "(" expression ")"
 	//			| "super" "." IDENTIFIER;
 	struct parse {
-		#define PROPIGATE_ERROR(t) if(module.has_attribute<doir::Error>(t)) return t
-		#define PROPIGATE_OPTIONAL_ERROR(expect) if(auto e = expect; e) return *e
+		#define PROPAGATE_ERROR(t) if(module.has_attribute<doir::Error>(t)) return t
+		#define PROPAGATE_OPTIONAL_ERROR(expect) if(auto e = expect; e) return *e
 
 		doir::Token currentBlock = 0;
 
@@ -282,7 +282,7 @@ namespace lox {
 					module.lex(lexer);
 				}
 			}
-			PROPIGATE_OPTIONAL_ERROR(error);
+			PROPAGATE_OPTIONAL_ERROR(error);
 			return currentBlock;
 		}
 
@@ -300,14 +300,14 @@ namespace lox {
 		// classDecl ::= "class" IDENTIFIER ( "<" IDENTIFIER )? "{" function* "}";
 		doir::Token classDecl(doir::ParseModule& module) {
 			ZoneScoped;
-			PROPIGATE_OPTIONAL_ERROR(module.expect_and_lex(lexer, LexerTokens::Class));
+			PROPAGATE_OPTIONAL_ERROR(module.expect_and_lex(lexer, LexerTokens::Class));
 			return module.make_error<doir::Error>({"Classes not yet supported!"});
 		}
 
 		// funDecl ::= "fun" function;
 		doir::Token funDecl(doir::ParseModule& module) {
 			ZoneScoped;
-			PROPIGATE_OPTIONAL_ERROR(module.expect_and_lex(lexer, LexerTokens::Fun));
+			PROPAGATE_OPTIONAL_ERROR(module.expect_and_lex(lexer, LexerTokens::Fun));
 			return function(module);
 		}
 
@@ -315,8 +315,8 @@ namespace lox {
 		doir::Token function(doir::ParseModule& module) {
 			ZoneScoped;
 			auto t = module.make_token();
-			PROPIGATE_OPTIONAL_ERROR(module.expect_and_lex(lexer, LexerTokens::Identifier));
-			PROPIGATE_OPTIONAL_ERROR(module.expect_and_lex(lexer, LexerTokens::OpenParenthesis));
+			PROPAGATE_OPTIONAL_ERROR(module.expect_and_lex(lexer, LexerTokens::Identifier));
+			PROPAGATE_OPTIONAL_ERROR(module.expect_and_lex(lexer, LexerTokens::OpenParenthesis));
 
 			comp::Parameters params;
 			if(module.current_lexer_token<LexerTokens>() != LexerTokens::CloseParenthesis) {
@@ -326,8 +326,8 @@ namespace lox {
 				// module.lex(lexer);
 			}
 
-			PROPIGATE_OPTIONAL_ERROR(module.expect_and_lex(lexer, LexerTokens::CloseParenthesis));
-			auto body = block(module, t); PROPIGATE_ERROR(body);
+			PROPAGATE_OPTIONAL_ERROR(module.expect_and_lex(lexer, LexerTokens::CloseParenthesis));
+			auto body = block(module, t); PROPAGATE_ERROR(body);
 
 			module.add_hashtable_attribute<comp::FunctionDeclaire>(t) = {*module.get_attribute<doir::Lexeme>(t), currentBlock};
 			module.add_attribute<comp::Parameters>(t) = params;
@@ -377,8 +377,8 @@ namespace lox {
 		// varDecl ::= "var" IDENTIFIER ( "=" expression )? ";";
 		doir::Token varDecl(doir::ParseModule& module) {
 			ZoneScoped;
-			PROPIGATE_OPTIONAL_ERROR(module.expect_and_lex(lexer, LexerTokens::Var));
-			PROPIGATE_OPTIONAL_ERROR(module.expect(LexerTokens::Identifier));
+			PROPAGATE_OPTIONAL_ERROR(module.expect_and_lex(lexer, LexerTokens::Var));
+			PROPAGATE_OPTIONAL_ERROR(module.expect(LexerTokens::Identifier));
 
 			auto t = module.make_token();
 
@@ -386,13 +386,13 @@ namespace lox {
 			auto next = module.lookahead(lexer);
 			if(module.current_lexer_token<LexerTokens>(next) == LexerTokens::Assign) {
 				module.restore_state(next);
-				PROPIGATE_OPTIONAL_ERROR(module.expect_and_lex(lexer, LexerTokens::Assign));
+				PROPAGATE_OPTIONAL_ERROR(module.expect_and_lex(lexer, LexerTokens::Assign));
 
-				defaultValue = expression(module); PROPIGATE_ERROR(defaultValue);
+				defaultValue = expression(module); PROPAGATE_ERROR(defaultValue);
 			}
 
 			module.lex(lexer);
-			PROPIGATE_OPTIONAL_ERROR(module.expect(LexerTokens::Semicolon));
+			PROPAGATE_OPTIONAL_ERROR(module.expect(LexerTokens::Semicolon));
 
 			module.add_hashtable_attribute<comp::VariableDeclaire>(t) = {*module.get_attribute<doir::Lexeme>(t), currentBlock};
 			if(defaultValue != 0)
@@ -418,9 +418,9 @@ namespace lox {
 		// exprStmt ::= expression ";";
 		doir::Token exprStmt(doir::ParseModule& module) {
 			ZoneScoped;
-			auto ret = expression(module); PROPIGATE_ERROR(ret);
+			auto ret = expression(module); PROPAGATE_ERROR(ret);
 			module.lex(lexer);
-			PROPIGATE_OPTIONAL_ERROR(module.expect(LexerTokens::Semicolon));
+			PROPAGATE_OPTIONAL_ERROR(module.expect(LexerTokens::Semicolon));
 			return ret;
 		}
 
@@ -429,35 +429,35 @@ namespace lox {
 			ZoneScoped;
 			auto t = module.make_token();
 			auto marker = module.make_token();
-			PROPIGATE_OPTIONAL_ERROR(module.expect_and_lex(lexer, LexerTokens::For));
-			PROPIGATE_OPTIONAL_ERROR(module.expect_and_lex(lexer, LexerTokens::OpenParenthesis));
+			PROPAGATE_OPTIONAL_ERROR(module.expect_and_lex(lexer, LexerTokens::For));
+			PROPAGATE_OPTIONAL_ERROR(module.expect_and_lex(lexer, LexerTokens::OpenParenthesis));
 
 			doir::Token preLoop = 0;
 			switch(module.current_lexer_token<LexerTokens>()) {
-			break; case Var: preLoop = varDecl(module); PROPIGATE_ERROR(preLoop);
+			break; case Var: preLoop = varDecl(module); PROPAGATE_ERROR(preLoop);
 			break; case Semicolon: {} // Do Nothing
-			break; default: preLoop = exprStmt(module); PROPIGATE_ERROR(preLoop);
+			break; default: preLoop = exprStmt(module); PROPAGATE_ERROR(preLoop);
 			}
 
-			PROPIGATE_OPTIONAL_ERROR(module.expect_and_lex(lexer, Semicolon));
+			PROPAGATE_OPTIONAL_ERROR(module.expect_and_lex(lexer, Semicolon));
 
 			doir::Token condition = 0;
 			if(module.current_lexer_token<LexerTokens>() != Semicolon) {
-				condition = expression(module); PROPIGATE_ERROR(condition);
+				condition = expression(module); PROPAGATE_ERROR(condition);
 				module.lex(lexer);
 			}
 
-			PROPIGATE_OPTIONAL_ERROR(module.expect_and_lex(lexer, Semicolon));
+			PROPAGATE_OPTIONAL_ERROR(module.expect_and_lex(lexer, Semicolon));
 
 			doir::Token postLoop = 0;
 			if(module.current_lexer_token<LexerTokens>() != CloseParenthesis) {
-				postLoop = expression(module); PROPIGATE_ERROR(postLoop);
+				postLoop = expression(module); PROPAGATE_ERROR(postLoop);
 				module.lex(lexer);
 			}
 
-			PROPIGATE_OPTIONAL_ERROR(module.expect_and_lex(lexer, CloseParenthesis));
+			PROPAGATE_OPTIONAL_ERROR(module.expect_and_lex(lexer, CloseParenthesis));
 
-			auto stmt = statement(module); PROPIGATE_ERROR(stmt);
+			auto stmt = statement(module); PROPAGATE_ERROR(stmt);
 
 			// Paste the pre loop before the loop (inside a new block so that declarations are properly scoped!)
 			doir::Token wrappingBlock = 0;
@@ -512,15 +512,15 @@ namespace lox {
 			ZoneScoped;
 			auto t = module.make_token();
 			auto marker = module.make_token();
-			PROPIGATE_OPTIONAL_ERROR(module.expect_and_lex(lexer, LexerTokens::If));
-			PROPIGATE_OPTIONAL_ERROR(module.expect_and_lex(lexer, LexerTokens::OpenParenthesis));
+			PROPAGATE_OPTIONAL_ERROR(module.expect_and_lex(lexer, LexerTokens::If));
+			PROPAGATE_OPTIONAL_ERROR(module.expect_and_lex(lexer, LexerTokens::OpenParenthesis));
 
-			auto condition = expression(module); PROPIGATE_ERROR(condition);
+			auto condition = expression(module); PROPAGATE_ERROR(condition);
 
 			module.lex(lexer);
-			PROPIGATE_OPTIONAL_ERROR(module.expect_and_lex(lexer, LexerTokens::CloseParenthesis));
+			PROPAGATE_OPTIONAL_ERROR(module.expect_and_lex(lexer, LexerTokens::CloseParenthesis));
 
-			auto then = statement(module); PROPIGATE_ERROR(then);
+			auto then = statement(module); PROPAGATE_ERROR(then);
 			doir::Token Else = 0;
 
 			auto next = module.lookahead(lexer);
@@ -528,7 +528,7 @@ namespace lox {
 				module.restore_state(next);
 				module.lex(lexer);
 
-				Else = statement(module); PROPIGATE_ERROR(Else);
+				Else = statement(module); PROPAGATE_ERROR(Else);
 			}
 
 			module.add_attribute<components::BodyMarker>(marker) = {t};
@@ -541,11 +541,11 @@ namespace lox {
 		doir::Token printStmt(doir::ParseModule& module) {
 			ZoneScoped;
 			auto t = module.make_token();
-			PROPIGATE_OPTIONAL_ERROR(module.expect_and_lex(lexer, LexerTokens::Print));
-			auto expr = expression(module); PROPIGATE_ERROR(expr);
+			PROPAGATE_OPTIONAL_ERROR(module.expect_and_lex(lexer, LexerTokens::Print));
+			auto expr = expression(module); PROPAGATE_ERROR(expr);
 
 			module.lex(lexer);
-			PROPIGATE_OPTIONAL_ERROR(module.expect(LexerTokens::Semicolon));
+			PROPAGATE_OPTIONAL_ERROR(module.expect(LexerTokens::Semicolon));
 
 			module.add_attribute<comp::Print>(t);
 			module.add_attribute<comp::Operation>(t) = {expr};
@@ -557,14 +557,14 @@ namespace lox {
 			ZoneScoped;
 			auto t = module.make_token();
 			module.add_attribute<comp::Return>(t);
-			PROPIGATE_OPTIONAL_ERROR(module.expect_and_lex(lexer, LexerTokens::Return));
+			PROPAGATE_OPTIONAL_ERROR(module.expect_and_lex(lexer, LexerTokens::Return));
 			if(module.current_lexer_token<LexerTokens>() == Semicolon) return t; // Since the expression is optional, bail out early if we see a semicolon!
 
-			auto expr = expression(module); PROPIGATE_ERROR(expr);
+			auto expr = expression(module); PROPAGATE_ERROR(expr);
 			module.add_attribute<comp::Operation>(t) = {expr};
 
 			module.lex(lexer);
-			PROPIGATE_OPTIONAL_ERROR(module.expect(LexerTokens::Semicolon));
+			PROPAGATE_OPTIONAL_ERROR(module.expect(LexerTokens::Semicolon));
 			return t;
 		}
 
@@ -573,15 +573,15 @@ namespace lox {
 			ZoneScoped;
 			auto t = module.make_token();
 			auto marker = module.make_token();
-			PROPIGATE_OPTIONAL_ERROR(module.expect_and_lex(lexer, LexerTokens::While));
-			PROPIGATE_OPTIONAL_ERROR(module.expect_and_lex(lexer, LexerTokens::OpenParenthesis));
+			PROPAGATE_OPTIONAL_ERROR(module.expect_and_lex(lexer, LexerTokens::While));
+			PROPAGATE_OPTIONAL_ERROR(module.expect_and_lex(lexer, LexerTokens::OpenParenthesis));
 
-			auto condition = expression(module); PROPIGATE_ERROR(condition);
+			auto condition = expression(module); PROPAGATE_ERROR(condition);
 
 			module.lex(lexer);
-			PROPIGATE_OPTIONAL_ERROR(module.expect_and_lex(lexer, LexerTokens::CloseParenthesis));
+			PROPAGATE_OPTIONAL_ERROR(module.expect_and_lex(lexer, LexerTokens::CloseParenthesis));
 
-			auto stmt = statement(module); PROPIGATE_ERROR(stmt);
+			auto stmt = statement(module); PROPAGATE_ERROR(stmt);
 
 			components::Block* block;
 			if(module.has_attribute<components::Block>(stmt)) {
@@ -605,7 +605,7 @@ namespace lox {
 			doir::Token oldBlock = currentBlock;
 			// defer currentBlock = oldBlock;
 			comp::Block& block = make_block(module);
-			PROPIGATE_OPTIONAL_ERROR(module.expect_and_lex(lexer, LexerTokens::OpenCurly));
+			PROPAGATE_OPTIONAL_ERROR(module.expect_and_lex(lexer, LexerTokens::OpenCurly));
 
 			if(withFunctionMarker) {
 				doir::Token marker = module.make_token();
@@ -649,15 +649,15 @@ namespace lox {
 				if(module.has_attribute<doir::Error>(parent))
 					module.restore_state(saved);
 
-				PROPIGATE_OPTIONAL_ERROR(module.expect(LexerTokens::Identifier));
+				PROPAGATE_OPTIONAL_ERROR(module.expect(LexerTokens::Identifier));
 				auto t = module.make_token();
 				// TODO: If var is set need to do something to handle the class!
 				if(parent) return module.make_error<doir::Error>({"Classes are not yet supported!"});
 				auto name = *module.get_attribute<doir::Lexeme>(t);
 
 				module.lex(lexer);
-				PROPIGATE_OPTIONAL_ERROR(module.expect_and_lex(lexer, LexerTokens::Assign));
-				auto value = assignment(module); PROPIGATE_ERROR(value);
+				PROPAGATE_OPTIONAL_ERROR(module.expect_and_lex(lexer, LexerTokens::Assign));
+				auto value = assignment(module); PROPAGATE_ERROR(value);
 
 				module.add_attribute<comp::Assign>(t);
 				module.add_attribute<doir::TokenReference>(t) = {name};
@@ -671,7 +671,7 @@ namespace lox {
 			doir::Token assign = impl(module);
 			if(module.has_attribute<doir::Error>(assign)) {
 				module.restore_state(saved);
-				auto chained = logic_or(module); PROPIGATE_ERROR(chained);
+				auto chained = logic_or(module); PROPAGATE_ERROR(chained);
 				return chained;
 			}
 			return assign;
@@ -680,7 +680,7 @@ namespace lox {
 		// logic_or ::= logic_and ( "or" logic_and )*;
 		doir::Token logic_or(doir::ParseModule& module) {
 			ZoneScoped;
-			doir::Token a = logic_and(module); PROPIGATE_ERROR(a);
+			doir::Token a = logic_and(module); PROPAGATE_ERROR(a);
 
 			for(doir::ParseState peak = module.lookahead(lexer);
 				module.current_lexer_token<LexerTokens>(peak) == LexerTokens::Or;
@@ -692,7 +692,7 @@ namespace lox {
 				auto marker = module.make_token();
 
 				module.lex(lexer);
-				doir::Token b = logic_and(module); PROPIGATE_ERROR(b);
+				doir::Token b = logic_and(module); PROPAGATE_ERROR(b);
 
 				module.add_attribute<comp::BodyMarker>(marker) = {t};
 				module.add_attribute<comp::OperationIf>(t) = {a, b, marker};
@@ -705,7 +705,7 @@ namespace lox {
 		// logic_and ::= equality ( "and" equality )*;
 		doir::Token logic_and(doir::ParseModule& module) {
 			ZoneScoped;
-			doir::Token a = equality(module); PROPIGATE_ERROR(a);
+			doir::Token a = equality(module); PROPAGATE_ERROR(a);
 
 			for(doir::ParseState peak = module.lookahead(lexer);
 				module.current_lexer_token<LexerTokens>(peak) == LexerTokens::And;
@@ -717,7 +717,7 @@ namespace lox {
 				auto marker = module.make_token();
 
 				module.lex(lexer);
-				doir::Token b = equality(module); PROPIGATE_ERROR(b);
+				doir::Token b = equality(module); PROPAGATE_ERROR(b);
 
 				module.add_attribute<comp::BodyMarker>(marker) = {t};
 				module.add_attribute<comp::OperationIf>(t) = {a, b, marker};
@@ -730,7 +730,7 @@ namespace lox {
 		// equality ::= comparison ( ( "!=" | "==" ) comparison )*;
 		doir::Token equality(doir::ParseModule& module) {
 			ZoneScoped;
-			doir::Token a = comparison(module); PROPIGATE_ERROR(a);
+			doir::Token a = comparison(module); PROPAGATE_ERROR(a);
 
 			for(doir::ParseState peak = module.lookahead(lexer);
 				module.current_lexer_token<LexerTokens>(peak) == LexerTokens::NotEqual
@@ -743,7 +743,7 @@ namespace lox {
 				auto t = module.make_token();
 
 				module.lex(lexer);
-				doir::Token b = comparison(module); PROPIGATE_ERROR(b);
+				doir::Token b = comparison(module); PROPAGATE_ERROR(b);
 
 				module.add_attribute<comp::Operation>(t) = {a, b};
 				if(lexerToken == LexerTokens::Equal)
@@ -757,7 +757,7 @@ namespace lox {
 		// comparison ::= term ( ( ">" | ">=" | "<" | "<=" ) term )*;
 		doir::Token comparison(doir::ParseModule& module) {
 			ZoneScoped;
-			doir::Token a = term(module); PROPIGATE_ERROR(a);
+			doir::Token a = term(module); PROPAGATE_ERROR(a);
 
 			for(doir::ParseState peak = module.lookahead(lexer);
 				module.current_lexer_token<LexerTokens>(peak) == LexerTokens::Greater
@@ -772,7 +772,7 @@ namespace lox {
 				auto t = module.make_token();
 
 				module.lex(lexer);
-				doir::Token b = term(module); PROPIGATE_ERROR(b);
+				doir::Token b = term(module); PROPAGATE_ERROR(b);
 
 				module.add_attribute<comp::Operation>(t) = {a, b};
 				switch (lexerToken) {
@@ -790,7 +790,7 @@ namespace lox {
 		// term ::= factor ( ( "-" | "+" ) factor )*;
 		doir::Token term(doir::ParseModule& module) {
 			ZoneScoped;
-			doir::Token a = factor(module); PROPIGATE_ERROR(a);
+			doir::Token a = factor(module); PROPAGATE_ERROR(a);
 
 			for(doir::ParseState peak = module.lookahead(lexer);
 				module.current_lexer_token<LexerTokens>(peak) == LexerTokens::Plus
@@ -803,7 +803,7 @@ namespace lox {
 				auto t = module.make_token();
 
 				module.lex(lexer);
-				doir::Token b = factor(module); PROPIGATE_ERROR(b);
+				doir::Token b = factor(module); PROPAGATE_ERROR(b);
 
 				module.add_attribute<comp::Operation>(t) = {a, b};
 				if(lexerToken == LexerTokens::Plus)
@@ -817,7 +817,7 @@ namespace lox {
 		// factor ::= unary ( ( "/" | "*" ) unary )*;
 		doir::Token factor(doir::ParseModule& module) {
 			ZoneScoped;
-			doir::Token a = unary(module); PROPIGATE_ERROR(a);
+			doir::Token a = unary(module); PROPAGATE_ERROR(a);
 
 			for(doir::ParseState peak = module.lookahead(lexer);
 				module.current_lexer_token<LexerTokens>(peak) == LexerTokens::Divide
@@ -830,7 +830,7 @@ namespace lox {
 				auto t = module.make_token();
 
 				module.lex(lexer);
-				doir::Token b = unary(module); PROPIGATE_ERROR(b);
+				doir::Token b = unary(module); PROPAGATE_ERROR(b);
 
 				module.add_attribute<comp::Operation>(t) = {a, b};
 				if(lexerToken == LexerTokens::Multiply)
@@ -850,7 +850,7 @@ namespace lox {
 			break; case LexerTokens::Not: {
 				doir::Token t = module.make_token();
 				module.lex(lexer);
-				doir::Token value = unary(module); PROPIGATE_ERROR(value);
+				doir::Token value = unary(module); PROPAGATE_ERROR(value);
 				module.add_attribute<comp::Operation>(t) = {value};
 				module.add_attribute<comp::Not>(t);
 				return t;
@@ -858,7 +858,7 @@ namespace lox {
 			break; case LexerTokens::Minus: {
 				doir::Token t = module.make_token();
 				module.lex(lexer);
-				doir::Token value = unary(module); PROPIGATE_ERROR(value);
+				doir::Token value = unary(module); PROPAGATE_ERROR(value);
 				module.add_attribute<comp::Operation>(t) = {value};
 				module.add_attribute<comp::Negate>(t);
 				return t;
@@ -886,13 +886,13 @@ namespace lox {
 					return module.make_error<doir::Error>({"Classes are not yet supported!"});
 				} else {
 					auto t = module.make_token();
-					PROPIGATE_OPTIONAL_ERROR(module.expect_and_lex(lexer, LexerTokens::OpenParenthesis));
+					PROPAGATE_OPTIONAL_ERROR(module.expect_and_lex(lexer, LexerTokens::OpenParenthesis));
 
 					auto args = arguments(module);
 					if(args.size() == 1 && module.has_attribute<doir::Error>(args[0]))
 						return args[0];
 
-					PROPIGATE_OPTIONAL_ERROR(module.expect(LexerTokens::CloseParenthesis));
+					PROPAGATE_OPTIONAL_ERROR(module.expect(LexerTokens::CloseParenthesis));
 
 					module.add_attribute<comp::Function>(t);
 					module.add_attribute<comp::Call>(t) = {prim, args};
@@ -912,11 +912,11 @@ namespace lox {
 
 			switch (module.current_lexer_token<LexerTokens>()) {
 			case LexerTokens::OpenParenthesis: {
-				PROPIGATE_OPTIONAL_ERROR(module.expect_and_lex(lexer, LexerTokens::OpenParenthesis));
+				PROPAGATE_OPTIONAL_ERROR(module.expect_and_lex(lexer, LexerTokens::OpenParenthesis));
 				auto ret = expression(module);
 
 				module.lex(lexer);
-				PROPIGATE_OPTIONAL_ERROR(module.expect(LexerTokens::CloseParenthesis));
+				PROPAGATE_OPTIONAL_ERROR(module.expect(LexerTokens::CloseParenthesis));
 				return ret;
 			}
 			case LexerTokens::Nil: {
@@ -966,8 +966,8 @@ namespace lox {
 			}
 			// case LexerTokens::Super: {
 			// 	module.lex(lexer);
-			// 	PROPOGATE_EXPECT_ERROR(module.expect_and_lex(lexer, LexerTokens::Dot));
-			// 	PROPOGATE_EXPECT_ERROR(module.expect(LexerTokens::Identifier));
+			// 	PROPAGATE_EXPECT_ERROR(module.expect_and_lex(lexer, LexerTokens::Dot));
+			// 	PROPAGATE_EXPECT_ERROR(module.expect(LexerTokens::Identifier));
 
 			// 	auto t = module.make_token();
 			// 	module.add_attribute<Variable>(t);

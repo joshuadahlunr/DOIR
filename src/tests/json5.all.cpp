@@ -1,5 +1,5 @@
 #define LEXER_CTRE_REGEX
-// #define LEXER_IS_STATEFULL
+// #define LEXER_IS_STATEFUL
 #include "../lexer.hpp"
 #include "../core.hpp"
 #include "../parse_state.hpp"

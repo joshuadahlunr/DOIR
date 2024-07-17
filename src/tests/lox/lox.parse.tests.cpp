@@ -237,7 +237,7 @@ TEST_CASE("Lox::ClassAssign") {
 		auto root = p.start(module);
 		CHECK(module.has_attribute<doir::Error>(root));
 	CAPTURE_ERROR_CONSOLE_END
-	CHECK(capture.str() == R"(An error has occured at <transient>:1:2-3
+	CHECK(capture.str() == R"(An error has occurred at <transient>:1:2-3
    x.y = 5;
     ^
 Classes are not yet supported!
@@ -307,8 +307,8 @@ TEST_CASE("Lox::While") {
 	lox::parse p;
 	auto root = module.get_attribute<lox::components::Block>(p.start(module))->children[0];
 	CHECK(module.has_attribute<lox::components::While>(root));
-	auto [conditon, block] = *module.get_attribute<lox::components::Operation>(root);
-	CHECK(*module.get_attribute<bool>(conditon) == true);
+	auto [condition, block] = *module.get_attribute<lox::components::Operation>(root);
+	CHECK(*module.get_attribute<bool>(condition) == true);
 	{
 		auto marker = module.get_attribute<lox::components::Block>(block)->children[0];
 		CHECK(module.has_attribute<lox::components::BodyMarker>(marker));
@@ -330,10 +330,10 @@ TEST_CASE("Lox::If") {
 	auto root = module.get_attribute<lox::components::Block>(p.start(module))->children[0];
 	CHECK(module.has_attribute<lox::components::If>(root));
 	auto [a] = *module.get_attribute<lox::components::OperationIf>(root);
-	auto [conditon, stmt, _, marker] = a;
+	auto [condition, stmt, _, marker] = a;
 	{
-		CHECK(module.has_attribute<lox::components::LessThan>(conditon));
-		auto operands = *module.get_attribute<lox::components::Operation>(conditon);
+		CHECK(module.has_attribute<lox::components::LessThan>(condition));
+		auto operands = *module.get_attribute<lox::components::Operation>(condition);
 		CHECK(module.has_attribute<lox::components::Variable>(operands.left));
 		CHECK(module.get_attribute<doir::TokenReference>(operands.left)->lexeme().view(module.buffer) == "x");
 		CHECK(module.has_attribute<lox::components::Variable>(operands.right));
@@ -360,10 +360,10 @@ TEST_CASE("Lox::IfElse") {
 	auto root = module.get_attribute<lox::components::Block>(p.start(module))->children[0];
 	CHECK(module.has_attribute<lox::components::If>(root));
 	auto [a] = *module.get_attribute<lox::components::OperationIf>(root);
-	auto [conditon, then, Else, marker] = a;
+	auto [condition, then, Else, marker] = a;
 	{
-		CHECK(module.has_attribute<lox::components::LessThan>(conditon));
-		auto operands = *module.get_attribute<lox::components::Operation>(conditon);
+		CHECK(module.has_attribute<lox::components::LessThan>(condition));
+		auto operands = *module.get_attribute<lox::components::Operation>(condition);
 		CHECK(module.has_attribute<lox::components::Variable>(operands.left));
 		CHECK(module.get_attribute<doir::TokenReference>(operands.left)->lexeme().view(module.buffer) == "x");
 		CHECK(module.has_attribute<lox::components::Variable>(operands.right));
@@ -404,10 +404,10 @@ TEST_CASE("Lox::For") {
 	{
 		auto root = rootC[1];
 		CHECK(module.has_attribute<lox::components::While>(root));
-		auto [conditon, block] = *module.get_attribute<lox::components::Operation>(root);
+		auto [condition, block] = *module.get_attribute<lox::components::Operation>(root);
 		{
-			CHECK(module.has_attribute<lox::components::GreaterThan>(conditon));
-			auto operands = *module.get_attribute<lox::components::Operation>(conditon);
+			CHECK(module.has_attribute<lox::components::GreaterThan>(condition));
+			auto operands = *module.get_attribute<lox::components::Operation>(condition);
 			CHECK(module.has_attribute<lox::components::Variable>(operands.left));
 			CHECK(module.get_attribute<doir::TokenReference>(operands.left)->lexeme().view(module.buffer) == "x");
 			CHECK(module.has_attribute<lox::components::Variable>(operands.right));
@@ -450,8 +450,8 @@ TEST_CASE("Lox::ForEmpty") {
 	{
 		auto root = rootC[0];
 		CHECK(module.has_attribute<lox::components::While>(root));
-		auto [conditon, block] = *module.get_attribute<lox::components::Operation>(root);
-		CHECK(*module.get_attribute<bool>(conditon) == true);
+		auto [condition, block] = *module.get_attribute<lox::components::Operation>(root);
+		CHECK(*module.get_attribute<bool>(condition) == true);
 		{
 			auto& rootC = module.get_attribute<lox::components::Block>(block)->children;
 			CHECK(rootC.size() == 2);

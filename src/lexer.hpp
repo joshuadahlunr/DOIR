@@ -240,7 +240,7 @@ namespace doir { inline namespace lex {
 			inline operator generic() const { return generic{head, lexeme, remaining}; }
 		};
 	protected:
-#ifdef LEXER_IS_STATEFULL
+#ifdef LEXER_IS_STATEFUL
 		std::bitset<sizeof...(Heads)> valid, lastValid;
 #endif
 
@@ -297,14 +297,14 @@ namespace doir { inline namespace lex {
 
 	public:
 		result lex(std::basic_string_view<CharT> buffer, size_t bufferOffset = 0)
-#ifndef LEXER_IS_STATEFULL
+#ifndef LEXER_IS_STATEFUL
 			const
 #endif
 		{
 			ZoneScoped;
 			if(buffer.empty()) return {std::string::npos, {}, {}};
 
-#ifndef LEXER_IS_STATEFULL
+#ifndef LEXER_IS_STATEFUL
 			std::bitset<sizeof...(Heads)> valid, lastValid;
 #endif
 			valid.set(); // At the start all heads are valid!
@@ -343,7 +343,7 @@ namespace doir { inline namespace lex {
 
 	public:
 		inline result lex(const result& res)
-#ifndef LEXER_IS_STATEFULL
+#ifndef LEXER_IS_STATEFUL
 			const
 #endif
 		{ return lex(res.remaining); }

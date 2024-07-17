@@ -38,8 +38,8 @@ namespace doir {
 		switch(type){
 		break; case diagnostic_type::Info: return "Info at ";
 		break; case diagnostic_type::Warning: return "Warning at ";
-		break; case diagnostic_type::Error: return "An error has occured at ";
-		break; case diagnostic_type::Fatal: return "A fatal error (causing entire process to halt) has occured at ";
+		break; case diagnostic_type::Error: return "An error has occurred at ";
+		break; case diagnostic_type::Fatal: return "A fatal error (causing entire process to halt) has occurred at ";
 		}
 		return "Unknown Problem";
 	}
