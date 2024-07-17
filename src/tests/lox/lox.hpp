@@ -110,3 +110,4 @@ void print(doir::Module& module, doir::Token root, bool show_token = false, size
 void canonicalize(doir::Module& module, doir::Token root, bool clear_references = true);
 bool verify_references(doir::Module& module);
 bool verify_call_arrities(doir::Module& module);
+bool identify_trailing_calls(doir::Module& module);

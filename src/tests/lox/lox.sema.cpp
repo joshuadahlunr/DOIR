@@ -1,6 +1,6 @@
 #include "lox.hpp"
-#include "lox.parse.hpp"
 #include <algorithm>
+#include <iterator>
 #include <ranges>
 #include <unordered_set>
 #include <vector>
@@ -312,6 +312,32 @@ bool verify_call_arrities(doir::Module& module) {
 	return valid;
 }
 
+bool identify_trailing_calls(doir::Module& module) {
+	for(doir::Token t = module.get_attribute<doir::Children>(1)->total + 2; t--;) {
+		if(!module.has_attribute<lox::comp::Call>(t)) continue;
+
+		auto b = current_block(module, t);
+		if(b == 0) continue;
+		auto& block = *module.get_attribute<lox::components::Block>(b);
+		
+		// Find the index of the call in its block
+		auto root = t;
+		auto i = block.children.begin();
+		while((i = std::ranges::find(block.children, root)) == block.children.end() && root > 0) --root;
+		if(root == 0) return false; // This represents some sort of invalid structure!
+
+		// If its not last it can't be trailing...
+		auto index = std::distance(block.children.begin(), i);
+		if(index != block.children.size() - 1) continue;
+
+		// If the call is top level in its block or is the immediate child of a return it is trailing
+		if(t == root || module.has_attribute<lox::components::Return>(t - 1))
+			module.add_attribute<lox::components::TrailingCall>(t);
+	}
+	return true;
+}
+// TODO: Detecting direct recursion at semantic analysis time should be possible!
+
 
 // Ensures the parse tree is sorted and properly anotated
 void canonicalize(doir::Module& module, doir::Token root, bool clear_references /*= true*/) {
@@ -327,5 +353,6 @@ TEST_CASE("Lox::Sema" * doctest::skip()) {
 	canonicalize(module, root);
 	CHECK(verify_references(module));
 	CHECK(verify_call_arrities(module));
+	CHECK(identify_trailing_calls(module));
 	print(module, root, true);
 }

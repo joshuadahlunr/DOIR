@@ -24,7 +24,7 @@ void copy_runtime_value(doir::Module& module, doir::Token dest, doir::Token sour
 	switch (value_type(module, source)) {
 	break; case lox::Type::Number: module.add_attribute<double>(dest) = *module.get_attribute<double>(source);
 	break; case lox::Type::Boolean: module.add_attribute<bool>(dest) = *module.get_attribute<bool>(source);
-	break; case lox::Type::String: 
+	break; case lox::Type::String:
 		module.add_attribute<lox::comp::String>(dest);
 		module.add_attribute<std::string>(dest) = get_token_string(module, source);
 	break; default: module.add_attribute<lox::comp::Null>(dest);
@@ -250,7 +250,7 @@ bool interpret(doir::Module& module, doir::Token root = 1, doir::Token returnTo 
 		case lox::Type::ParameterDeclaire: [[fallthrough]];
 		case lox::Type::FunctionDeclaire: [[fallthrough]];
 		case lox::Type::Block: // Do nothing!
-		break; case lox::Type::VariableDeclaire: 
+		break; case lox::Type::VariableDeclaire:
 		if(module.has_attribute<lox::components::Operation>(t)) {
 			auto& op = *module.get_attribute<lox::components::Operation>(t);
 			copy_runtime_value(module, t, op.left);
@@ -285,6 +285,23 @@ bool interpret(doir::Module& module, doir::Token root = 1, doir::Token returnTo 
 			auto& call = *module.get_attribute<lox::comp::Call>(t);
 			auto ref = module.get_attribute<doir::TokenReference>(call.parent)->token();
 			auto& params = *module.get_attribute<lox::comp::Parameters>(ref);
+			auto& op = *module.get_attribute<lox::components::Operation>(ref);
+
+			// Check for recursion
+			if(op.right) {
+				if(module.has_attribute<lox::comp::TrailingCall>(t))
+					doir::print_diagnostic(module, t, "Tail recursion detected.", doir::diagnostic_type::Warning) << std::endl;
+				else {
+					// TODO... How do we chech for tail recursion?
+					auto& msg = doir::print_diagnostic(module, t, "(Non tail) recursion is not supported.");
+					if(ref != root) msg << " This indirectly recursive call is invalid.";
+					msg << std::endl;
+					return false;
+				}
+			}
+
+			// Mark the call as started
+			op.right = true;
 
 			// Copy the argument values to the parameters
 			for(size_t i = 0; i < params.size(); ++i) {
@@ -292,11 +309,14 @@ bool interpret(doir::Module& module, doir::Token root = 1, doir::Token returnTo 
 				copy_runtime_value(module, params[i], call.children[i]);
 			}
 			valid &= interpret(module, ref, t);
+
+			// Mark the call as finished
+			op.right = false;
 		}
 		break; case lox::Type::If: {
 			auto& [a] = *module.get_attribute<lox::components::OperationIf>(t);
 			auto& [condition, then, Else, marker] = a;
-			
+
 			interpret(module, condition, returnTo);
 			if(is_truthy(module, condition))
 				interpret(module, then, returnTo, t);
@@ -327,6 +347,8 @@ bool interpret(doir::Module& module, doir::Token root = 1, doir::Token returnTo 
 		break; case lox::Type::EqualTo: valid &= interpret_equal(module, t);
 		break; case lox::Type::NotEqualTo: valid &= interpret_not_equal(module, t);
 		break; case lox::Type::Print: valid &= interpret_print(module, t);
+		// case lox::Type::And:
+		// case lox::Type::Or:
 		break; default: throw std::runtime_error((std::stringstream{} << "Operation " << lox::to_string(type) << " not supported yet!").str().c_str());
 		}
 
@@ -338,11 +360,13 @@ bool interpret(doir::Module& module, doir::Token root = 1, doir::Token returnTo 
 TEST_CASE("Lox::Interp") {
 	// doir::ParseModule module("fun add(a, b) { var tmp = a; a = b; b = tmp; return a + b; } var x = 0; var y = 1; if(true) print add(x, y); for(;;) print x;");
 	doir::ParseModule module("fun check(x) { print nil == x; } for(var i = 0; i < 5; i = i + 1) print (i + 1) * -6; print \"Hello \" + \"world\" + \"!\"; check(5); check(nil);");
+	// doir::ParseModule module("fun fib(x) { if(x < 2) return 1; return fib(x - 2); } fib(5);");
 	auto root = lox::parse{}.start(module);
 	REQUIRE(root != 0);
 	canonicalize(module, root, false);
 	REQUIRE(verify_references(module));
 	REQUIRE(verify_call_arrities(module));
+	REQUIRE(identify_trailing_calls(module));
 
 	print(module, root, true);
 	REQUIRE(interpret(module));

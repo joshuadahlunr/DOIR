@@ -117,6 +117,7 @@ namespace lox {
 			}
 		};
 		using Call = Block; // TODO: How bad of an idea is it for calls to reuse block's storage?
+		struct TrailingCall {};
 
 		struct VariableDeclaire {
 			doir::Lexeme name;
@@ -323,7 +324,7 @@ namespace lox {
 
 			module.add_hashtable_attribute<comp::FunctionDeclaire>(t) = {*module.get_attribute<doir::Lexeme>(t), currentBlock};
 			module.add_attribute<comp::Parameters>(t) = params;
-			module.add_attribute<comp::Operation>(t) = {body};
+			module.add_attribute<comp::Operation>(t) = {body, false}; // .right stores weather or not the function is currently being called
 			return t;
 		}
 
