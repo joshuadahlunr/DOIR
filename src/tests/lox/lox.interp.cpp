@@ -112,7 +112,7 @@ bool interpret_divide(doir::Module& module, doir::Token div) {
 bool interpret_less(doir::Module& module, doir::Token less) {
 	auto& op = *module.get_attribute<lox::comp::Operation>(less);
 	if(module.has_attribute<double>(op.left) && module.has_attribute<double>(op.right)) {
-		module.add_attribute<double>(less) = *module.get_attribute<double>(op.left) < *module.get_attribute<double>(op.right);
+		module.add_attribute<bool>(less) = *module.get_attribute<double>(op.left) < *module.get_attribute<double>(op.right);
 		return true;
 	}
 	if(auto left = value_type(module, op.left), right = value_type(module, op.right); left != right)
@@ -235,7 +235,8 @@ void clear_runtime_values(doir::Module& module, doir::Token start = 1, std::opti
 	>();
 }
 
-bool interpret(doir::Module& module, doir::Token root = 1, doir::Token returnTo = 0) {
+bool interpret(doir::Module& module, doir::Token root = 1, doir::Token returnTo = 0, std::optional<doir::Token> _skipCheck = {}) {
+	doir::Token skipCheck = _skipCheck.value_or(root); // Token we should check any blocks against to determine weather or not to skip them
 	bool valid = true;
 
 	clear_runtime_values(module, root);
@@ -248,17 +249,26 @@ bool interpret(doir::Module& module, doir::Token root = 1, doir::Token returnTo 
 		case lox::Type::Boolean: [[fallthrough]];
 		case lox::Type::ParameterDeclaire: [[fallthrough]];
 		case lox::Type::FunctionDeclaire: [[fallthrough]];
-		case lox::Type::VariableDeclaire: [[fallthrough]];
 		case lox::Type::Block: // Do nothing!
+		break; case lox::Type::VariableDeclaire: 
+		if(module.has_attribute<lox::components::Operation>(t)) {
+			auto& op = *module.get_attribute<lox::components::Operation>(t);
+			copy_runtime_value(module, t, op.left);
+		}
 		break; case lox::Type::Variable: {
 			auto& ref = *module.get_attribute<doir::TokenReference>(t);
 			copy_runtime_value(module, t, ref.token());
 		}
-		break; case lox::Type::FunctionMarker: {
+		break; case lox::Type::Assign: {
+			auto& ref = *module.get_attribute<doir::TokenReference>(t);
+			auto& op = *module.get_attribute<lox::components::Operation>(t);
+			copy_runtime_value(module, ref.token(), op.left);
+		}
+		break; case lox::Type::BodyMarker: {
 			// Skip over any functions we aren't in!
-			auto& marker = *module.get_attribute<lox::components::FunctionMarker>(t);
-			if(marker.function != root)
-				t = marker.function;
+			auto& marker = *module.get_attribute<lox::components::BodyMarker>(t);
+			if(marker.skipTo != skipCheck)
+				t = marker.skipTo + 1; // +1 so that when decrement during the next loop iteration we process the skipTo node
 		}
 		break; case lox::Type::Return: {
 			if(returnTo == 0) {
@@ -283,6 +293,27 @@ bool interpret(doir::Module& module, doir::Token root = 1, doir::Token returnTo 
 			}
 			valid &= interpret(module, ref, t);
 		}
+		break; case lox::Type::If: {
+			auto& [a] = *module.get_attribute<lox::components::OperationIf>(t);
+			auto& [condition, then, Else, marker] = a;
+			
+			interpret(module, condition, returnTo);
+			if(is_truthy(module, condition))
+				interpret(module, then, returnTo, t);
+			else if(Else != 0)
+				interpret(module, Else, returnTo, t);
+		}
+		break; case lox::Type::While: {
+			auto& op = *module.get_attribute<lox::components::Operation>(t);
+
+			interpret(module, op.left, returnTo);
+			while(is_truthy(module, op.left)) {
+				// Evaluate the body of the loop
+				interpret(module, op.right, returnTo, t);
+				// Evaluate the condition for the next truthyness check
+				interpret(module, op.left, returnTo);
+			}
+		}
 		break; case lox::Type::Add: valid &= interpret_add(module, t);
 		break; case lox::Type::Subtract: valid &= interpret_subtract(module, t);
 		break; case lox::Type::Multiply: valid &= interpret_multiply(module, t);
@@ -306,7 +337,7 @@ bool interpret(doir::Module& module, doir::Token root = 1, doir::Token returnTo 
 
 TEST_CASE("Lox::Interp") {
 	// doir::ParseModule module("fun add(a, b) { var tmp = a; a = b; b = tmp; return a + b; } var x = 0; var y = 1; if(true) print add(x, y); for(;;) print x;");
-	doir::ParseModule module("fun check(x) { print nil == x; } print 5 * -6; print \"Hello \" + \"world\" + \"!\"; check(5); check(nil);");
+	doir::ParseModule module("fun check(x) { print nil == x; } for(var i = 0; i < 5; i = i + 1) print (i + 1) * -6; print \"Hello \" + \"world\" + \"!\"; check(5); check(nil);");
 	auto root = lox::parse{}.start(module);
 	REQUIRE(root != 0);
 	canonicalize(module, root, false);

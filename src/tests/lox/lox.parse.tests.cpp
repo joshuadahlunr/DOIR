@@ -258,7 +258,12 @@ TEST_CASE("Lox::While") {
 	auto [conditon, block] = *module.get_attribute<lox::components::Operation>(root);
 	CHECK(*module.get_attribute<bool>(conditon) == true);
 	{
-		auto stmt = module.get_attribute<lox::components::Block>(block)->children[0];
+		auto marker = module.get_attribute<lox::components::Block>(block)->children[0];
+		CHECK(module.has_attribute<lox::components::BodyMarker>(marker));
+		CHECK(module.get_attribute<lox::components::BodyMarker>(marker)->skipTo == root);
+	}
+	{
+		auto stmt = module.get_attribute<lox::components::Block>(block)->children[1];
 		CHECK(module.has_attribute<lox::components::Print>(stmt));
 		auto target = module.get_attribute<lox::components::Operation>(stmt)->left;
 		CHECK(*module.get_attribute<bool>(target) == false);
@@ -270,7 +275,8 @@ TEST_CASE("Lox::If") {
 	lox::parse p;
 	auto root = module.get_attribute<lox::components::Block>(p.start(module))->children[0];
 	CHECK(module.has_attribute<lox::components::If>(root));
-	auto [conditon, stmt] = *module.get_attribute<lox::components::Operation>(root);
+	auto [a] = *module.get_attribute<lox::components::OperationIf>(root);
+	auto [conditon, stmt, _, marker] = a;
 	{
 		CHECK(module.has_attribute<lox::components::LessThan>(conditon));
 		auto operands = *module.get_attribute<lox::components::Operation>(conditon);
@@ -285,6 +291,11 @@ TEST_CASE("Lox::If") {
 		CHECK(module.has_attribute<lox::components::String>(target));
 		CHECK(module.get_attribute<doir::Lexeme>(target)->view(module.buffer) == "true");
 	}
+	{
+		CHECK(module.has_attribute<lox::components::BodyMarker>(marker));
+		CHECK(module.get_attribute<lox::components::BodyMarker>(marker)->skipTo == root);
+		CHECK(_ == 0);
+	}
 }
 
 TEST_CASE("Lox::IfElse") {
@@ -293,7 +304,7 @@ TEST_CASE("Lox::IfElse") {
 	auto root = module.get_attribute<lox::components::Block>(p.start(module))->children[0];
 	CHECK(module.has_attribute<lox::components::If>(root));
 	auto [a] = *module.get_attribute<lox::components::OperationIf>(root);
-	auto [conditon, then, Else] = a;
+	auto [conditon, then, Else, marker] = a;
 	{
 		CHECK(module.has_attribute<lox::components::LessThan>(conditon));
 		auto operands = *module.get_attribute<lox::components::Operation>(conditon);
@@ -312,6 +323,10 @@ TEST_CASE("Lox::IfElse") {
 		CHECK(module.has_attribute<lox::components::Print>(Else));
 		auto target = module.get_attribute<lox::components::Operation>(Else)->left;
 		CHECK(*module.get_attribute<double>(target) == 5);
+	}
+	{
+		CHECK(module.has_attribute<lox::components::BodyMarker>(marker));
+		CHECK(module.get_attribute<lox::components::BodyMarker>(marker)->skipTo == root);
 	}
 }
 
@@ -341,16 +356,21 @@ TEST_CASE("Lox::For") {
 		}
 		{
 			auto& rootC = module.get_attribute<lox::components::Block>(block)->children;
-			CHECK(rootC.size() == 2);
+			CHECK(rootC.size() == 3);
 			{
-				auto root = rootC[0];
+				auto marker = rootC[0];
+				CHECK(module.has_attribute<lox::components::BodyMarker>(marker));
+				CHECK(module.get_attribute<lox::components::BodyMarker>(marker)->skipTo == root);
+			}
+			{
+				auto root = rootC[1];
 				CHECK(module.has_attribute<lox::components::Print>(root));
 				auto target = module.get_attribute<lox::components::Operation>(root)->left;
 				CHECK(module.has_attribute<lox::components::Variable>(target));
 				CHECK(module.get_attribute<doir::TokenReference>(target)->lexeme().view(module.buffer) == "x");
 			}
 			{
-				auto root = rootC[1];
+				auto root = rootC[2];
 				CHECK(module.has_attribute<lox::components::Add>(root));
 				auto operands = *module.get_attribute<lox::components::Operation>(root);
 				CHECK(*module.get_attribute<double>(operands.right) == 1);
@@ -369,13 +389,23 @@ TEST_CASE("Lox::ForEmpty") {
 	{
 		auto root = rootC[0];
 		CHECK(module.has_attribute<lox::components::While>(root));
-		auto [conditon, stmt] = *module.get_attribute<lox::components::Operation>(root);
+		auto [conditon, block] = *module.get_attribute<lox::components::Operation>(root);
 		CHECK(*module.get_attribute<bool>(conditon) == true);
 		{
-			CHECK(module.has_attribute<lox::components::Print>(stmt));
-			auto target = module.get_attribute<lox::components::Operation>(stmt)->left;
-			CHECK(module.has_attribute<lox::components::Variable>(target));
-			CHECK(module.get_attribute<doir::TokenReference>(target)->lexeme().view(module.buffer) == "x");
+			auto& rootC = module.get_attribute<lox::components::Block>(block)->children;
+			CHECK(rootC.size() == 2);
+			{
+				auto marker = rootC[0];
+				CHECK(module.has_attribute<lox::components::BodyMarker>(marker));
+				CHECK(module.get_attribute<lox::components::BodyMarker>(marker)->skipTo == root);
+			}
+			{
+				auto stmt = rootC[1];
+				CHECK(module.has_attribute<lox::components::Print>(stmt));
+				auto target = module.get_attribute<lox::components::Operation>(stmt)->left;
+				CHECK(module.has_attribute<lox::components::Variable>(target));
+				CHECK(module.get_attribute<doir::TokenReference>(target)->lexeme().view(module.buffer) == "x");
+			}
 		}
 	}
 }
@@ -419,8 +449,8 @@ TEST_CASE("Lox::Fun") {
 	{
 		auto body = module.get_attribute<lox::components::Operation>(root)->left;
 		auto marker = module.get_attribute<lox::components::Block>(body)->children[0];
-		CHECK(module.has_attribute<lox::components::FunctionMarker>(marker));
-		CHECK(module.get_attribute<lox::components::FunctionMarker>(marker)->function == root);
+		CHECK(module.has_attribute<lox::components::BodyMarker>(marker));
+		CHECK(module.get_attribute<lox::components::BodyMarker>(marker)->skipTo == root);
 		auto stmt = module.get_attribute<lox::components::Block>(body)->children[1];
 		CHECK(module.has_attribute<lox::components::Return>(stmt));
 		auto target = module.get_attribute<lox::components::Operation>(stmt)->left;

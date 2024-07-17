@@ -142,11 +142,11 @@ namespace lox {
 				else if(decl.parent == eB) decl.parent = eA;
 			}
 		};
-		struct FunctionMarker { 
-			doir::Token function; 
-			static void swap_entities(FunctionMarker& mark, ecs::entity eA, ecs::entity eB) {
-				if(mark.function == eA) mark.function = eB;
-				else if(mark.function == eB) mark.function = eA;
+		struct BodyMarker { 
+			doir::Token skipTo; 
+			static void swap_entities(BodyMarker& mark, ecs::entity eA, ecs::entity eB) {
+				if(mark.skipTo == eA) mark.skipTo = eB;
+				else if(mark.skipTo == eB) mark.skipTo = eA;
 			}
 		};
 		struct ParameterDeclaire {
@@ -180,7 +180,7 @@ namespace lox {
 				else if(op.right == eB) op.right = eA;
 			}
 		};
-		struct OperationIf : public std::array<doir::Token, 3> {
+		struct OperationIf : public std::array<doir::Token, 4> { // Condition, Then, Else, Marker
 			static void swap_entities(OperationIf& op, ecs::entity eA, ecs::entity eB) {
 				for(auto& child: op)
 					if(child == eA) child = eB;
@@ -410,6 +410,7 @@ namespace lox {
 		// forStmt ::= "for" "(" ( varDecl | exprStmt | ";" ) expression? ";" expression? ")" statement;
 		doir::Token forStmt(doir::ParseModule& module) {
 			auto t = module.make_token();
+			auto marker = module.make_token();
 			PROPIGATE_OPTIONAL_ERROR(module.expect_and_lex(lexer, LexerTokens::For));
 			PROPIGATE_OPTIONAL_ERROR(module.expect_and_lex(lexer, LexerTokens::OpenParenthesis));
 
@@ -470,12 +471,24 @@ namespace lox {
 				}
 			}
 
+			components::Block* block;
+			if(module.has_attribute<components::Block>(operation.right)) {
+				block = &*module.get_attribute<components::Block>(operation.right);
+			} else {
+				auto b = module.make_token();
+				block = &(module.add_attribute<components::Block>(b) = {currentBlock, {operation.right}});
+				operation.right = b;
+			}
+			module.add_attribute<components::BodyMarker>(marker) = {t};
+			block->children.insert(block->children.cbegin(), marker);
+
 			return t;
 		}
 
 		// ifStmt ::= "if" "(" expression ")" statement ( "else" statement )?;
 		doir::Token ifStmt(doir::ParseModule& module) {
 			auto t = module.make_token();
+			auto marker = module.make_token();
 			PROPIGATE_OPTIONAL_ERROR(module.expect_and_lex(lexer, LexerTokens::If));
 			PROPIGATE_OPTIONAL_ERROR(module.expect_and_lex(lexer, LexerTokens::OpenParenthesis));
 
@@ -495,10 +508,9 @@ namespace lox {
 				Else = statement(module); PROPIGATE_ERROR(Else);
 			}
 
+			module.add_attribute<components::BodyMarker>(marker) = {t};
 			module.add_attribute<comp::If>(t);
-			if(Else == 0)
-				module.add_attribute<comp::Operation>(t) = {condition, then};
-			else module.add_attribute<comp::OperationIf>(t) = {condition, then, Else};
+			module.add_attribute<comp::OperationIf>(t) = {condition, then, Else, marker};
 			return t;
 		}
 
@@ -534,6 +546,7 @@ namespace lox {
 		// whileStmt ::= "while" "(" expression ")" statement;
 		doir::Token whileStmt(doir::ParseModule& module) {
 			auto t = module.make_token();
+			auto marker = module.make_token();
 			PROPIGATE_OPTIONAL_ERROR(module.expect_and_lex(lexer, LexerTokens::While));
 			PROPIGATE_OPTIONAL_ERROR(module.expect_and_lex(lexer, LexerTokens::OpenParenthesis));
 
@@ -543,6 +556,17 @@ namespace lox {
 			PROPIGATE_OPTIONAL_ERROR(module.expect_and_lex(lexer, LexerTokens::CloseParenthesis));
 
 			auto stmt = statement(module); PROPIGATE_ERROR(stmt);
+
+			components::Block* block;
+			if(module.has_attribute<components::Block>(stmt)) {
+				block = &*module.get_attribute<components::Block>(stmt);
+			} else {
+				auto b = module.make_token();
+				block = &(module.add_attribute<components::Block>(b) = {currentBlock, {stmt}});
+				stmt = b;
+			}
+			module.add_attribute<components::BodyMarker>(marker) = {t};
+			block->children.insert(block->children.cbegin(), marker);
 
 			module.add_attribute<comp::While>(t);
 			module.add_attribute<comp::Operation>(t) = {condition, stmt};
@@ -558,7 +582,7 @@ namespace lox {
 
 			if(withFunctionMarker) {
 				doir::Token marker = module.make_token();
-				module.add_attribute<components::FunctionMarker>(marker) = {withFunctionMarker};
+				module.add_attribute<components::BodyMarker>(marker) = {withFunctionMarker};
 				block.children.emplace_back(marker);
 			}
 

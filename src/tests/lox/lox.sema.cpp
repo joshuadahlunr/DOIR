@@ -62,17 +62,10 @@ void sort_parse_into_post_order_traversal_impl(doir::Module& module, doir::Token
 		recurse(module, module.get_attribute<Operation>(root)->left, order, missing);
 	}
 	break; case lox::Type::If: {
-		std::vector<doir::Token> sub; sub.reserve(3);
-		bool hasElse = module.has_attribute<OperationIf>(root);
-		if(hasElse) {
-			auto& arr = *module.get_attribute<OperationIf>(root);
-			sub = {arr.begin(), arr.end()};
-		} else {
-			auto& op = *module.get_attribute<Operation>(root);
-			sub.push_back(op.left); sub.push_back(op.right);
-		}
-		for(auto& elem: sub | std::views::reverse)
+		for(auto& elem: *module.get_attribute<OperationIf>(root) | std::views::reverse) {
+			if(elem == 0) continue; // Skip else
 			recurse(module, elem, order, missing);
+		}
 	}
 	break; case lox::Type::ParameterDeclaire: [[fallthrough]];
 	default: {}
@@ -104,14 +97,14 @@ void sort_parse_into_reverse_post_order_traversal(doir::Module& module, doir::To
 	((ecs::scene*)&module)->reorder_entities<
 		doir::hashtable_t<lox::comp::VariableDeclaire>,
 		doir::hashtable_t<lox::comp::FunctionDeclaire>,
-		lox::comp::FunctionMarker,
+		lox::comp::BodyMarker,
 		lox::comp::Operation,
 		lox::comp::OperationIf,
 		lox::comp::Block,
 		lox::comp::Parameters
 	>(order);
 	module.make_monotonic<
-		lox::comp::FunctionMarker,
+		lox::comp::BodyMarker,
 		lox::comp::Operation,
 		lox::comp::OperationIf,
 		lox::comp::Block,
@@ -186,16 +179,8 @@ size_t calculate_child_count(doir::Module& module, doir::Token root = 1, bool an
 		inChildren = calculate_child_count(module, module.get_attribute<Operation>(root)->left, anotate);
 	}
 	break; case lox::Type::If: {
-		std::vector<doir::Token> sub; sub.reserve(3);
-		bool hasElse = module.has_attribute<OperationIf>(root);
-		if(hasElse) {
-			auto& arr = *module.get_attribute<OperationIf>(root);
-			sub = {arr.begin(), arr.end()};
-		} else {
-			auto& op = *module.get_attribute<Operation>(root);
-			sub.push_back(op.left); sub.push_back(op.right);
-		}
-		for(auto& elem: sub) {
+		for(auto& elem: *module.get_attribute<OperationIf>(root)) {
+			if(elem == 0) continue; // Skip else
 			++immediate;
 			inChildren += calculate_child_count(module, elem, anotate);
 		}

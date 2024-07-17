@@ -79,9 +79,9 @@ void print(doir::Module& module, doir::Token root, bool show_tokens /*=false*/, 
 	break; case lox::Type::ParameterDeclaire: {
 		nowide::cout << "param:" << reference2view(module, root) << end(module, root);
 	}
-	break; case lox::Type::FunctionMarker: {
-		auto& marker = *module.get_attribute<FunctionMarker>(root);
-		nowide::cout << "marker:" << module.get_attribute<doir::Lexeme>(marker.function)->view(module.buffer) << " -> " << marker.function << end(module, root);
+	break; case lox::Type::BodyMarker: {
+		auto& marker = *module.get_attribute<BodyMarker>(root);
+		nowide::cout << "marker:" << module.get_attribute<doir::Lexeme>(marker.skipTo)->view(module.buffer) << " -> " << marker.skipTo << end(module, root);
 	}
 	break; case lox::Type::Call: {
 		auto& call = *module.get_attribute<Call>(root);
@@ -99,18 +99,11 @@ void print(doir::Module& module, doir::Token root, bool show_tokens /*=false*/, 
 		print(module, module.get_attribute<Operation>(root)->left, show_tokens, indent_size, indent + 1);
 	}
 	break; case lox::Type::If: {
-		std::vector<doir::Token> sub; sub.reserve(3);
-		nowide::cout << "if" << end(module, root);
-		bool hasElse = module.has_attribute<OperationIf>(root);
-		if(hasElse) {
-			auto& arr = *module.get_attribute<OperationIf>(root);
-			sub = {arr.begin(), arr.end()};
-		} else {
-			auto& op = *module.get_attribute<Operation>(root);
-			sub.push_back(op.left); sub.push_back(op.right);
-		}
-		for(auto& elem: sub)
+		std::cout << "if" << end(module, root);
+		for(auto& elem: *module.get_attribute<OperationIf>(root)) {
+			if(elem == 0) continue; // Skip else
 			print(module, elem, show_tokens, indent_size, indent + 1);
+		}
 	}
 	break; default: nowide::cout << "<unknown node>" << end(module, root);
 	}
