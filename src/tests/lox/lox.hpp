@@ -74,6 +74,7 @@ namespace lox {
 	}
 
 	inline Type token_type(doir::Module& module, doir::Token t) {
+		ZoneScoped;
 		if(module.has_attribute<lox::comp::Null>(t)) return Type::Null;
 		else if(module.has_attribute<lox::comp::String>(t)) return Type::String;
 		else if(module.has_attribute<bool>(t)) return Type::Boolean;

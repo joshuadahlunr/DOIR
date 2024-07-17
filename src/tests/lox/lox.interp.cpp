@@ -2,9 +2,10 @@
 #include <sstream>
 #include <stdexcept>
 #include <string>
-#include "../tests.utils.hpp"
+#include <print>
 
 lox::Type value_type(doir::Module& module, doir::Token t) {
+	ZoneScoped;
 	if(module.has_attribute<lox::comp::Null>(t))
 		return lox::Type::Null;
 	else if(module.has_attribute<double>(t))
@@ -17,10 +18,12 @@ lox::Type value_type(doir::Module& module, doir::Token t) {
 }
 
 inline std::string get_token_string(doir::Module& module, doir::Token str) {
-	return module.has_attribute<std::string>(str) ? *module.get_attribute<std::string>(str) : std::string(module.get_attribute<doir::Lexeme>(str)->view(module.buffer));
+	ZoneScoped;
+	return module.has_attribute<std::string>(str) ? std::move(*module.get_attribute<std::string>(str)) : std::string(module.get_attribute<doir::Lexeme>(str)->view(module.buffer));
 }
 
 void copy_runtime_value(doir::Module& module, doir::Token dest, doir::Token source) {
+	ZoneScoped;
 	switch (value_type(module, source)) {
 	break; case lox::Type::Number: module.add_attribute<double>(dest) = *module.get_attribute<double>(source);
 	break; case lox::Type::Boolean: module.add_attribute<bool>(dest) = *module.get_attribute<bool>(source);
@@ -32,14 +35,17 @@ void copy_runtime_value(doir::Module& module, doir::Token dest, doir::Token sour
 }
 
 bool is_truthy(doir::Module& module, doir::Token t) {
+	ZoneScoped;
 	switch (value_type(module, t)) {
 	break; case lox::Type::Null: return false;
 	break; case lox::Type::Boolean: return *module.get_attribute<bool>(t);
 	break; default: return true;
 	}
+	return false; // TODO: Why is this nessicary?
 }
 
 bool is_equal(doir::Module& module, doir::Token a, doir::Token b) {
+	ZoneScoped;
 	auto aV = value_type(module, a);
 	auto bV = value_type(module, b);
 	if(aV == lox::Type::Null && bV == lox::Type::Null) return true;
@@ -58,6 +64,7 @@ bool is_equal(doir::Module& module, doir::Token a, doir::Token b) {
 
 
 bool interpret_add(doir::Module& module, doir::Token add) {
+	ZoneScoped;
 	auto& op = *module.get_attribute<lox::comp::Operation>(add);
 	if(module.has_attribute<double>(op.left) && module.has_attribute<double>(op.right)) {
 		module.add_attribute<double>(add) = *module.get_attribute<double>(op.left) + *module.get_attribute<double>(op.right);
@@ -74,6 +81,7 @@ bool interpret_add(doir::Module& module, doir::Token add) {
 }
 
 bool interpret_subtract(doir::Module& module, doir::Token sub) {
+	ZoneScoped;
 	auto& op = *module.get_attribute<lox::comp::Operation>(sub);
 	if(module.has_attribute<double>(op.left) && module.has_attribute<double>(op.right)) {
 		module.add_attribute<double>(sub) = *module.get_attribute<double>(op.left) - *module.get_attribute<double>(op.right);
@@ -86,6 +94,7 @@ bool interpret_subtract(doir::Module& module, doir::Token sub) {
 }
 
 bool interpret_multiply(doir::Module& module, doir::Token mult) {
+	ZoneScoped;
 	auto& op = *module.get_attribute<lox::comp::Operation>(mult);
 	if(module.has_attribute<double>(op.left) && module.has_attribute<double>(op.right)) {
 		module.add_attribute<double>(mult) = *module.get_attribute<double>(op.left) * *module.get_attribute<double>(op.right);
@@ -98,6 +107,7 @@ bool interpret_multiply(doir::Module& module, doir::Token mult) {
 }
 
 bool interpret_divide(doir::Module& module, doir::Token div) {
+	ZoneScoped;
 	auto& op = *module.get_attribute<lox::comp::Operation>(div);
 	if(module.has_attribute<double>(op.left) && module.has_attribute<double>(op.right)) {
 		module.add_attribute<double>(div) = *module.get_attribute<double>(op.left) / *module.get_attribute<double>(op.right);
@@ -110,6 +120,7 @@ bool interpret_divide(doir::Module& module, doir::Token div) {
 }
 
 bool interpret_less(doir::Module& module, doir::Token less) {
+	ZoneScoped;
 	auto& op = *module.get_attribute<lox::comp::Operation>(less);
 	if(module.has_attribute<double>(op.left) && module.has_attribute<double>(op.right)) {
 		module.add_attribute<bool>(less) = *module.get_attribute<double>(op.left) < *module.get_attribute<double>(op.right);
@@ -122,6 +133,7 @@ bool interpret_less(doir::Module& module, doir::Token less) {
 }
 
 bool interpret_less_equal(doir::Module& module, doir::Token less) {
+	ZoneScoped;
 	auto& op = *module.get_attribute<lox::comp::Operation>(less);
 	if(module.has_attribute<double>(op.left) && module.has_attribute<double>(op.right)) {
 		module.add_attribute<bool>(less) = *module.get_attribute<double>(op.left) <= *module.get_attribute<double>(op.right);
@@ -134,6 +146,7 @@ bool interpret_less_equal(doir::Module& module, doir::Token less) {
 }
 
 bool interpret_greater(doir::Module& module, doir::Token greater) {
+	ZoneScoped;
 	auto& op = *module.get_attribute<lox::comp::Operation>(greater);
 	if(module.has_attribute<double>(op.left) && module.has_attribute<double>(op.right)) {
 		module.add_attribute<bool>(greater) = *module.get_attribute<double>(op.left) > *module.get_attribute<double>(op.right);
@@ -146,6 +159,7 @@ bool interpret_greater(doir::Module& module, doir::Token greater) {
 }
 
 bool interpret_greater_equal(doir::Module& module, doir::Token greater) {
+	ZoneScoped;
 	auto& op = *module.get_attribute<lox::comp::Operation>(greater);
 	if(module.has_attribute<double>(op.left) && module.has_attribute<double>(op.right)) {
 		module.add_attribute<bool>(greater) = *module.get_attribute<double>(op.left) >= *module.get_attribute<double>(op.right);
@@ -158,6 +172,7 @@ bool interpret_greater_equal(doir::Module& module, doir::Token greater) {
 }
 
 bool interpret_negate(doir::Module& module, doir::Token neg) {
+	ZoneScoped;
 	auto& op = *module.get_attribute<lox::comp::Operation>(neg);
 	if(module.has_attribute<double>(op.left)) {
 		module.add_attribute<double>(neg) = -*module.get_attribute<double>(op.left);
@@ -168,42 +183,65 @@ bool interpret_negate(doir::Module& module, doir::Token neg) {
 }
 
 bool interpret_not(doir::Module& module, doir::Token Not) {
+	ZoneScoped;
 	auto& op = *module.get_attribute<lox::comp::Operation>(Not);
 	module.add_attribute<bool>(Not) = !is_truthy(module, op.left);
 	return true;
 }
 
 bool interpret_equal(doir::Module& module, doir::Token eq) {
+	ZoneScoped;
 	auto& op = *module.get_attribute<lox::comp::Operation>(eq);
 	module.add_attribute<bool>(eq) = is_equal(module, op.left, op.right);
 	return true;
 }
 
 bool interpret_not_equal(doir::Module& module, doir::Token eq) {
+	ZoneScoped;
 	auto& op = *module.get_attribute<lox::comp::Operation>(eq);
 	module.add_attribute<bool>(eq) = !is_equal(module, op.left, op.right);
 	return true;
 }
 
 bool interpret_print(doir::Module& module, doir::Token print) {
+	ZoneScoped;
 	auto& op = *module.get_attribute<lox::comp::Operation>(print);
 	if(module.has_attribute<lox::comp::Null>(op.left)) {
+#ifdef LOX_PERFORMANT_PRINTING
+		std::println("nil");
+#else
 		nowide::cout << "nil" << std::endl;
+#endif
 		return true;
 	} else if(module.has_attribute<double>(op.left)) {
+#ifdef LOX_PERFORMANT_PRINTING
+		std::println("{}", *module.get_attribute<double>(op.left));
+#else
 		nowide::cout << *module.get_attribute<double>(op.left) << std::endl;
+#endif
 		return true;
 	} else if(module.has_attribute<bool>(op.left)) {
+#ifdef LOX_PERFORMANT_PRINTING
+		std::println("{}", *module.get_attribute<bool>(op.left));
+#else
 		nowide::cout << (*module.get_attribute<bool>(op.left) ? "true" : "false") << std::endl;
+#endif
+		
 		return true;
 	} else if(module.has_attribute<lox::comp::String>(op.left)) {
+#ifdef LOX_PERFORMANT_PRINTING
+		std::println("{}", get_token_string(module, op.left));
+#else
 		nowide::cout << get_token_string(module, op.left) << std::endl;
+#endif
+		
 		return true;
 	}
 	return false;
 }
 
 void clear_runtime_value(doir::Module& module, doir::Token t) {
+	ZoneScoped;
 	if(module.has_attribute<lox::comp::Null>(t))
 		module.remove_attribute<lox::comp::Null>(t);
 	if(module.has_attribute<lox::comp::String>(t))
@@ -218,6 +256,7 @@ void clear_runtime_value(doir::Module& module, doir::Token t) {
 
 // Remove any (non literal) values associated with the given range of tokens from the ECS
 void clear_runtime_values(doir::Module& module, doir::Token start = 1, std::optional<doir::Token> _end = {}, bool make_monotonic = true) {
+	ZoneScoped;
 	doir::Token end = _end.value_or(start + module.get_attribute<doir::Children>(start)->total);
 	for(doir::Token t = start; t < end; ++t) {
 		if(module.has_attribute<lox::comp::Literal>(t)) continue;
@@ -226,16 +265,18 @@ void clear_runtime_values(doir::Module& module, doir::Token start = 1, std::opti
 		clear_runtime_value(module, t);
 	}
 
-	if(make_monotonic) module.make_monotonic<
-		lox::comp::Null,
-		lox::comp::String,
-		std::string,
-		double,
-		bool
-	>();
+	// Seams to take more time than it saves!
+	// if(make_monotonic) module.make_monotonic<
+	// 	lox::comp::Null,
+	// 	lox::comp::String,
+	// 	std::string,
+	// 	double,
+	// 	bool
+	// >();
 }
 
 bool interpret(doir::Module& module, doir::Token root = 1, doir::Token returnTo = 0, std::optional<doir::Token> _skipCheck = {}) {
+	ZoneScoped;
 	doir::Token skipCheck = _skipCheck.value_or(root); // Token we should check any blocks against to determine weather or not to skip them
 	bool valid = true;
 
@@ -376,6 +417,7 @@ bool interpret(doir::Module& module, doir::Token root = 1, doir::Token returnTo 
 }
 
 TEST_CASE("Lox::Interp::And") {
+	ZoneScopedN("Lox::Interp::And");
 	CAPTURE_CONSOLE_BEGIN
 		doir::ParseModule module("fun skipped() { print \"Nope!\"; return false; } print true and skipped(); print true or skipped();");
 		auto root = lox::parse{}.start(module);
@@ -388,13 +430,17 @@ TEST_CASE("Lox::Interp::And") {
 
 		REQUIRE(interpret(module));
 	CAPTURE_CONSOLE_END
+#ifndef LOX_PERFORMANT_PRINTING
 	CHECK(capture.str() == R"(Nope!
 false
 true
 )");
+#endif
+	FrameMark;
 }
 
 TEST_CASE("Lox::Interp::TailRecursion") {
+	ZoneScopedN("Lox::Interp::TailRecursion");
 	CAPTURE_CONSOLE_BEGIN
 		doir::ParseModule module("fun fib(x) { if(x < 2) return 1; return fib(x - 2); } fib(5);");
 		auto root = lox::parse{}.start(module);
@@ -412,9 +458,11 @@ TEST_CASE("Lox::Interp::TailRecursion") {
                                               ^
                        Tail recursion detected.
 )");
+	FrameMark;
 }
 
 TEST_CASE("Lox::Interp::Expressions") {
+	ZoneScopedN("Lox::Interp::Expressions");
 	CAPTURE_CONSOLE_BEGIN
 		doir::ParseModule module("fun check(x) { print nil == x; } for(var i = 0; i < 5; i = i + 1) print (i + 1) * -6; print \"Hello \" + \"world\" + \"!\"; check(5); check(nil);");
 		auto root = lox::parse{}.start(module);
@@ -427,6 +475,7 @@ TEST_CASE("Lox::Interp::Expressions") {
 	
 		REQUIRE(interpret(module));
 	CAPTURE_CONSOLE_END
+#ifndef LOX_PERFORMANT_PRINTING
 	CHECK(capture.str() == R"(-6
 -12
 -18
@@ -436,9 +485,12 @@ Hello world!
 false
 true
 )");
+#endif
+	FrameMark;
 }
 
 TEST_CASE("Lox::Interp") {
+	ZoneScopedN("Lox::Interp");
 	doir::ParseModule module("fun add(a, b) { var tmp = a; a = b; b = tmp; return a + b; } var x = 0; var y = 1; if(true) print add(x, y);" /*for(;;) print x;"*/);
 	auto root = lox::parse{}.start(module);
 	REQUIRE(root != 0);
@@ -450,4 +502,5 @@ TEST_CASE("Lox::Interp") {
 
 	print(module, root, true);
 	REQUIRE(interpret(module));
+	FrameMark;
 }

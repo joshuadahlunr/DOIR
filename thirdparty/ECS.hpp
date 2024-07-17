@@ -725,9 +725,13 @@ namespace ecs {
 		struct NotifySwapOp {
 			inline bool operator()(scene& self, entity a, entity b) const {
 				// if constexpr(!detail::has_swap_entities<Tcomponent>) return true;
-				for(size_t i = 0, size = self.size(); i < size; ++i) {
-					if(!self.has_component<Tcomponent>(i)) continue;
-					Tcomponent::swap_entities(*self.get_component<Tcomponent>(i), a, b);
+				auto& storage = *self.get_storage<Tcomponent>();
+				Tcomponent* data = (Tcomponent*)storage.data.data();
+				for(size_t i = storage.size(); i--; ) {
+					// This commented code runs half as fast as the current code!
+					// if(!self.has_component<Tcomponent>(i)) continue;
+					// Tcomponent::swap_entities(*self.get_component<Tcomponent>(i), a, b);
+					Tcomponent::swap_entities(data[i], a, b);
 				}
 				return true;
 			}
@@ -748,7 +752,11 @@ namespace ecs {
 				(NotifySwapOp<detail::nth_type<I, Tcomponents2notify...>>{}(*this, a, b) && ...);
 			}(std::make_index_sequence<sizeof...(Tcomponents2notify)>{});
 
-			std::swap(entity_component_indices[a], entity_component_indices[b]);
+			// Seams to be slightly faster than using std::swap (but within the margin of error!)
+			auto tmp = std::move(entity_component_indices[a]);
+			entity_component_indices[a] = std::move(entity_component_indices[b]);
+			entity_component_indices[b] = std::move(tmp);
+			// std::swap(entity_component_indices[a], entity_component_indices[b]);
 		}
 
 		/**
@@ -765,10 +773,8 @@ namespace ecs {
 
 			std::vector<size_t> swaps(order.size(), 0);
 			// Transpose the order (it now stores what needs to be swapped with what)
-			{
-				for(size_t i = 0; i < order.size(); i++)
-					swaps[order[i]] = i;
-			}
+			for(size_t i = 0; i < order.size(); i++)
+				swaps[order[i]] = i;
 
 			// Update the data storage and book keeping
 			for(size_t i = 0; i < swaps.size(); ++i)

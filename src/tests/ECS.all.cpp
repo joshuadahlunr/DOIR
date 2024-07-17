@@ -2,8 +2,7 @@
 #include "../../thirdparty/ECSquery.hpp"
 #include "../../thirdparty/ECSadapter.hpp"
 
-#include <doctest/doctest.h>
-#include <tracy/Tracy.hpp>
+#include "tests.utils.hpp"
 
 TEST_SUITE("ECS") {
 	TEST_CASE("ECS::Basic") {

@@ -1,5 +1,8 @@
 #pragma once
 
+#include <doctest/doctest.h>
+#include <tracy/Tracy.hpp>
+
 #define CAPTURE_CONSOLE_BEGIN std::stringstream capture; \
 /* capture(nowide::cout) */{\
 	std::streambuf* std__cout_buf = nowide::cout.rdbuf();\

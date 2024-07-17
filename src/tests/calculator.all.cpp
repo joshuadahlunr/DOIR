@@ -6,8 +6,7 @@
 #include "../unicode_identifier_head.hpp"
 #include "../diagnostics.hpp"
 
-#include <doctest/doctest.h>
-#include <tracy/Tracy.hpp>
+#include "tests.utils.hpp"
 
 namespace calculator {
 

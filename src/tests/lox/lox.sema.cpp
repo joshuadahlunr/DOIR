@@ -5,7 +5,6 @@
 #include <sstream>
 #include <unordered_set>
 #include <vector>
-#include "../tests.utils.hpp"
 
 void sort_parse_into_post_order_traversal_impl(doir::Module& module, doir::Token root, std::vector<doir::Token>& order, std::unordered_set<doir::Token>& missing) {
 	using namespace lox::components;
@@ -78,6 +77,7 @@ void sort_parse_into_post_order_traversal_impl(doir::Module& module, doir::Token
 }
 
 void sort_parse_into_reverse_post_order_traversal(doir::Module& module, doir::Token root) {
+	ZoneScoped;
 	size_t size = module.token_count();
 	std::vector<doir::Token> order; order.reserve(size);
 	std::unordered_set<doir::Token> missing = [size] {
@@ -88,23 +88,31 @@ void sort_parse_into_reverse_post_order_traversal(doir::Module& module, doir::To
 
 	// TODO: Do we want to sort functions based on some dependence graph?
 
-	sort_parse_into_post_order_traversal_impl(module, root, order, missing);
+	{
+		ZoneScopedN("sort_parse_into_reverse_post_order_traversal::impl");
+		sort_parse_into_post_order_traversal_impl(module, root, order, missing);
+	}
 
-	order.push_back(0); // The error token should always be token 0 (so put it last right before we reverse)
-	std::reverse(order.begin(), order.end());
+	{
+		ZoneScopedN("sort_parse_into_reverse_post_order_traversal::order_fixup");
+		order.push_back(0); // The error token should always be token 0 (so put it last right before we reverse)
+		std::reverse(order.begin(), order.end());
 
-	// Add any superfluous tokens to the end of the list
-	order.insert(order.cend(), missing.begin(), missing.end());
-
-	((ecs::scene*)&module)->reorder_entities<
-		doir::hashtable_t<lox::comp::VariableDeclaire>,
-		doir::hashtable_t<lox::comp::FunctionDeclaire>,
-		lox::comp::BodyMarker,
-		lox::comp::Operation,
-		lox::comp::OperationIf,
-		lox::comp::Block,
-		lox::comp::Parameters
-	>(order);
+		// Add any superfluous tokens to the end of the list
+		order.insert(order.cend(), missing.begin(), missing.end());
+	}
+	{
+		ZoneScopedN("sort_parse_into_reverse_post_order_traversal::reorder");
+		((ecs::scene*)&module)->reorder_entities<
+			doir::hashtable_t<lox::comp::VariableDeclaire>,
+			doir::hashtable_t<lox::comp::FunctionDeclaire>,
+			lox::comp::BodyMarker,
+			lox::comp::Operation,
+			lox::comp::OperationIf,
+			lox::comp::Block,
+			lox::comp::Parameters
+		>(order);
+	}
 	// TODO: There is a bug in make_monotonic!
 	// module.make_monotonic<
 	// 	lox::comp::BodyMarker,
@@ -116,6 +124,7 @@ void sort_parse_into_reverse_post_order_traversal(doir::Module& module, doir::To
 };
 
 size_t calculate_child_count(doir::Module& module, doir::Token root = 1, bool anotate = true) {
+	ZoneScoped;
 	using namespace lox::components;
 	size_t immediate = 0, inChildren = 0;
 
@@ -202,6 +211,7 @@ size_t calculate_child_count(doir::Module& module, doir::Token root = 1, bool an
 }
 
 doir::Token current_block(doir::Module& module, doir::Token root) {
+	ZoneScoped;
 	doir::Token target = root;
 	do {
 		--root;
@@ -210,6 +220,7 @@ doir::Token current_block(doir::Module& module, doir::Token root) {
 	return root;
 }
 doir::Token current_function(doir::Module& module, doir::Token root) {
+	ZoneScoped;
 	doir::Token target = root;
 	do {
 		--root;
@@ -220,6 +231,7 @@ doir::Token current_function(doir::Module& module, doir::Token root) {
 
 template<typename Tkey>
 std::optional<doir::Token> blockwise_find(doir::Module& module, Tkey key, bool has) {
+	ZoneScoped;
 	auto& hashtable = module.get_hashtable<Tkey>(true).value();
 	while(key.parent > 0) {
 		auto dbg = key.name.view(module.buffer);
@@ -236,6 +248,7 @@ std::optional<doir::Token> blockwise_find(doir::Module& module, Tkey key, bool h
 }
 
 void lookup_references(doir::Module& module, bool clear_references = true) {
+	ZoneScoped;
 	// We don't ever use these hashtable references... they are just here to make sure the tables are built for blockwise_find
 	auto& functions = *module.get_hashtable<lox::comp::FunctionDeclaire>();
 	bool hasFunctions = functions.size();
@@ -271,6 +284,7 @@ void lookup_references(doir::Module& module, bool clear_references = true) {
 }
 
 bool verify_references(doir::Module& module) {
+	ZoneScoped;
 	bool valid = true;
 	for(doir::Token t = module.get_attribute<doir::Children>(1)->total + 2; t--;) {
 		if(!module.has_attribute<doir::TokenReference>(t) && !module.has_attribute<lox::comp::Function>(t)) continue;
@@ -295,6 +309,7 @@ bool verify_references(doir::Module& module) {
 }
 
 bool verify_redeclarations(doir::Module& module) {
+	ZoneScoped;
 	auto& functions = *module.get_hashtable<lox::comp::FunctionDeclaire>();
 	bool hasFunctions = functions.size();
 	auto& variables = *module.get_hashtable<lox::comp::VariableDeclaire>();
@@ -329,6 +344,7 @@ bool verify_redeclarations(doir::Module& module) {
 }
 
 bool verify_call_arrities(doir::Module& module) {
+	ZoneScoped;
 	bool valid = true;
 	for(doir::Token t = module.get_attribute<doir::Children>(1)->total + 2; t--;) {
 		if(!module.has_attribute<lox::comp::Function>(t)) continue;
@@ -350,6 +366,7 @@ bool verify_call_arrities(doir::Module& module) {
 }
 
 bool identify_trailing_calls(doir::Module& module) {
+	ZoneScoped;
 	for(doir::Token t = module.get_attribute<doir::Children>(1)->total + 2; t--;) {
 		if(!module.has_attribute<lox::comp::Call>(t)) continue;
 
@@ -378,12 +395,14 @@ bool identify_trailing_calls(doir::Module& module) {
 
 // Ensures the parse tree is sorted and properly anotated
 void canonicalize(doir::Module& module, doir::Token root, bool clear_references /*= true*/) {
+	ZoneScoped;
 	sort_parse_into_reverse_post_order_traversal(module, root);
 	calculate_child_count(module);
 	lookup_references(module, clear_references);
 }
 
 TEST_CASE("Lox::Sema::Redeclaration") {
+	ZoneScopedN("Lox::Sema::Redeclaration");
 	std::string error;
 	CAPTURE_CONSOLE_BEGIN
 		CAPTURE_ERROR_CONSOLE_BEGIN
@@ -408,6 +427,7 @@ Variable x redeclaired!
        ^
 Identified here...
 )");
+	FrameMark;
 }
 
 TEST_CASE("Lox::Sema" * doctest::skip()) {

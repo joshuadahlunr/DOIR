@@ -1,77 +1,95 @@
 #include "lox.parse.hpp"
-#include "../tests.utils.hpp"
 
 TEST_CASE("Lox::Nil") {
+	ZoneScopedN("Lox::Nil");
 	doir::ParseModule module("nil;");
 	lox::parse p;
 	auto root = module.get_attribute<lox::components::Block>(p.start(module))->children[0];
 	CHECK(module.get_attribute<lox::components::Null>(root).has_value());
+	FrameMark;
 }
 
 TEST_CASE("Lox::True") {
+	ZoneScopedN("Lox::True");
 	doir::ParseModule module("true;");
 	lox::parse p;
 	auto root = module.get_attribute<lox::components::Block>(p.start(module))->children[0];
 	CHECK(*module.get_attribute<bool>(root) == true);
+	FrameMark;
 }
 
 TEST_CASE("Lox::False") {
+	ZoneScopedN("Lox::False");
 	doir::ParseModule module("false;");
 	lox::parse p;
 	auto root = module.get_attribute<lox::components::Block>(p.start(module))->children[0];
 	CHECK(*module.get_attribute<bool>(root) == false);
+	FrameMark;
 }
 
 TEST_CASE("Lox::String") {
+	ZoneScopedN("Lox::String");
 	doir::ParseModule module("\"Hello World\";");
 	lox::parse p;
 	auto root = module.get_attribute<lox::components::Block>(p.start(module))->children[0];
 	CHECK(module.has_attribute<lox::components::String>(root));
 	CHECK(module.get_attribute<doir::Lexeme>(root)->view(module.buffer) == "Hello World");
+	FrameMark;
 }
 
 TEST_CASE("Lox::Number") {
+	ZoneScopedN("Lox::Number");
 	doir::ParseModule module("5.0;");
 	lox::parse p;
 	auto root = module.get_attribute<lox::components::Block>(p.start(module))->children[0];
 	CHECK(*module.get_attribute<double>(root) == 5.0);
+	FrameMark;
 }
 
 TEST_CASE("Lox::This") {
+	ZoneScopedN("Lox::This");
 	doir::ParseModule module("this;");
 	lox::parse p;
 	auto root = module.get_attribute<lox::components::Block>(p.start(module))->children[0];
 	CHECK(module.has_attribute<lox::components::Variable>(root));
 	CHECK(module.get_attribute<doir::TokenReference>(root)->lexeme().view(module.buffer) == "this");
+	FrameMark;
 }
 
 TEST_CASE("Lox::Variable") {
+	ZoneScopedN("Lox::Variable");
 	doir::ParseModule module("x;");
 	lox::parse p;
 	auto root = module.get_attribute<lox::components::Block>(p.start(module))->children[0];
 	CHECK(module.has_attribute<lox::components::Variable>(root));
 	CHECK(module.get_attribute<doir::TokenReference>(root)->lexeme().view(module.buffer) == "x");
+	FrameMark;
 }
 
 TEST_CASE("Lox::Not") {
+	ZoneScopedN("Lox::Not");
 	doir::ParseModule module("!true;");
 	lox::parse p;
 	auto root = module.get_attribute<lox::components::Block>(p.start(module))->children[0];
 	CHECK(module.has_attribute<lox::components::Not>(root));
 	auto target = module.get_attribute<lox::components::Operation>(root)->left;
 	CHECK(*module.get_attribute<bool>(target) == true);
+	FrameMark;
 }
 
 TEST_CASE("Lox::Negate") {
+	ZoneScopedN("Lox::Negate");
 	doir::ParseModule module("-5;");
 	lox::parse p;
 	auto root = module.get_attribute<lox::components::Block>(p.start(module))->children[0];
 	CHECK(module.has_attribute<lox::components::Negate>(root));
 	auto target = module.get_attribute<lox::components::Operation>(root)->left;
 	CHECK(*module.get_attribute<double>(target) == 5);
+	FrameMark;
 }
 
 TEST_CASE("Lox::Multiply") {
+	ZoneScopedN("Lox::Multiply");
 	doir::ParseModule module("5 * 6 * 7;");
 	lox::parse p;
 	auto root = module.get_attribute<lox::components::Block>(p.start(module))->children[0];
@@ -82,9 +100,11 @@ TEST_CASE("Lox::Multiply") {
 	operands = *module.get_attribute<lox::components::Operation>(operands.left);
 	CHECK(*module.get_attribute<double>(operands.right) == 6);
 	CHECK(*module.get_attribute<double>(operands.left) == 5);
+	FrameMark;
 }
 
 TEST_CASE("Lox::Divide") {
+	ZoneScopedN("Lox::Divide");
 	doir::ParseModule module("5 / 6 / 7;");
 	lox::parse p;
 	auto root = module.get_attribute<lox::components::Block>(p.start(module))->children[0];
@@ -95,9 +115,11 @@ TEST_CASE("Lox::Divide") {
 	operands = *module.get_attribute<lox::components::Operation>(operands.left);
 	CHECK(*module.get_attribute<double>(operands.right) == 6);
 	CHECK(*module.get_attribute<double>(operands.left) == 5);
+	FrameMark;
 }
 
 TEST_CASE("Lox::MulDiv") {
+	ZoneScopedN("Lox::MulDiv");
 	doir::ParseModule module("5 * 6 / 7;");
 	lox::parse p;
 	auto root = module.get_attribute<lox::components::Block>(p.start(module))->children[0];
@@ -108,9 +130,11 @@ TEST_CASE("Lox::MulDiv") {
 	operands = *module.get_attribute<lox::components::Operation>(operands.left);
 	CHECK(*module.get_attribute<double>(operands.right) == 6);
 	CHECK(*module.get_attribute<double>(operands.left) == 5);
+	FrameMark;
 }
 
 TEST_CASE("Lox::Add") {
+	ZoneScopedN("Lox::Add");
 	doir::ParseModule module("5 + 6 + 7;");
 	lox::parse p;
 	auto root = module.get_attribute<lox::components::Block>(p.start(module))->children[0];
@@ -121,9 +145,11 @@ TEST_CASE("Lox::Add") {
 	operands = *module.get_attribute<lox::components::Operation>(operands.left);
 	CHECK(*module.get_attribute<double>(operands.right) == 6);
 	CHECK(*module.get_attribute<double>(operands.left) == 5);
+	FrameMark;
 }
 
 TEST_CASE("Lox::Sub") {
+	ZoneScopedN("Lox::Sub");
 	doir::ParseModule module("5 - 6 - 7;");
 	lox::parse p;
 	auto root = module.get_attribute<lox::components::Block>(p.start(module))->children[0];
@@ -134,9 +160,11 @@ TEST_CASE("Lox::Sub") {
 	operands = *module.get_attribute<lox::components::Operation>(operands.left);
 	CHECK(*module.get_attribute<double>(operands.right) == 6);
 	CHECK(*module.get_attribute<double>(operands.left) == 5);
+	FrameMark;
 }
 
 TEST_CASE("Lox::AddSub") {
+	ZoneScopedN("Lox::AddSub");
 	doir::ParseModule module("5 + 6 - 7;");
 	lox::parse p;
 	auto root = module.get_attribute<lox::components::Block>(p.start(module))->children[0];
@@ -147,9 +175,11 @@ TEST_CASE("Lox::AddSub") {
 	operands = *module.get_attribute<lox::components::Operation>(operands.left);
 	CHECK(*module.get_attribute<double>(operands.right) == 6);
 	CHECK(*module.get_attribute<double>(operands.left) == 5);
+	FrameMark;
 }
 
 TEST_CASE("Lox::pemdas1") {
+	ZoneScopedN("Lox::pemdas1");
 	doir::ParseModule module("7 + 6 * 5 - 3;");
 	lox::parse p;
 	auto root = module.get_attribute<lox::components::Block>(p.start(module))->children[0];
@@ -163,9 +193,11 @@ TEST_CASE("Lox::pemdas1") {
 	operands = *module.get_attribute<lox::components::Operation>(operands.right);
 	CHECK(*module.get_attribute<double>(operands.left) == 6);
 	CHECK(*module.get_attribute<double>(operands.right) == 5);
+	FrameMark;
 }
 
 TEST_CASE("Lox::pemdas2") {
+	ZoneScopedN("Lox::pemdas2");
 	doir::ParseModule module("(7 + 6) * (5 - 3);");
 	lox::parse p;
 	auto root = module.get_attribute<lox::components::Block>(p.start(module))->children[0];
@@ -182,9 +214,11 @@ TEST_CASE("Lox::pemdas2") {
 		CHECK(*module.get_attribute<double>(t.left) == 5);
 		CHECK(*module.get_attribute<double>(t.right) == 3);
 	}
+	FrameMark;
 }
 
 TEST_CASE("Lox::Assign") {
+	ZoneScopedN("Lox::Assign");
 	doir::ParseModule module("x = 5;");
 	lox::parse p;
 	auto root = module.get_attribute<lox::components::Block>(p.start(module))->children[0];
@@ -192,9 +226,11 @@ TEST_CASE("Lox::Assign") {
 	CHECK(module.get_attribute<doir::TokenReference>(root)->lexeme() == doir::Lexeme{0, 1});
 	auto value = module.get_attribute<lox::components::Operation>(root)->left;
 	CHECK(*module.get_attribute<double>(value) == 5);
+	FrameMark;
 }
 
 TEST_CASE("Lox::ClassAssign") {
+	ZoneScopedN("Lox::ClassAssign");
 	CAPTURE_ERROR_CONSOLE_BEGIN
 		doir::ParseModule module("x.y = 5;");
 		lox::parse p;
@@ -206,9 +242,11 @@ TEST_CASE("Lox::ClassAssign") {
     ^
 Classes are not yet supported!
 )");
+	FrameMark;
 }
 
 TEST_CASE("Lox::Block") {
+	ZoneScopedN("Lox::Block");
 	doir::ParseModule module("{x = 5;\nx + 6;}");
 	lox::parse p;
 	auto rootT = module.get_attribute<lox::components::Block>(p.start(module))->children[0];
@@ -228,35 +266,43 @@ TEST_CASE("Lox::Block") {
 		CHECK(module.has_attribute<lox::components::Variable>(operands.left));
 		CHECK(module.get_attribute<doir::TokenReference>(operands.left)->lexeme().view(module.buffer) == "x");
 	}
+	FrameMark;
 }
 
 TEST_CASE("Lox::Print") {
+	ZoneScopedN("Lox::Print");
 	doir::ParseModule module("print 5;");
 	lox::parse p;
 	auto root = module.get_attribute<lox::components::Block>(p.start(module))->children[0];
 	CHECK(module.has_attribute<lox::components::Print>(root));
 	auto target = module.get_attribute<lox::components::Operation>(root)->left;
 	CHECK(*module.get_attribute<double>(target) == 5);
+	FrameMark;
 }
 
 TEST_CASE("Lox::Return") {
+	ZoneScopedN("Lox::Return");
 	doir::ParseModule module("return 5;");
 	lox::parse p;
 	auto root = module.get_attribute<lox::components::Block>(p.start(module))->children[0];
 	CHECK(module.has_attribute<lox::components::Return>(root));
 	auto target = module.get_attribute<lox::components::Operation>(root)->left;
 	CHECK(*module.get_attribute<double>(target) == 5);
+	FrameMark;
 }
 
 TEST_CASE("Lox::ReturnNothing") {
+	ZoneScopedN("Lox::ReturnNothing");
 	doir::ParseModule module("return;");
 	lox::parse p;
 	auto root = module.get_attribute<lox::components::Block>(p.start(module))->children[0];
 	CHECK(module.has_attribute<lox::components::Return>(root));
 	CHECK(module.has_attribute<lox::components::Operation>(root) == false);
+	FrameMark;
 }
 
 TEST_CASE("Lox::While") {
+	ZoneScopedN("Lox::While");
 	doir::ParseModule module("while(true) { print false; }");
 	lox::parse p;
 	auto root = module.get_attribute<lox::components::Block>(p.start(module))->children[0];
@@ -274,9 +320,11 @@ TEST_CASE("Lox::While") {
 		auto target = module.get_attribute<lox::components::Operation>(stmt)->left;
 		CHECK(*module.get_attribute<bool>(target) == false);
 	}
+	FrameMark;
 }
 
 TEST_CASE("Lox::If") {
+	ZoneScopedN("Lox::If");
 	doir::ParseModule module("if(x < y) print \"true\";");
 	lox::parse p;
 	auto root = module.get_attribute<lox::components::Block>(p.start(module))->children[0];
@@ -302,9 +350,11 @@ TEST_CASE("Lox::If") {
 		CHECK(module.get_attribute<lox::components::BodyMarker>(marker)->skipTo == root);
 		CHECK(_ == 0);
 	}
+	FrameMark;
 }
 
 TEST_CASE("Lox::IfElse") {
+	ZoneScopedN("Lox::IfElse");
 	doir::ParseModule module("if(x < y) print \"true\"; else print 5;");
 	lox::parse p;
 	auto root = module.get_attribute<lox::components::Block>(p.start(module))->children[0];
@@ -334,9 +384,11 @@ TEST_CASE("Lox::IfElse") {
 		CHECK(module.has_attribute<lox::components::BodyMarker>(marker));
 		CHECK(module.get_attribute<lox::components::BodyMarker>(marker)->skipTo == root);
 	}
+	FrameMark;
 }
 
 TEST_CASE("Lox::For") {
+	ZoneScopedN("Lox::For");
 	doir::ParseModule module("for(y = 0; x > y; x + 1) { print x; }");
 	lox::parse p;
 	auto root = module.get_attribute<lox::components::Block>(p.start(module))->children[0];
@@ -386,9 +438,11 @@ TEST_CASE("Lox::For") {
 			}
 		}
 	}
+	FrameMark;
 }
 
 TEST_CASE("Lox::ForEmpty") {
+	ZoneScopedN("Lox::ForEmpty");
 	doir::ParseModule module("for(;;) print x;");
 	lox::parse p;
 	auto& rootC = module.get_attribute<lox::components::Block>(p.start(module))->children;
@@ -415,9 +469,11 @@ TEST_CASE("Lox::ForEmpty") {
 			}
 		}
 	}
+	FrameMark;
 }
 
 TEST_CASE("Lox::Var") {
+	ZoneScopedN("Lox::Var");
 	doir::ParseModule module("var x;");
 	lox::parse p;
 	auto root = module.get_attribute<lox::components::Block>(p.start(module))->children[0];
@@ -426,9 +482,11 @@ TEST_CASE("Lox::Var") {
 
 	auto& hashtable = *module.get_hashtable<lox::components::VariableDeclaire>();
 	CHECK(*hashtable.find({{module.buffer.find("x"), 1}, 1}) == root);
+	FrameMark;
 }
 
 TEST_CASE("Lox::VarDefault") {
+	ZoneScopedN("Lox::VarDefault");
 	doir::ParseModule module("var x = 5;");
 	lox::parse p;
 	auto root = module.get_attribute<lox::components::Block>(p.start(module))->children[0];
@@ -438,9 +496,11 @@ TEST_CASE("Lox::VarDefault") {
 
 	auto& hashtable = *module.get_hashtable<lox::components::VariableDeclaire>();
 	CHECK(*hashtable.find({{module.buffer.find("x"), 1}, 1}) == root);
+	FrameMark;
 }
 
 TEST_CASE("Lox::Fun") {
+	ZoneScopedN("Lox::Fun");
 	doir::ParseModule module("fun f(x, y) { return x; }");
 	lox::parse p;
 	auto root = module.get_attribute<lox::components::Block>(p.start(module))->children[0];
@@ -467,9 +527,11 @@ TEST_CASE("Lox::Fun") {
 
 	auto& hashtable = *module.get_hashtable<lox::components::FunctionDeclaire>();
 	CHECK(*hashtable.find({{module.buffer.find("f"), 1}, 1}) == root);
+	FrameMark;
 }
 
 TEST_CASE("Lox::Call") {
+	ZoneScopedN("Lox::Call");
 	doir::ParseModule module("f(x);");
 	lox::parse p;
 	auto root = module.get_attribute<lox::components::Block>(p.start(module))->children[0];
@@ -483,9 +545,11 @@ TEST_CASE("Lox::Call") {
 		CHECK(module.has_attribute<lox::components::Variable>(call.children[0]));
 		CHECK(module.get_attribute<doir::TokenReference>(call.children[0])->lexeme().view(module.buffer) == "x");
 	}
+	FrameMark;
 }
 
 TEST_CASE("Lox::Parse") {
+	ZoneScopedN("Lox::Parse");
 	doir::ParseModule module("f(x);");
 	lox::parse p;
 	auto root = module.get_attribute<lox::components::Block>(p.start(module))->children[0];
@@ -499,4 +563,5 @@ TEST_CASE("Lox::Parse") {
 		CHECK(module.has_attribute<lox::components::Variable>(call.children[0]));
 		CHECK(module.get_attribute<doir::TokenReference>(call.children[0])->lexeme().view(module.buffer) == "x");
 	}
+	FrameMark;
 }

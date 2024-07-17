@@ -1,13 +1,13 @@
 #pragma once
 
+#include <tracy/Tracy.hpp>
 #define LEXER_CTRE_REGEX
 #include "../../core.hpp"
 #include "../../parse_state.hpp"
 #include "../../unicode_identifier_head.hpp"
 #include "../../diagnostics.hpp"
 
-#include <doctest/doctest.h>
-#include <tracy/Tracy.hpp>
+#include "../tests.utils.hpp"
 
 // https://spec.json5.org/#grammar
 
@@ -251,6 +251,7 @@ namespace lox {
 		doir::Token currentBlock = 0;
 
 		comp::Block& make_block(doir::ParseModule& module) {
+			ZoneScoped;
 			doir::Token parent = currentBlock;
 			currentBlock = module.make_token();
 			return module.add_attribute<comp::Block>(currentBlock) = {.parent = parent};
@@ -258,6 +259,7 @@ namespace lox {
 
 		// program ::= declaration* EOF;
 		doir::Token start(doir::ParseModule& module) {
+			ZoneScoped;
 			if(module.lexer_state.lexeme.empty()) module.lex(lexer);
 
 			// comp::Block& topBlock = make_block(module);
@@ -286,6 +288,7 @@ namespace lox {
 
 		// declaration ::= classDecl | funDecl | varDecl | statement;
 		doir::Token declaration(doir::ParseModule& module) {
+			ZoneScoped;
 			if(!module.lexer_state.valid()) return module.make_error();
 			switch(module.current_lexer_token<LexerTokens>()) {
 			case Class: return classDecl(module);
@@ -296,19 +299,21 @@ namespace lox {
 		}
 		// classDecl ::= "class" IDENTIFIER ( "<" IDENTIFIER )? "{" function* "}";
 		doir::Token classDecl(doir::ParseModule& module) {
-			// TODO: Classes
+			ZoneScoped;
 			PROPIGATE_OPTIONAL_ERROR(module.expect_and_lex(lexer, LexerTokens::Class));
 			return module.make_error<doir::Error>({"Classes not yet supported!"});
 		}
 
 		// funDecl ::= "fun" function;
 		doir::Token funDecl(doir::ParseModule& module) {
+			ZoneScoped;
 			PROPIGATE_OPTIONAL_ERROR(module.expect_and_lex(lexer, LexerTokens::Fun));
 			return function(module);
 		}
 
 		// function ::= IDENTIFIER "(" parameters? ")" block;
 		doir::Token function(doir::ParseModule& module) {
+			ZoneScoped;
 			auto t = module.make_token();
 			PROPIGATE_OPTIONAL_ERROR(module.expect_and_lex(lexer, LexerTokens::Identifier));
 			PROPIGATE_OPTIONAL_ERROR(module.expect_and_lex(lexer, LexerTokens::OpenParenthesis));
@@ -332,6 +337,7 @@ namespace lox {
 
 		// parameters ::= IDENTIFIER ( "," IDENTIFIER )*;
 		comp::Parameters parameters(doir::ParseModule& module, doir::Token function) {
+			ZoneScoped;
 			comp::Parameters params;
 			do {
 				doir::Token t = module.make_token();
@@ -349,6 +355,7 @@ namespace lox {
 
 		// arguments ::= expression ( "," expression )*;
 		comp::Parameters arguments(doir::ParseModule& module) {
+			ZoneScoped;
 			comp::Parameters args;
 			do {
 				auto e = expression(module); 
@@ -369,6 +376,7 @@ namespace lox {
 
 		// varDecl ::= "var" IDENTIFIER ( "=" expression )? ";";
 		doir::Token varDecl(doir::ParseModule& module) {
+			ZoneScoped;
 			PROPIGATE_OPTIONAL_ERROR(module.expect_and_lex(lexer, LexerTokens::Var));
 			PROPIGATE_OPTIONAL_ERROR(module.expect(LexerTokens::Identifier));
 
@@ -394,6 +402,7 @@ namespace lox {
 
 		// statement ::= exprStmt | forStmt | ifStmt | printStmt | returnStmt | whileStmt | block;
 		doir::Token statement(doir::ParseModule& module) {
+			ZoneScoped;
 			if(!module.lexer_state.valid()) return module.make_error();
 			switch(module.current_lexer_token<LexerTokens>()) {
 			case LexerTokens::For: return forStmt(module);
@@ -408,6 +417,7 @@ namespace lox {
 
 		// exprStmt ::= expression ";";
 		doir::Token exprStmt(doir::ParseModule& module) {
+			ZoneScoped;
 			auto ret = expression(module); PROPIGATE_ERROR(ret);
 			module.lex(lexer);
 			PROPIGATE_OPTIONAL_ERROR(module.expect(LexerTokens::Semicolon));
@@ -416,6 +426,7 @@ namespace lox {
 
 		// forStmt ::= "for" "(" ( varDecl | exprStmt | ";" ) expression? ";" expression? ")" statement;
 		doir::Token forStmt(doir::ParseModule& module) {
+			ZoneScoped;
 			auto t = module.make_token();
 			auto marker = module.make_token();
 			PROPIGATE_OPTIONAL_ERROR(module.expect_and_lex(lexer, LexerTokens::For));
@@ -498,6 +509,7 @@ namespace lox {
 
 		// ifStmt ::= "if" "(" expression ")" statement ( "else" statement )?;
 		doir::Token ifStmt(doir::ParseModule& module) {
+			ZoneScoped;
 			auto t = module.make_token();
 			auto marker = module.make_token();
 			PROPIGATE_OPTIONAL_ERROR(module.expect_and_lex(lexer, LexerTokens::If));
@@ -527,6 +539,7 @@ namespace lox {
 
 		// printStmt ::= "print" expression ";";
 		doir::Token printStmt(doir::ParseModule& module) {
+			ZoneScoped;
 			auto t = module.make_token();
 			PROPIGATE_OPTIONAL_ERROR(module.expect_and_lex(lexer, LexerTokens::Print));
 			auto expr = expression(module); PROPIGATE_ERROR(expr);
@@ -541,6 +554,7 @@ namespace lox {
 
 		// returnStmt ::= "return" expression? ";";
 		doir::Token returnStmt(doir::ParseModule& module) {
+			ZoneScoped;
 			auto t = module.make_token();
 			module.add_attribute<comp::Return>(t);
 			PROPIGATE_OPTIONAL_ERROR(module.expect_and_lex(lexer, LexerTokens::Return));
@@ -556,6 +570,7 @@ namespace lox {
 
 		// whileStmt ::= "while" "(" expression ")" statement;
 		doir::Token whileStmt(doir::ParseModule& module) {
+			ZoneScoped;
 			auto t = module.make_token();
 			auto marker = module.make_token();
 			PROPIGATE_OPTIONAL_ERROR(module.expect_and_lex(lexer, LexerTokens::While));
@@ -586,6 +601,7 @@ namespace lox {
 
 		// block ::= "{" declaration* "}";
 		doir::Token block(doir::ParseModule& module, doir::Token withFunctionMarker = false) {
+			ZoneScoped;
 			doir::Token oldBlock = currentBlock;
 			// defer currentBlock = oldBlock;
 			comp::Block& block = make_block(module);
@@ -614,12 +630,15 @@ namespace lox {
 
 		// expression ::= assignment;
 		inline doir::Token expression(doir::ParseModule& module) {
+			ZoneScoped;
 			return assignment(module);
 		}
 
 		// assignment ::= ( call "." )? IDENTIFIER "=" assignment | logic_or;
 		doir::Token assignment(doir::ParseModule& module) {
+			ZoneScoped;
 			auto impl = [this](doir::ParseModule& module) {
+				ZoneScopedN("assignment::impl");
 				auto saved = module.save_state();
 
 				doir::Token parent = call(module);
@@ -660,6 +679,7 @@ namespace lox {
 
 		// logic_or ::= logic_and ( "or" logic_and )*;
 		doir::Token logic_or(doir::ParseModule& module) {
+			ZoneScoped;
 			doir::Token a = logic_and(module); PROPIGATE_ERROR(a);
 
 			for(doir::ParseState peak = module.lookahead(lexer);
@@ -684,6 +704,7 @@ namespace lox {
 
 		// logic_and ::= equality ( "and" equality )*;
 		doir::Token logic_and(doir::ParseModule& module) {
+			ZoneScoped;
 			doir::Token a = equality(module); PROPIGATE_ERROR(a);
 
 			for(doir::ParseState peak = module.lookahead(lexer);
@@ -708,6 +729,7 @@ namespace lox {
 
 		// equality ::= comparison ( ( "!=" | "==" ) comparison )*;
 		doir::Token equality(doir::ParseModule& module) {
+			ZoneScoped;
 			doir::Token a = comparison(module); PROPIGATE_ERROR(a);
 
 			for(doir::ParseState peak = module.lookahead(lexer);
@@ -734,6 +756,7 @@ namespace lox {
 
 		// comparison ::= term ( ( ">" | ">=" | "<" | "<=" ) term )*;
 		doir::Token comparison(doir::ParseModule& module) {
+			ZoneScoped;
 			doir::Token a = term(module); PROPIGATE_ERROR(a);
 
 			for(doir::ParseState peak = module.lookahead(lexer);
@@ -766,6 +789,7 @@ namespace lox {
 
 		// term ::= factor ( ( "-" | "+" ) factor )*;
 		doir::Token term(doir::ParseModule& module) {
+			ZoneScoped;
 			doir::Token a = factor(module); PROPIGATE_ERROR(a);
 
 			for(doir::ParseState peak = module.lookahead(lexer);
@@ -792,6 +816,7 @@ namespace lox {
 
 		// factor ::= unary ( ( "/" | "*" ) unary )*;
 		doir::Token factor(doir::ParseModule& module) {
+			ZoneScoped;
 			doir::Token a = unary(module); PROPIGATE_ERROR(a);
 
 			for(doir::ParseState peak = module.lookahead(lexer);
@@ -818,6 +843,7 @@ namespace lox {
 
 		// unary ::= ( "!" | "-" ) unary | call;
 		doir::Token unary(doir::ParseModule& module) {
+			ZoneScoped;
 			if(!module.lexer_state.valid()) return module.make_error();
 
 			switch(module.current_lexer_token<LexerTokens>()) {
@@ -839,10 +865,12 @@ namespace lox {
 			}
 			break; default: return call(module);
 			}
+			return 0; // TODO: Why is this nessicary?
 		}
 
 		// call ::= primary ( "(" arguments? ")" | "." IDENTIFIER )*;
 		doir::Token call(doir::ParseModule& module) {
+			ZoneScoped;
 			if(!module.lexer_state.valid()) return module.make_error();
 
 			auto prim = primary(module);
@@ -879,6 +907,7 @@ namespace lox {
 		//			| NUMBER | STRING | IDENTIFIER | "(" expression ")"
 		//			| "super" "." IDENTIFIER;
 		doir::Token primary(doir::ParseModule& module) {
+			ZoneScoped;
 			if(!module.lexer_state.valid()) return module.make_error();
 
 			switch (module.current_lexer_token<LexerTokens>()) {

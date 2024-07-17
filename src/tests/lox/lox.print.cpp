@@ -2,6 +2,7 @@
 #include <string>
 
 void print(doir::Module& module, doir::Token root, bool show_tokens /*=false*/, size_t indent_size /*= 3*/, int64_t indent /*= 0*/) {
+	ZoneScoped;
 	static constexpr auto reference2view = [](const doir::Module& module, const doir::TokenReference& ref) {
 		if(ref.looked_up()) return module.get_attribute<doir::Lexeme>(ref.token())->view(module.buffer);
 		else return ref.lexeme().view(module.buffer);
