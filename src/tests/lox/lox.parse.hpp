@@ -349,7 +349,11 @@ namespace lox {
 		comp::Parameters arguments(doir::ParseModule& module) {
 			comp::Parameters args;
 			do {
-				auto e = expression(module); if(module.has_attribute<doir::Error>(e)) return {e};
+				auto e = expression(module); 
+				if(module.has_attribute<doir::Error>(e)) {
+					if(args.empty()) return args; // If the first expression fails, just assume there are no arguments!
+					return {e};
+				}
 				args.emplace_back(e);
 
 				if(module.has_attribute<doir::Error>(args.back())) return {args.back()};
@@ -658,13 +662,14 @@ namespace lox {
 			) {
 				module.restore_state(peak);
 
-				auto lexerToken = module.current_lexer_token<LexerTokens>();
 				auto t = module.make_token();
+				auto marker = module.make_token();
 
 				module.lex(lexer);
 				doir::Token b = logic_and(module); PROPIGATE_ERROR(b);
 
-				module.add_attribute<comp::Operation>(t) = {a, b};
+				module.add_attribute<comp::BodyMarker>(marker) = {t};
+				module.add_attribute<comp::OperationIf>(t) = {a, b, marker};
 				module.add_attribute<comp::Or>(t);
 				a = t;
 			}
@@ -681,13 +686,14 @@ namespace lox {
 			) {
 				module.restore_state(peak);
 
-				auto lexerToken = module.current_lexer_token<LexerTokens>();
 				auto t = module.make_token();
+				auto marker = module.make_token();
 
 				module.lex(lexer);
 				doir::Token b = equality(module); PROPIGATE_ERROR(b);
 
-				module.add_attribute<comp::Operation>(t) = {a, b};
+				module.add_attribute<comp::BodyMarker>(marker) = {t};
+				module.add_attribute<comp::OperationIf>(t) = {a, b, marker};
 				module.add_attribute<comp::And>(t);
 				a = t;
 			}

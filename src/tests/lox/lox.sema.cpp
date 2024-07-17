@@ -36,8 +36,6 @@ void sort_parse_into_post_order_traversal_impl(doir::Module& module, doir::Token
 	case lox::Type::GreaterThanEqualTo: [[fallthrough]];
 	case lox::Type::EqualTo: [[fallthrough]];
 	case lox::Type::NotEqualTo: [[fallthrough]];
-	case lox::Type::And: [[fallthrough]];
-	case lox::Type::Or: [[fallthrough]];
 	case lox::Type::While: {
 		recurse(module, module.get_attribute<Operation>(root)->right, order, missing);
 		recurse(module, module.get_attribute<Operation>(root)->left, order, missing);
@@ -61,7 +59,9 @@ void sort_parse_into_post_order_traversal_impl(doir::Module& module, doir::Token
 	break; case lox::Type::Assign: {
 		recurse(module, module.get_attribute<Operation>(root)->left, order, missing);
 	}
-	break; case lox::Type::If: {
+	break; case lox::Type::And: [[fallthrough]];
+	case lox::Type::Or: [[fallthrough]];
+	case lox::Type::If: {
 		for(auto& elem: *module.get_attribute<OperationIf>(root) | std::views::reverse) {
 			if(elem == 0) continue; // Skip else
 			recurse(module, elem, order, missing);
@@ -103,13 +103,14 @@ void sort_parse_into_reverse_post_order_traversal(doir::Module& module, doir::To
 		lox::comp::Block,
 		lox::comp::Parameters
 	>(order);
-	module.make_monotonic<
-		lox::comp::BodyMarker,
-		lox::comp::Operation,
-		lox::comp::OperationIf,
-		lox::comp::Block,
-		lox::comp::Parameters
-	>();
+	// TODO: There is a bug in make_monotonic!
+	// module.make_monotonic<
+	// 	lox::comp::BodyMarker,
+	// 	lox::comp::Operation,
+	// 	lox::comp::OperationIf,
+	// 	lox::comp::Block,
+	// 	lox::comp::Parameters
+	// >();
 };
 
 size_t calculate_child_count(doir::Module& module, doir::Token root = 1, bool anotate = true) {
@@ -142,8 +143,6 @@ size_t calculate_child_count(doir::Module& module, doir::Token root = 1, bool an
 	case lox::Type::GreaterThanEqualTo: [[fallthrough]];
 	case lox::Type::EqualTo: [[fallthrough]];
 	case lox::Type::NotEqualTo: [[fallthrough]];
-	case lox::Type::And: [[fallthrough]];
-	case lox::Type::Or: [[fallthrough]];
 	case lox::Type::While: {
 		immediate = 2;
 		inChildren = calculate_child_count(module, module.get_attribute<Operation>(root)->left, anotate);
@@ -178,7 +177,9 @@ size_t calculate_child_count(doir::Module& module, doir::Token root = 1, bool an
 		immediate = 1;
 		inChildren = calculate_child_count(module, module.get_attribute<Operation>(root)->left, anotate);
 	}
-	break; case lox::Type::If: {
+	break; case lox::Type::And: [[fallthrough]];
+	case lox::Type::Or: [[fallthrough]];
+	case lox::Type::If: {
 		for(auto& elem: *module.get_attribute<OperationIf>(root)) {
 			if(elem == 0) continue; // Skip else
 			++immediate;

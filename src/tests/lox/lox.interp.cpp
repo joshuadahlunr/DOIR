@@ -1,8 +1,8 @@
 #include "lox.hpp"
-#include "lox.parse.hpp"
 #include <sstream>
 #include <stdexcept>
 #include <string>
+#include "../tests.utils.hpp"
 
 lox::Type value_type(doir::Module& module, doir::Token t) {
 	if(module.has_attribute<lox::comp::Null>(t))
@@ -334,6 +334,26 @@ bool interpret(doir::Module& module, doir::Token root = 1, doir::Token returnTo 
 				interpret(module, op.left, returnTo);
 			}
 		}
+		break; case lox::Type::And: {
+			auto [a] = *module.get_attribute<lox::components::OperationIf>(t);
+			auto [left, right, marker, _] = a;
+
+			interpret(module, left, returnTo);
+			if(is_truthy(module, left)) {
+				interpret(module, right, returnTo);
+				auto dbg = module.add_attribute<bool>(t) = is_truthy(module, right);
+			} else module.add_attribute<bool>(t) = false;
+		}
+		break; case lox::Type::Or: {
+			auto [a] = *module.get_attribute<lox::components::OperationIf>(t);
+			auto [left, right, marker, _] = a;
+
+			interpret(module, left, returnTo);
+			if(!is_truthy(module, left)) {
+				interpret(module, right, returnTo);
+				module.add_attribute<bool>(t) = is_truthy(module, right);
+			} else module.add_attribute<bool>(t) = true;
+		}
 		break; case lox::Type::Add: valid &= interpret_add(module, t);
 		break; case lox::Type::Subtract: valid &= interpret_subtract(module, t);
 		break; case lox::Type::Multiply: valid &= interpret_multiply(module, t);
@@ -347,9 +367,7 @@ bool interpret(doir::Module& module, doir::Token root = 1, doir::Token returnTo 
 		break; case lox::Type::EqualTo: valid &= interpret_equal(module, t);
 		break; case lox::Type::NotEqualTo: valid &= interpret_not_equal(module, t);
 		break; case lox::Type::Print: valid &= interpret_print(module, t);
-		// case lox::Type::And:
-		// case lox::Type::Or:
-		break; default: throw std::runtime_error((std::stringstream{} << "Operation " << lox::to_string(type) << " not supported yet!").str().c_str());
+		break; default: {}//throw std::runtime_error((std::stringstream{} << "Operation " << lox::to_string(type) << " not supported yet!").str().c_str());
 		}
 
 	// If this is a function call... mark that we returned null
@@ -357,10 +375,68 @@ bool interpret(doir::Module& module, doir::Token root = 1, doir::Token returnTo 
 	return valid;
 }
 
+TEST_CASE("Lox::Interp::And") {
+	CAPTURE_CONSOLE_BEGIN
+		doir::ParseModule module("fun skipped() { print \"Nope!\"; return false; } print true and skipped(); print true or skipped();");
+		auto root = lox::parse{}.start(module);
+		REQUIRE(root != 0);
+		canonicalize(module, root, false);
+		REQUIRE(verify_references(module));
+		REQUIRE(verify_call_arrities(module));
+		REQUIRE(identify_trailing_calls(module));
+
+		REQUIRE(interpret(module));
+	CAPTURE_CONSOLE_END
+	CHECK(capture.str() == R"(Nope!
+false
+true
+)");
+}
+
+TEST_CASE("Lox::Interp::TailRecursion") {
+	CAPTURE_CONSOLE_BEGIN
+		doir::ParseModule module("fun fib(x) { if(x < 2) return 1; return fib(x - 2); } fib(5);");
+		auto root = lox::parse{}.start(module);
+		REQUIRE(root != 0);
+		canonicalize(module, root, false);
+		REQUIRE(verify_references(module));
+		REQUIRE(verify_call_arrities(module));
+		REQUIRE(identify_trailing_calls(module));
+	
+		REQUIRE(interpret(module));
+	CAPTURE_CONSOLE_END
+	CHECK(capture.str() == R"(Warning at <transient>:1:44-45
+   fun fib(x) { if(x < 2) return 1; return fib(x - 2); } fib(5);
+                                              ^
+                       Tail recursion detected.
+)");
+}
+
+TEST_CASE("Lox::Interp::Expressions") {
+	CAPTURE_CONSOLE_BEGIN
+		doir::ParseModule module("fun check(x) { print nil == x; } for(var i = 0; i < 5; i = i + 1) print (i + 1) * -6; print \"Hello \" + \"world\" + \"!\"; check(5); check(nil);");
+		auto root = lox::parse{}.start(module);
+		REQUIRE(root != 0);
+		canonicalize(module, root, false);
+		REQUIRE(verify_references(module));
+		REQUIRE(verify_call_arrities(module));
+		REQUIRE(identify_trailing_calls(module));
+	
+		REQUIRE(interpret(module));
+	CAPTURE_CONSOLE_END
+	CHECK(capture.str() == R"(-6
+-12
+-18
+-24
+-30
+Hello world!
+false
+true
+)");
+}
+
 TEST_CASE("Lox::Interp") {
-	// doir::ParseModule module("fun add(a, b) { var tmp = a; a = b; b = tmp; return a + b; } var x = 0; var y = 1; if(true) print add(x, y); for(;;) print x;");
-	doir::ParseModule module("fun check(x) { print nil == x; } for(var i = 0; i < 5; i = i + 1) print (i + 1) * -6; print \"Hello \" + \"world\" + \"!\"; check(5); check(nil);");
-	// doir::ParseModule module("fun fib(x) { if(x < 2) return 1; return fib(x - 2); } fib(5);");
+	doir::ParseModule module("fun add(a, b) { var tmp = a; a = b; b = tmp; return a + b; } var x = 0; var y = 1; if(true) print add(x, y);" /*for(;;) print x;"*/);
 	auto root = lox::parse{}.start(module);
 	REQUIRE(root != 0);
 	canonicalize(module, root, false);

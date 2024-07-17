@@ -94,7 +94,7 @@ namespace lox {
 		else if(module.has_attribute<lox::comp::GreaterThan>(t)) return Type::GreaterThan;
 		else if(module.has_attribute<lox::comp::EqualTo>(t)) return Type::EqualTo;
 		else if(module.has_attribute<lox::comp::NotEqualTo>(t)) return Type::NotEqualTo;
-		else if(module.has_attribute<lox::comp::Add>(t)) return Type::And;
+		else if(module.has_attribute<lox::comp::And>(t)) return Type::And;
 		else if(module.has_attribute<lox::comp::Or>(t)) return Type::Or;
 		else if(module.has_attribute<lox::comp::Assign>(t)) return Type::Assign;
 		else if(module.has_attribute<lox::comp::Print>(t)) return Type::Print;

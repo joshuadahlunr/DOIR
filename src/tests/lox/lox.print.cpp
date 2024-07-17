@@ -57,8 +57,6 @@ void print(doir::Module& module, doir::Token root, bool show_tokens /*=false*/, 
 	case lox::Type::GreaterThanEqualTo: [[fallthrough]];
 	case lox::Type::EqualTo: [[fallthrough]];
 	case lox::Type::NotEqualTo: [[fallthrough]];
-	case lox::Type::And: [[fallthrough]];
-	case lox::Type::Or: [[fallthrough]];
 	case lox::Type::While: {
 		nowide::cout << to_string(t) << end(module, root);
 		print(module, module.get_attribute<Operation>(root)->left, show_tokens, indent_size, indent + 1);
@@ -98,8 +96,10 @@ void print(doir::Module& module, doir::Token root, bool show_tokens /*=false*/, 
 		nowide::cout << end(module, root);
 		print(module, module.get_attribute<Operation>(root)->left, show_tokens, indent_size, indent + 1);
 	}
-	break; case lox::Type::If: {
-		std::cout << "if" << end(module, root);
+	break; case lox::Type::And: [[fallthrough]];
+	case lox::Type::Or: [[fallthrough]];
+	case lox::Type::If: {
+		nowide::cout << to_string(t) << end(module, root);
 		for(auto& elem: *module.get_attribute<OperationIf>(root)) {
 			if(elem == 0) continue; // Skip else
 			print(module, elem, show_tokens, indent_size, indent + 1);

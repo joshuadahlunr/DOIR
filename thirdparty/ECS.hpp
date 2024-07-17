@@ -763,7 +763,7 @@ namespace ecs {
 		void reorder_entities(const std::span<size_t> order) {
 			assert(order.size() == size()); // Require order to have an entry for every element in the array
 
-			std::vector<size_t> swaps(order.begin(), order.end());
+			std::vector<size_t> swaps(order.size(), 0);
 			// Transpose the order (it now stores what needs to be swapped with what)
 			{
 				for(size_t i = 0; i < order.size(); i++)
