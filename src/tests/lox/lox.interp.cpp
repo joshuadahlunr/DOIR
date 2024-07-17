@@ -382,6 +382,7 @@ TEST_CASE("Lox::Interp::And") {
 		REQUIRE(root != 0);
 		canonicalize(module, root, false);
 		REQUIRE(verify_references(module));
+		REQUIRE(verify_redeclarations(module));
 		REQUIRE(verify_call_arrities(module));
 		REQUIRE(identify_trailing_calls(module));
 
@@ -400,6 +401,7 @@ TEST_CASE("Lox::Interp::TailRecursion") {
 		REQUIRE(root != 0);
 		canonicalize(module, root, false);
 		REQUIRE(verify_references(module));
+		REQUIRE(verify_redeclarations(module));
 		REQUIRE(verify_call_arrities(module));
 		REQUIRE(identify_trailing_calls(module));
 	
@@ -419,6 +421,7 @@ TEST_CASE("Lox::Interp::Expressions") {
 		REQUIRE(root != 0);
 		canonicalize(module, root, false);
 		REQUIRE(verify_references(module));
+		REQUIRE(verify_redeclarations(module));
 		REQUIRE(verify_call_arrities(module));
 		REQUIRE(identify_trailing_calls(module));
 	
@@ -441,6 +444,7 @@ TEST_CASE("Lox::Interp") {
 	REQUIRE(root != 0);
 	canonicalize(module, root, false);
 	REQUIRE(verify_references(module));
+	REQUIRE(verify_redeclarations(module));
 	REQUIRE(verify_call_arrities(module));
 	REQUIRE(identify_trailing_calls(module));
 

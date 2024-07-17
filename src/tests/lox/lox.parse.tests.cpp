@@ -1,4 +1,5 @@
 #include "lox.parse.hpp"
+#include "../tests.utils.hpp"
 
 TEST_CASE("Lox::Nil") {
 	doir::ParseModule module("nil;");
@@ -194,12 +195,17 @@ TEST_CASE("Lox::Assign") {
 }
 
 TEST_CASE("Lox::ClassAssign") {
-	doir::ParseModule module("x.y = 5;");
-	lox::parse p;
-	auto root = p.start(module);
-	if(module.has_attribute<doir::Error>(root))
-		doir::print_diagnostic(module, root);
-	CHECK(module.has_attribute<doir::Error>(root));
+	CAPTURE_ERROR_CONSOLE_BEGIN
+		doir::ParseModule module("x.y = 5;");
+		lox::parse p;
+		auto root = p.start(module);
+		CHECK(module.has_attribute<doir::Error>(root));
+	CAPTURE_ERROR_CONSOLE_END
+	CHECK(capture.str() == R"(An error has occured at <transient>:1:2-3
+   x.y = 5;
+    ^
+Classes are not yet supported!
+)");
 }
 
 TEST_CASE("Lox::Block") {
@@ -333,7 +339,8 @@ TEST_CASE("Lox::IfElse") {
 TEST_CASE("Lox::For") {
 	doir::ParseModule module("for(y = 0; x > y; x + 1) { print x; }");
 	lox::parse p;
-	auto& rootC = module.get_attribute<lox::components::Block>(p.start(module))->children;
+	auto root = module.get_attribute<lox::components::Block>(p.start(module))->children[0];
+	auto& rootC = module.get_attribute<lox::components::Block>(root)->children;
 	CHECK(rootC.size() == 2);
 	{
 		auto root = rootC[0];

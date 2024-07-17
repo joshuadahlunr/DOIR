@@ -270,8 +270,10 @@ namespace lox {
 				if(module.has_attribute<doir::Error>(decl)) {
 					error = decl;
 					doir::print_diagnostic(module, decl) << std::endl;
-					// Show Error
-					// Synchronize
+
+					// Synchronize (Skip to the next statement or block)
+					while(module.has_more_input() && !(module.current_lexer_token<LexerTokens>() == LexerTokens::Semicolon || module.current_lexer_token<LexerTokens>() == LexerTokens::CloseCurly))
+						module.lex(lexer);
 				} else {
 					auto& tb = *module.get_attribute<components::Block>(topBlock);
 					tb.children.emplace_back(decl);
@@ -406,7 +408,7 @@ namespace lox {
 
 		// exprStmt ::= expression ";";
 		doir::Token exprStmt(doir::ParseModule& module) {
-			auto ret = expression(module);
+			auto ret = expression(module); PROPIGATE_ERROR(ret);
 			module.lex(lexer);
 			PROPIGATE_OPTIONAL_ERROR(module.expect(LexerTokens::Semicolon));
 			return ret;
@@ -446,9 +448,12 @@ namespace lox {
 
 			auto stmt = statement(module); PROPIGATE_ERROR(stmt);
 
-			// Paste the pre loop before the loop
-			if(preLoop != 0)
-				module.get_attribute<comp::Block>(currentBlock)->children.emplace_back(preLoop);
+			// Paste the pre loop before the loop (inside a new block so that declarations are properly scoped!)
+			doir::Token wrappingBlock = 0;
+			if(preLoop != 0) {
+				wrappingBlock = module.make_token();
+				module.add_attribute<comp::Block>(wrappingBlock).children = {preLoop, t};
+			}
 
 			// Make a while loop with the condition
 			module.add_attribute<comp::While>(t);
@@ -487,6 +492,7 @@ namespace lox {
 			module.add_attribute<components::BodyMarker>(marker) = {t};
 			block->children.insert(block->children.cbegin(), marker);
 
+			if(wrappingBlock != 0) return wrappingBlock;
 			return t;
 		}
 

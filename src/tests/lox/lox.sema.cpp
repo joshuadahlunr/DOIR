@@ -2,8 +2,10 @@
 #include <algorithm>
 #include <iterator>
 #include <ranges>
+#include <sstream>
 #include <unordered_set>
 #include <vector>
+#include "../tests.utils.hpp"
 
 void sort_parse_into_post_order_traversal_impl(doir::Module& module, doir::Token root, std::vector<doir::Token>& order, std::unordered_set<doir::Token>& missing) {
 	using namespace lox::components;
@@ -292,6 +294,40 @@ bool verify_references(doir::Module& module) {
 	return valid;
 }
 
+bool verify_redeclarations(doir::Module& module) {
+	auto& functions = *module.get_hashtable<lox::comp::FunctionDeclaire>();
+	bool hasFunctions = functions.size();
+	auto& variables = *module.get_hashtable<lox::comp::VariableDeclaire>();
+	bool hasVariables = variables.size();
+
+	if(!hasFunctions && !hasVariables) return true;
+
+	bool valid = true;
+	for(doir::Token t = module.get_attribute<doir::Children>(1)->total + 2; t--;) {
+		if(!module.has_hashtable_attribute<lox::components::VariableDeclaire>(t) && !module.has_hashtable_attribute<lox::components::FunctionDeclaire>(t)) continue;
+
+		if(module.has_hashtable_attribute<lox::components::FunctionDeclaire>(t)) {
+			auto& lexeme = *module.get_attribute<doir::Lexeme>(t);
+			auto res = *blockwise_find<lox::comp::FunctionDeclaire>(module, {lexeme, current_block(module, t)}, hasFunctions);
+			if(res != t) {
+				doir::print_diagnostic(module, res, (std::stringstream{} << "Function " << lexeme.view(module.buffer) << " redeclaired!").str()) << "\n";
+				doir::print_diagnostic(module, t, "Identified here...", doir::diagnostic_type::Info) << std::endl;
+				valid = false;
+			}
+		}
+		if(module.has_hashtable_attribute<lox::components::VariableDeclaire>(t)) {
+			auto& lexeme = *module.get_attribute<doir::Lexeme>(t);
+			auto res = *blockwise_find<lox::comp::VariableDeclaire>(module, {lexeme, current_block(module, t)}, hasVariables);
+			if(res != t) {
+				doir::print_diagnostic(module, res, (std::stringstream{} << "Variable " << lexeme.view(module.buffer) << " redeclaired!").str()) << "\n";
+				doir::print_diagnostic(module, t, "Identified here...", doir::diagnostic_type::Info) << std::endl;
+				valid = false;
+			}
+		}
+	}
+	return valid;
+}
+
 bool verify_call_arrities(doir::Module& module) {
 	bool valid = true;
 	for(doir::Token t = module.get_attribute<doir::Children>(1)->total + 2; t--;) {
@@ -347,12 +383,40 @@ void canonicalize(doir::Module& module, doir::Token root, bool clear_references 
 	lookup_references(module, clear_references);
 }
 
+TEST_CASE("Lox::Sema::Redeclaration") {
+	std::string error;
+	CAPTURE_CONSOLE_BEGIN
+		CAPTURE_ERROR_CONSOLE_BEGIN
+			doir::ParseModule module("var x = 0; var x = nil;");
+			auto root = lox::parse{}.start(module);
+			REQUIRE(root != 0);
+			canonicalize(module, root, false);
+			REQUIRE(verify_references(module));
+			REQUIRE(!verify_redeclarations(module));
+			REQUIRE(verify_call_arrities(module));
+			REQUIRE(identify_trailing_calls(module));
+		CAPTURE_ERROR_CONSOLE_END
+		error = capture.str();
+	CAPTURE_CONSOLE_END
+	CHECK(error == R"(An error has occured at <transient>:1:16-17
+   var x = 0; var x = nil;
+                  ^
+Variable x redeclaired!
+)");
+	CHECK(capture.str() == R"(Info at <transient>:1:5-6
+   var x = 0; var x = nil;
+       ^
+Identified here...
+)");
+}
+
 TEST_CASE("Lox::Sema" * doctest::skip()) {
 	doir::ParseModule module("fun add(a, b) { var tmp = a; a = b; b = tmp; return a + b; } var x = 0; var y = 1; if(true) print add(x, y); for(;;) print x;");
 	auto root = lox::parse{}.start(module);
 	REQUIRE(root != 0);
 	canonicalize(module, root);
 	CHECK(verify_references(module));
+	CHECK(verify_redeclarations(module));
 	CHECK(verify_call_arrities(module));
 	CHECK(identify_trailing_calls(module));
 	print(module, root, true);
