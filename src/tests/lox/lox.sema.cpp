@@ -46,7 +46,7 @@ void sort_parse_into_post_order_traversal_impl(doir::Module& module, doir::Token
 			recurse(module, op->left, order, missing);
 	}
 	break; case lox::Type::FunctionDeclaire: {
-		if(auto op = module.get_attribute<Operation>(root); op)
+		if(auto op = module.get_attribute<Operation>(root); op && op->left != doir::InvalidToken)
 			recurse(module, op->left, order, missing);
 		for(auto param: *module.get_attribute<Parameters>(root) | std::views::reverse)
 			recurse(module, param, order, missing);
@@ -166,7 +166,7 @@ size_t calculate_child_count(doir::Module& module, doir::Token root = 1, bool an
 		}
 	}
 	break; case lox::Type::FunctionDeclaire: {
-		if(auto op = module.get_attribute<Operation>(root); op) {
+		if(auto op = module.get_attribute<Operation>(root); op && op->left != doir::InvalidToken) {
 			immediate = 1;
 			inChildren = calculate_child_count(module, op->left, annotate);
 		}

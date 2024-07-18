@@ -21,6 +21,8 @@ namespace doir {
 	template<typename T>
 	using WithToken = ecs::with_entity<T>;
 
+	static constexpr Token InvalidToken = ecs::invalid_entity;
+
 	template<typename T>
 	using hashtable_t = ecs::hashtable::component_storage<T>::component_type;
 

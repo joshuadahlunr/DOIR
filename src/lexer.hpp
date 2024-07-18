@@ -190,6 +190,24 @@ namespace doir { inline namespace lex {
 		using whitespace = basic_whitespace<char, false>;
 		using single_whitespace = basic_whitespace<char, true>;
 
+		template<typename CharT, detail::string_literal Start = "//">
+		struct basic_single_line_comment {
+			static constexpr bool skip_if_invalid = true;
+			inline static bool next_valid(size_t index, CharT next) {
+				static CharT last;
+				if(index == 0) last = 0;
+				if(last == '\n') return false;
+				last = next;
+				return index >= Start.size() || basic_exact_string<CharT, Start>::next_valid(index, next);
+			}
+			inline static bool token_valid(std::basic_string_view<CharT> token) {
+				return token.starts_with(Start.view()) && token.back() == '\n';
+			}
+		};
+		template<detail::string_literal Start>
+		using single_line_comment = basic_single_line_comment<char, Start>;
+		using c_style_single_line_comment = basic_single_line_comment<char, "//">;
+
 #ifdef LEXER_CTRE_REGEX
 		template<typename CharT, ctll::fixed_string regex>
 		struct basic_ctre_regex {

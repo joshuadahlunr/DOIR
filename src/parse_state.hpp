@@ -61,14 +61,14 @@ namespace doir {
 		}
 		inline ParseState& lex(/*doir::lex::detail::instantiation_of_lexer<doir::lex::basic_lexer>*/ auto& lexer) { return lex(lexer, *this); }
 
-		static Token make_token(const ParseState& state, Module& module) {
-			if(!state.lexer_state.valid()) return 0;
+		static Token make_token(const ParseState& state, Module& module, bool ignore_invalid = false) {
+			if(!state.lexer_state.valid() && !ignore_invalid) return 0;
 			auto t = module.make_token();
 			module.add_attribute<Lexeme>(t) = *Lexeme::from_view(module.buffer, state.lexer_state.lexeme);
 			module.add_attribute<NamedSourceLocation>(t) = state.source_location;
 			return t;
 		}
-		inline Token make_token(Module& module) const { return make_token(*this, module); }
+		inline Token make_token(Module& module, bool ignore_invalid = false) const { return make_token(*this, module, ignore_invalid); }
 
 		template<typename... Tattrs>
 		static Token make_token_with(const ParseState& state, Module& module, Tattrs... attributes) {
@@ -115,8 +115,8 @@ namespace doir {
 	struct ParseModule: public Module, public ParseState {
 		ParseModule(const std::string& buffer = "", NamedSourceLocation location = {}) : Module(buffer), ParseState(this->buffer, location) {}
 
-		inline Token make_token(const ParseState& state) { return ParseState::make_token(state, *this); }
-		inline Token make_token() { return ParseState::make_token(*this); }
+		inline Token make_token(const ParseState& state, bool ignore_invalid = false) { return ParseState::make_token(state, *this, ignore_invalid); }
+		inline Token make_token(bool ignore_invalid = false) { return ParseState::make_token(*this, ignore_invalid); }
 
 		template<typename... Tattrs>
 		inline Token make_token_with(const ParseState& state, Tattrs... attributes) {

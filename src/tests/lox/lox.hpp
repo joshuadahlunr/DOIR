@@ -113,3 +113,4 @@ bool verify_references(doir::Module& module);
 bool verify_redeclarations(doir::Module& module);
 bool verify_call_arrities(doir::Module& module);
 bool identify_trailing_calls(doir::Module& module);
+bool interpret(doir::Module& module);

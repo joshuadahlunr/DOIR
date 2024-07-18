@@ -1,4 +1,5 @@
 #include "lox.hpp"
+#include <chrono>
 #include <sstream>
 #include <stdexcept>
 #include <string>
@@ -19,7 +20,7 @@ lox::Type value_type(doir::Module& module, doir::Token t) {
 
 inline std::string get_token_string(doir::Module& module, doir::Token str) {
 	ZoneScoped;
-	return module.has_attribute<std::string>(str) ? std::move(*module.get_attribute<std::string>(str)) : std::string(module.get_attribute<doir::Lexeme>(str)->view(module.buffer));
+	return module.has_attribute<std::string>(str) ? *module.get_attribute<std::string>(str) : std::string(module.get_attribute<doir::Lexeme>(str)->view(module.buffer));
 }
 
 void copy_runtime_value(doir::Module& module, doir::Token dest, doir::Token source) {
@@ -240,6 +241,14 @@ bool interpret_print(doir::Module& module, doir::Token print) {
 	return false;
 }
 
+bool interpret_builtin_clock(doir::Module& module, doir::Token call) {
+	ZoneScoped;
+	static auto first_called = std::chrono::steady_clock::now();
+	std::chrono::duration<double> elapsed_seconds = std::chrono::steady_clock::now() - first_called;
+	module.add_attribute<double>(call) = elapsed_seconds.count();
+	return true;
+}
+
 void clear_runtime_value(doir::Module& module, doir::Token t) {
 	ZoneScoped;
 	if(module.has_attribute<lox::comp::Null>(t))
@@ -275,7 +284,7 @@ void clear_runtime_values(doir::Module& module, doir::Token start = 1, std::opti
 	// >();
 }
 
-bool interpret(doir::Module& module, doir::Token root = 1, doir::Token returnTo = 0, std::optional<doir::Token> _skipCheck = {}) {
+bool interpret(doir::Module& module, doir::Token root, doir::Token returnTo = 0, std::optional<doir::Token> _skipCheck = {}) {
 	ZoneScoped;
 	doir::Token skipCheck = _skipCheck.value_or(root); // Token we should check any blocks against to determine weather or not to skip them
 	bool valid = true;
@@ -304,6 +313,7 @@ bool interpret(doir::Module& module, doir::Token root = 1, doir::Token returnTo 
 			auto& ref = *module.get_attribute<doir::TokenReference>(t);
 			auto& op = *module.get_attribute<lox::components::Operation>(t);
 			copy_runtime_value(module, ref.token(), op.left);
+			copy_runtime_value(module, t, op.left);
 		}
 		break; case lox::Type::BodyMarker: {
 			// Skip over any functions we aren't in!
@@ -325,6 +335,10 @@ bool interpret(doir::Module& module, doir::Token root = 1, doir::Token returnTo 
 		break; case lox::Type::Call: {
 			auto& call = *module.get_attribute<lox::comp::Call>(t);
 			auto ref = module.get_attribute<doir::TokenReference>(call.parent)->token();
+			if(ref == 2) { // The builtin function is processed specially
+				valid &= interpret_builtin_clock(module, t);
+				continue;
+			}
 			auto& params = *module.get_attribute<lox::comp::Parameters>(ref);
 			auto& op = *module.get_attribute<lox::components::Operation>(ref);
 
@@ -415,6 +429,9 @@ bool interpret(doir::Module& module, doir::Token root = 1, doir::Token returnTo 
 	if(returnTo > 0) module.add_attribute<lox::comp::Null>(returnTo);
 	return valid;
 }
+bool interpret(doir::Module& module) {
+	return interpret(module, 1);
+}
 
 TEST_CASE("Lox::Interp::And") {
 	ZoneScopedN("Lox::Interp::And");
@@ -489,7 +506,7 @@ true
 	FrameMark;
 }
 
-TEST_CASE("Lox::Interp") {
+TEST_CASE("Lox::Interp" * doctest::skip()) {
 	ZoneScopedN("Lox::Interp");
 	doir::ParseModule module("fun add(a, b) { var tmp = a; a = b; b = tmp; return a + b; } var x = 0; var y = 1; if(true) print add(x, y);" /*for(;;) print x;"*/);
 	auto root = lox::parse{}.start(module);

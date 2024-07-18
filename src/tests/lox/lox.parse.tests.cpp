@@ -238,7 +238,7 @@ TEST_CASE("Lox::ClassAssign") {
 		CHECK(module.has_attribute<doir::Error>(root));
 	CAPTURE_ERROR_CONSOLE_END
 	CHECK(capture.str() == R"(An error has occurred at <transient>:1:2-3
-   x.y = 5;
+   x.y = 5
     ^
 Classes are not yet supported!
 )");
@@ -446,7 +446,7 @@ TEST_CASE("Lox::ForEmpty") {
 	doir::ParseModule module("for(;;) print x;");
 	lox::parse p;
 	auto& rootC = module.get_attribute<lox::components::Block>(p.start(module))->children;
-	CHECK(rootC.size() == 1);
+	CHECK(rootC.size() == 2); // 1 + builtin clock
 	{
 		auto root = rootC[0];
 		CHECK(module.has_attribute<lox::components::While>(root));

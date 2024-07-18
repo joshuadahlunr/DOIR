@@ -72,7 +72,7 @@ void print(doir::Module& module, doir::Token root, bool show_tokens /*=false*/, 
 		nowide::cout << "declaire:fun:" << module.get_attribute<doir::Lexeme>(root)->view(module.buffer) << end(module, root);
 		for(auto param: *module.get_attribute<Parameters>(root))
 			print(module, param, show_tokens, indent_size, indent + 1);
-		if(auto op = module.get_attribute<Operation>(root); op)
+		if(auto op = module.get_attribute<Operation>(root); op && op->left != doir::InvalidToken)
 			print(module, op->left, show_tokens, indent_size, indent + 1);
 	}
 	break; case lox::Type::ParameterDeclaire: {

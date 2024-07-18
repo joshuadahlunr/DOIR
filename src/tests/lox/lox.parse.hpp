@@ -95,6 +95,7 @@ namespace lox {
 		doir::lex::heads::token<LexerTokens::Number, doir::lex::heads::ctre_regex<"\\d+(\\.\\d*)?">>, // \d+ ( "." \d+ )? ;
 		doir::lex::heads::token<LexerTokens::String, doir::lex::heads::ctre_regex<"\\\"[^\"]*(\\\")?">>, // "\"" <any char except "\"">* "\"" ;
 		doir::lex::heads::skip<doir::lex::heads::whitespace>, // Skip whitespace!
+		doir::lex::heads::skip<doir::lex::heads::c_style_single_line_comment>, // Skip comments!
 		doir::lex::heads::token<LexerTokens::Identifier, XIDIdentifierHead<false>>
 	> lexer;
 
@@ -257,6 +258,22 @@ namespace lox {
 			return module.add_attribute<comp::Block>(currentBlock) = {.parent = parent};
 		}
 
+		void declaire_builtin_functions(doir::ParseModule& module) {
+			auto& block = *module.get_attribute<components::Block>(currentBlock);
+			module.buffer += "\n"; // Make sure our scratch space doesn't show up in any diagnostics
+
+			auto clock = module.make_token(true);
+			{
+				constexpr std::string_view str = "clock";
+				*module.get_attribute<doir::Lexeme>(clock) = {module.buffer.size(), str.size()};
+				module.buffer += str;
+			}
+			module.add_hashtable_attribute<components::FunctionDeclaire>(clock) = {*module.get_attribute<doir::Lexeme>(clock), currentBlock};
+			module.add_attribute<comp::Parameters>(clock) = {};
+			module.add_attribute<comp::Operation>(clock) = {doir::InvalidToken, false}; // .right stores weather or not the function is currently being called
+			block.children.emplace_back(clock);
+		}
+
 		// program ::= declaration* EOF;
 		doir::Token start(doir::ParseModule& module) {
 			ZoneScoped;
@@ -274,8 +291,18 @@ namespace lox {
 					doir::print_diagnostic(module, decl) << std::endl;
 
 					// Synchronize (Skip to the next statement or block)
-					while(module.has_more_input() && !(module.current_lexer_token<LexerTokens>() == LexerTokens::Semicolon || module.current_lexer_token<LexerTokens>() == LexerTokens::CloseCurly))
-						module.lex(lexer);
+					while(module.has_more_input()){
+						if(module.lexer_state.remaining[0] == '\n')
+							module.source_location.next_line();
+						else ++module.source_location.column;
+						module.lexer_state.remaining = module.lexer_state.remaining.substr(1);
+
+						auto saved = module.save_state();
+						module.lex(lexer);	
+						if(module.current_lexer_token<LexerTokens>() == LexerTokens::Semicolon || module.current_lexer_token<LexerTokens>() == LexerTokens::CloseCurly)
+							break;
+						module.restore_state(saved);
+					}
 				} else {
 					auto& tb = *module.get_attribute<components::Block>(topBlock);
 					tb.children.emplace_back(decl);
@@ -283,6 +310,7 @@ namespace lox {
 				}
 			}
 			PROPAGATE_OPTIONAL_ERROR(error);
+			declaire_builtin_functions(module);
 			return currentBlock;
 		}
 

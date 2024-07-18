@@ -54,7 +54,7 @@ namespace doir {
 		if(lineEnd == std::string::npos) lineEnd = module.buffer.size() - 1;
 
 		return (std::stringstream{} << introducer(type) << location.to_string(lexeme.length) << "\n"
-			<< "   " << module.buffer.substr(lineStart, lineEnd - lineStart + 1) << "\n"
+			<< "   " << module.buffer.substr(lineStart, lineEnd - lineStart) << "\n"
 			<< std::setw(location.column + lexeme.length + 2) << std::string(lexeme.length, '^') << "\n"
 			<< std::setw(location.column + lexeme.length + 2) << message).str();
 	}
