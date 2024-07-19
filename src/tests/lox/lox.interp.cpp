@@ -1,13 +1,16 @@
 #include "lox.hpp"
 #include <chrono>
 #include <sstream>
-#include <stdexcept>
 #include <string>
 #include <print>
 
+struct runtime_value_type { lox::Type type = lox::Type::Null; };
+
 lox::Type value_type(doir::Module& module, doir::Token t) {
 	ZoneScoped;
-	if(module.has_attribute<lox::comp::Null>(t))
+	if(auto ref = module.get_attribute<runtime_value_type>(t); ref)
+		return ref->type;
+	else if(module.has_attribute<lox::comp::Null>(t))
 		return lox::Type::Null;
 	else if(module.has_attribute<double>(t))
 		return lox::Type::Number;
@@ -18,21 +21,71 @@ lox::Type value_type(doir::Module& module, doir::Token t) {
 	else return lox::Type::Invalid;
 }
 
+template<typename Tcomponent>
+Tcomponent& get_or_add(doir::Module& module, doir::Token t) {
+	if(auto ref = module.get_attribute<Tcomponent>(t); ref)
+		return *ref;
+	return module.add_attribute<Tcomponent>(t);
+}
+
 inline std::string get_token_string(doir::Module& module, doir::Token str) {
 	ZoneScoped;
 	return module.has_attribute<std::string>(str) ? *module.get_attribute<std::string>(str) : std::string(module.get_attribute<doir::Lexeme>(str)->view(module.buffer));
 }
 
+void dbg_print(doir::Module& module, doir::Token t) {
+	switch (value_type(module, t)) {
+	break; case lox::Type::Null:
+#ifdef LOX_PERFORMANT_PRINTING
+		std::println("nil");
+#else
+		nowide::cout << "nil" << std::endl;
+#endif
+	break; case lox::Type::Number:
+#ifdef LOX_PERFORMANT_PRINTING
+		std::println("{}", *module.get_attribute<double>(t));
+#else
+		nowide::cout << *module.get_attribute<double>(t) << std::endl;
+#endif
+	break; case lox::Type::Boolean:
+#ifdef LOX_PERFORMANT_PRINTING
+		std::println("{}", *module.get_attribute<bool>(t));
+#else
+		nowide::cout << (*module.get_attribute<bool>(t) ? "true" : "false") << std::endl;
+#endif
+	break; case lox::Type::String:
+#ifdef LOX_PERFORMANT_PRINTING
+		std::println("{}", get_token_string(module, t));
+#else
+		nowide::cout << get_token_string(module, t) << std::endl;
+#endif
+	break; default:
+#ifdef LOX_PERFORMANT_PRINTING
+		std::println("<no value>");
+#else
+		nowide::cout << "<no value>" << std::endl;
+#endif
+	}
+}
+
 void copy_runtime_value(doir::Module& module, doir::Token dest, doir::Token source) {
 	ZoneScoped;
 	switch (value_type(module, source)) {
-	break; case lox::Type::Number: module.add_attribute<double>(dest) = *module.get_attribute<double>(source);
-	break; case lox::Type::Boolean: module.add_attribute<bool>(dest) = *module.get_attribute<bool>(source);
+	break; case lox::Type::Number:
+		get_or_add<runtime_value_type>(module, dest).type = lox::Type::Number;
+		get_or_add<double>(module, dest) = *module.get_attribute<double>(source);
+	break; case lox::Type::Boolean:
+		get_or_add<runtime_value_type>(module, dest).type = lox::Type::Boolean;
+		get_or_add<bool>(module, dest) = *module.get_attribute<bool>(source);
 	break; case lox::Type::String:
-		module.add_attribute<lox::comp::String>(dest);
-		module.add_attribute<std::string>(dest) = get_token_string(module, source);
-	break; default: module.add_attribute<lox::comp::Null>(dest);
+		get_or_add<runtime_value_type>(module, dest).type = lox::Type::String;
+		get_or_add<lox::comp::String>(module, dest);
+		get_or_add<std::string>(module, dest) = get_token_string(module, source);
+	break; default:
+		get_or_add<runtime_value_type>(module, dest).type = lox::Type::Null;
+		get_or_add<lox::comp::Null>(module, dest);
 	}
+	// dbg_print(module, dest);
 }
 
 bool is_truthy(doir::Module& module, doir::Token t) {
@@ -68,11 +121,13 @@ bool interpret_add(doir::Module& module, doir::Token add) {
 	ZoneScoped;
 	auto& op = *module.get_attribute<lox::comp::Operation>(add);
 	if(module.has_attribute<double>(op.left) && module.has_attribute<double>(op.right)) {
-		module.add_attribute<double>(add) = *module.get_attribute<double>(op.left) + *module.get_attribute<double>(op.right);
+		get_or_add<runtime_value_type>(module, add).type = lox::Type::Number;
+		get_or_add<double>(module, add) = *module.get_attribute<double>(op.left) + *module.get_attribute<double>(op.right);
 		return true;
 	} else if(module.has_attribute<lox::comp::String>(op.left) && module.has_attribute<lox::comp::String>(op.right)) {
-		module.add_attribute<lox::comp::String>(add);
-		module.add_attribute<std::string>(add) = get_token_string(module, op.left) + get_token_string(module, op.right);
+		get_or_add<runtime_value_type>(module, add).type = lox::Type::String;
+		get_or_add<lox::comp::String>(module, add);
+		get_or_add<std::string>(module, add) = get_token_string(module, op.left) + get_token_string(module, op.right);
 		return true;
 	}
 	if(auto left = value_type(module, op.left), right = value_type(module, op.right); left != right)
@@ -85,7 +140,8 @@ bool interpret_subtract(doir::Module& module, doir::Token sub) {
 	ZoneScoped;
 	auto& op = *module.get_attribute<lox::comp::Operation>(sub);
 	if(module.has_attribute<double>(op.left) && module.has_attribute<double>(op.right)) {
-		module.add_attribute<double>(sub) = *module.get_attribute<double>(op.left) - *module.get_attribute<double>(op.right);
+		get_or_add<runtime_value_type>(module, sub).type = lox::Type::Number;
+		get_or_add<double>(module, sub) = *module.get_attribute<double>(op.left) - *module.get_attribute<double>(op.right);
 		return true;
 	}
 	if(auto left = value_type(module, op.left), right = value_type(module, op.right); left != right)
@@ -98,7 +154,8 @@ bool interpret_multiply(doir::Module& module, doir::Token mult) {
 	ZoneScoped;
 	auto& op = *module.get_attribute<lox::comp::Operation>(mult);
 	if(module.has_attribute<double>(op.left) && module.has_attribute<double>(op.right)) {
-		module.add_attribute<double>(mult) = *module.get_attribute<double>(op.left) * *module.get_attribute<double>(op.right);
+		get_or_add<runtime_value_type>(module, mult).type = lox::Type::Number;
+		get_or_add<double>(module, mult) = *module.get_attribute<double>(op.left) * *module.get_attribute<double>(op.right);
 		return true;
 	}
 	if(auto left = value_type(module, op.left), right = value_type(module, op.right); left != right)
@@ -111,7 +168,8 @@ bool interpret_divide(doir::Module& module, doir::Token div) {
 	ZoneScoped;
 	auto& op = *module.get_attribute<lox::comp::Operation>(div);
 	if(module.has_attribute<double>(op.left) && module.has_attribute<double>(op.right)) {
-		module.add_attribute<double>(div) = *module.get_attribute<double>(op.left) / *module.get_attribute<double>(op.right);
+		get_or_add<runtime_value_type>(module, div).type = lox::Type::Number;
+		get_or_add<double>(module, div) = *module.get_attribute<double>(op.left) / *module.get_attribute<double>(op.right);
 		return true;
 	}
 	if(auto left = value_type(module, op.left), right = value_type(module, op.right); left != right)
@@ -124,7 +182,8 @@ bool interpret_less(doir::Module& module, doir::Token less) {
 	ZoneScoped;
 	auto& op = *module.get_attribute<lox::comp::Operation>(less);
 	if(module.has_attribute<double>(op.left) && module.has_attribute<double>(op.right)) {
-		module.add_attribute<bool>(less) = *module.get_attribute<double>(op.left) < *module.get_attribute<double>(op.right);
+		get_or_add<runtime_value_type>(module, less).type = lox::Type::Boolean;
+		get_or_add<bool>(module, less) = *module.get_attribute<double>(op.left) < *module.get_attribute<double>(op.right);
 		return true;
 	}
 	if(auto left = value_type(module, op.left), right = value_type(module, op.right); left != right)
@@ -137,7 +196,8 @@ bool interpret_less_equal(doir::Module& module, doir::Token less) {
 	ZoneScoped;
 	auto& op = *module.get_attribute<lox::comp::Operation>(less);
 	if(module.has_attribute<double>(op.left) && module.has_attribute<double>(op.right)) {
-		module.add_attribute<bool>(less) = *module.get_attribute<double>(op.left) <= *module.get_attribute<double>(op.right);
+		get_or_add<runtime_value_type>(module, less).type = lox::Type::Boolean;
+		get_or_add<bool>(module, less) = *module.get_attribute<double>(op.left) <= *module.get_attribute<double>(op.right);
 		return true;
 	}
 	if(auto left = value_type(module, op.left), right = value_type(module, op.right); left != right)
@@ -150,7 +210,8 @@ bool interpret_greater(doir::Module& module, doir::Token greater) {
 	ZoneScoped;
 	auto& op = *module.get_attribute<lox::comp::Operation>(greater);
 	if(module.has_attribute<double>(op.left) && module.has_attribute<double>(op.right)) {
-		module.add_attribute<bool>(greater) = *module.get_attribute<double>(op.left) > *module.get_attribute<double>(op.right);
+		get_or_add<runtime_value_type>(module, greater).type = lox::Type::Boolean;
+		get_or_add<bool>(module, greater) = *module.get_attribute<double>(op.left) > *module.get_attribute<double>(op.right);
 		return true;
 	}
 	if(auto left = value_type(module, op.left), right = value_type(module, op.right); left != right)
@@ -163,7 +224,8 @@ bool interpret_greater_equal(doir::Module& module, doir::Token greater) {
 	ZoneScoped;
 	auto& op = *module.get_attribute<lox::comp::Operation>(greater);
 	if(module.has_attribute<double>(op.left) && module.has_attribute<double>(op.right)) {
-		module.add_attribute<bool>(greater) = *module.get_attribute<double>(op.left) >= *module.get_attribute<double>(op.right);
+		get_or_add<runtime_value_type>(module, greater).type = lox::Type::Boolean;
+		get_or_add<bool>(module, greater) = *module.get_attribute<double>(op.left) >= *module.get_attribute<double>(op.right);
 		return true;
 	}
 	if(auto left = value_type(module, op.left), right = value_type(module, op.right); left != right)
@@ -176,7 +238,8 @@ bool interpret_negate(doir::Module& module, doir::Token neg) {
 	ZoneScoped;
 	auto& op = *module.get_attribute<lox::comp::Operation>(neg);
 	if(module.has_attribute<double>(op.left)) {
-		module.add_attribute<double>(neg) = -*module.get_attribute<double>(op.left);
+		get_or_add<runtime_value_type>(module, neg).type = lox::Type::Number;
+		get_or_add<double>(module, neg) = -*module.get_attribute<double>(op.left);
 		return true;
 	}
 	else doir::print_diagnostic(module, neg, "Only numbers can be negated!") << std::endl;
@@ -186,112 +249,88 @@ bool interpret_negate(doir::Module& module, doir::Token neg) {
 bool interpret_not(doir::Module& module, doir::Token Not) {
 	ZoneScoped;
 	auto& op = *module.get_attribute<lox::comp::Operation>(Not);
-	module.add_attribute<bool>(Not) = !is_truthy(module, op.left);
+	get_or_add<runtime_value_type>(module, Not).type = lox::Type::Boolean;
+	get_or_add<bool>(module, Not) = !is_truthy(module, op.left);
 	return true;
 }
 
 bool interpret_equal(doir::Module& module, doir::Token eq) {
 	ZoneScoped;
 	auto& op = *module.get_attribute<lox::comp::Operation>(eq);
-	module.add_attribute<bool>(eq) = is_equal(module, op.left, op.right);
+	get_or_add<runtime_value_type>(module, eq).type = lox::Type::Boolean;
+	get_or_add<bool>(module, eq) = is_equal(module, op.left, op.right);
 	return true;
 }
 
 bool interpret_not_equal(doir::Module& module, doir::Token eq) {
 	ZoneScoped;
 	auto& op = *module.get_attribute<lox::comp::Operation>(eq);
-	module.add_attribute<bool>(eq) = !is_equal(module, op.left, op.right);
+	get_or_add<runtime_value_type>(module, eq).type = lox::Type::Boolean;
+	get_or_add<bool>(module, eq) = !is_equal(module, op.left, op.right);
 	return true;
 }
 
 bool interpret_print(doir::Module& module, doir::Token print) {
 	ZoneScoped;
 	auto& op = *module.get_attribute<lox::comp::Operation>(print);
-	if(module.has_attribute<lox::comp::Null>(op.left)) {
+	switch (value_type(module, op.left)) {
+	break; case lox::Type::Null:
 #ifdef LOX_PERFORMANT_PRINTING
 		std::println("nil");
 #else
 		nowide::cout << "nil" << std::endl;
 #endif
 		return true;
-	} else if(module.has_attribute<double>(op.left)) {
+	break; case lox::Type::Number:
 #ifdef LOX_PERFORMANT_PRINTING
 		std::println("{}", *module.get_attribute<double>(op.left));
 #else
 		nowide::cout << *module.get_attribute<double>(op.left) << std::endl;
 #endif
 		return true;
-	} else if(module.has_attribute<bool>(op.left)) {
+	break; case lox::Type::Boolean:
 #ifdef LOX_PERFORMANT_PRINTING
 		std::println("{}", *module.get_attribute<bool>(op.left));
 #else
 		nowide::cout << (*module.get_attribute<bool>(op.left) ? "true" : "false") << std::endl;
 #endif
-		
 		return true;
-	} else if(module.has_attribute<lox::comp::String>(op.left)) {
+	break; case lox::Type::String:
 #ifdef LOX_PERFORMANT_PRINTING
 		std::println("{}", get_token_string(module, op.left));
 #else
 		nowide::cout << get_token_string(module, op.left) << std::endl;
 #endif
-		
 		return true;
+	break; default:
+		doir::print_diagnostic(module, print, "Attempted to print something with no value!");
+		return false;
 	}
-	return false;
 }
 
 bool interpret_builtin_clock(doir::Module& module, doir::Token call) {
 	ZoneScoped;
 	static auto first_called = std::chrono::steady_clock::now();
 	std::chrono::duration<double> elapsed_seconds = std::chrono::steady_clock::now() - first_called;
-	module.add_attribute<double>(call) = elapsed_seconds.count();
+	get_or_add<runtime_value_type>(module, call).type = lox::Type::Number;
+	get_or_add<double>(module, call) = elapsed_seconds.count();
 	return true;
 }
 
-void clear_runtime_value(doir::Module& module, doir::Token t) {
-	ZoneScoped;
-	if(module.has_attribute<lox::comp::Null>(t))
-		module.remove_attribute<lox::comp::Null>(t);
-	if(module.has_attribute<lox::comp::String>(t))
-		module.remove_attribute<lox::comp::String>(t);
-	if(module.has_attribute<std::string>(t))
-		module.remove_attribute<std::string>(t);
-	if(module.has_attribute<double>(t))
-		module.remove_attribute<double>(t);
-	if(module.has_attribute<bool>(t))
-		module.remove_attribute<bool>(t);
+// Inserts the result of a call to interpret with the current state (&= valid, |= should_return) 
+std::pair<bool, bool> operator<<(std::pair<bool&, bool&> ref, std::pair<bool, bool> val) {
+	ref.first &= val.first;
+	ref.second |= val.second;
+	return val;
 }
 
-// Remove any (non literal) values associated with the given range of tokens from the ECS
-void clear_runtime_values(doir::Module& module, doir::Token start = 1, std::optional<doir::Token> _end = {}, bool make_monotonic = true) {
-	ZoneScoped;
-	doir::Token end = _end.value_or(start + module.get_attribute<doir::Children>(start)->total);
-	for(doir::Token t = start; t < end; ++t) {
-		if(module.has_attribute<lox::comp::Literal>(t)) continue;
-		if(module.has_hashtable_attribute<lox::comp::ParameterDeclaire>(t)) continue;
-
-		clear_runtime_value(module, t);
-	}
-
-	// Seams to take more time than it saves!
-	// if(make_monotonic) module.make_monotonic<
-	// 	lox::comp::Null,
-	// 	lox::comp::String,
-	// 	std::string,
-	// 	double,
-	// 	bool
-	// >();
-}
-
-bool interpret(doir::Module& module, doir::Token root, doir::Token returnTo = 0, std::optional<doir::Token> _skipCheck = {}) {
+std::pair<bool, bool> interpret(doir::Module& module, doir::Token root, doir::Token returnTo = 0, std::optional<doir::Token> _skipCheck = {}) {
 	ZoneScoped;
 	doir::Token skipCheck = _skipCheck.value_or(root); // Token we should check any blocks against to determine weather or not to skip them
 	bool valid = true;
+	bool should_return = false;
 
-	clear_runtime_values(module, root);
-
-	for(doir::Token t = root + module.get_attribute<doir::Children>(root)->total + 1; t-- > root && valid; )
+	for(doir::Token t = root + module.get_attribute<doir::Children>(root)->total + 1; t-- > root && valid && !should_return; )
 		switch(auto type = lox::token_type(module, t); type) {
 		break; case lox::Type::Number: [[fallthrough]];
 		case lox::Type::Null: [[fallthrough]];
@@ -330,7 +369,7 @@ bool interpret(doir::Module& module, doir::Token root, doir::Token returnTo = 0,
 			if(module.has_attribute<lox::comp::Operation>(t))
 				copy_runtime_value(module, returnTo, module.get_attribute<lox::comp::Operation>(t)->left);
 			else module.add_attribute<lox::comp::Null>(returnTo);
-			return valid;
+			return {valid, true};
 		}
 		break; case lox::Type::Call: {
 			auto& call = *module.get_attribute<lox::comp::Call>(t);
@@ -347,55 +386,52 @@ bool interpret(doir::Module& module, doir::Token root, doir::Token returnTo = 0,
 				if(module.has_attribute<lox::comp::TrailingCall>(t))
 					doir::print_diagnostic(module, t, "Tail recursion detected.", doir::diagnostic_type::Warning) << std::endl;
 				else {
-					// TODO... How do we chech for tail recursion?
 					auto& msg = doir::print_diagnostic(module, t, "(Non tail) recursion is not supported.");
 					if(ref != root) msg << " This indirectly recursive call is invalid.";
 					msg << std::endl;
-					return false;
+					return {false, false};
 				}
 			}
 
 			// Mark the call as started
-			op.right = true;
+			++op.right;
 
 			// Copy the argument values to the parameters
-			for(size_t i = 0; i < params.size(); ++i) {
-				clear_runtime_value(module, params[i]);
+			for(size_t i = 0; i < params.size(); ++i)
 				copy_runtime_value(module, params[i], call.children[i]);
-			}
-			valid &= interpret(module, ref, t);
+			valid &= interpret(module, ref, t).first; // NOTE: Doesn't touch should return!
 
 			// Mark the call as finished
-			op.right = false;
+			--op.right;
 		}
 		break; case lox::Type::If: {
 			auto& [a] = *module.get_attribute<lox::components::OperationIf>(t);
 			auto& [condition, then, Else, marker] = a;
 
-			interpret(module, condition, returnTo);
+			std::tie(valid, should_return) << interpret(module, condition, returnTo);
 			if(is_truthy(module, condition))
-				interpret(module, then, returnTo, t);
+				std::tie(valid, should_return) << interpret(module, then, returnTo, t);
 			else if(Else != 0)
-				interpret(module, Else, returnTo, t);
+				std::tie(valid, should_return) << interpret(module, Else, returnTo, t);
 		}
 		break; case lox::Type::While: {
 			auto& op = *module.get_attribute<lox::components::Operation>(t);
 
-			interpret(module, op.left, returnTo);
+			std::tie(valid, should_return) << interpret(module, op.left, returnTo);
 			while(is_truthy(module, op.left)) {
 				// Evaluate the body of the loop
-				interpret(module, op.right, returnTo, t);
+				std::tie(valid, should_return) << interpret(module, op.right, returnTo, t);
 				// Evaluate the condition for the next truthyness check
-				interpret(module, op.left, returnTo);
+				std::tie(valid, should_return) << interpret(module, op.left, returnTo);
 			}
 		}
 		break; case lox::Type::And: {
 			auto [a] = *module.get_attribute<lox::components::OperationIf>(t);
 			auto [left, right, marker, _] = a;
 
-			interpret(module, left, returnTo);
+			std::tie(valid, should_return) << interpret(module, left, returnTo);
 			if(is_truthy(module, left)) {
-				interpret(module, right, returnTo);
+				std::tie(valid, should_return) << interpret(module, right, returnTo);
 				auto dbg = module.add_attribute<bool>(t) = is_truthy(module, right);
 			} else module.add_attribute<bool>(t) = false;
 		}
@@ -403,9 +439,9 @@ bool interpret(doir::Module& module, doir::Token root, doir::Token returnTo = 0,
 			auto [a] = *module.get_attribute<lox::components::OperationIf>(t);
 			auto [left, right, marker, _] = a;
 
-			interpret(module, left, returnTo);
+			std::tie(valid, should_return) << interpret(module, left, returnTo);
 			if(!is_truthy(module, left)) {
-				interpret(module, right, returnTo);
+				std::tie(valid, should_return) << interpret(module, right, returnTo);
 				module.add_attribute<bool>(t) = is_truthy(module, right);
 			} else module.add_attribute<bool>(t) = true;
 		}
@@ -427,10 +463,10 @@ bool interpret(doir::Module& module, doir::Token root, doir::Token returnTo = 0,
 
 	// If this is a function call... mark that we returned null
 	if(returnTo > 0) module.add_attribute<lox::comp::Null>(returnTo);
-	return valid;
+	return {valid, should_return};
 }
 bool interpret(doir::Module& module) {
-	return interpret(module, 1);
+	return interpret(module, 1).first;
 }
 
 TEST_CASE("Lox::Interp::And") {
@@ -467,10 +503,14 @@ TEST_CASE("Lox::Interp::TailRecursion") {
 		REQUIRE(verify_redeclarations(module));
 		REQUIRE(verify_call_arrities(module));
 		REQUIRE(identify_trailing_calls(module));
-	
+
 		REQUIRE(interpret(module));
 	CAPTURE_CONSOLE_END
 	CHECK(capture.str() == R"(Warning at <transient>:1:44-45
+   fun fib(x) { if(x < 2) return 1; return fib(x - 2); } fib(5);
+                                              ^
+                       Tail recursion detected.
+Warning at <transient>:1:44-45
    fun fib(x) { if(x < 2) return 1; return fib(x - 2); } fib(5);
                                               ^
                        Tail recursion detected.
@@ -489,7 +529,7 @@ TEST_CASE("Lox::Interp::Expressions") {
 		REQUIRE(verify_redeclarations(module));
 		REQUIRE(verify_call_arrities(module));
 		REQUIRE(identify_trailing_calls(module));
-	
+
 		REQUIRE(interpret(module));
 	CAPTURE_CONSOLE_END
 #ifndef LOX_PERFORMANT_PRINTING
@@ -507,6 +547,7 @@ true
 }
 
 TEST_CASE("Lox::Interp" * doctest::skip()) {
+// TEST_CASE("Lox::Interp") {
 	ZoneScopedN("Lox::Interp");
 	doir::ParseModule module("fun add(a, b) { var tmp = a; a = b; b = tmp; return a + b; } var x = 0; var y = 1; if(true) print add(x, y);" /*for(;;) print x;"*/);
 	auto root = lox::parse{}.start(module);

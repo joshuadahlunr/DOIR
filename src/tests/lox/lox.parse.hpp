@@ -144,8 +144,8 @@ namespace lox {
 				else if(decl.parent == eB) decl.parent = eA;
 			}
 		};
-		struct BodyMarker { 
-			doir::Token skipTo; 
+		struct BodyMarker {
+			doir::Token skipTo;
 			static void swap_entities(BodyMarker& mark, ecs::entity eA, ecs::entity eB) {
 				if(mark.skipTo == eA) mark.skipTo = eB;
 				else if(mark.skipTo == eB) mark.skipTo = eA;
@@ -298,7 +298,7 @@ namespace lox {
 						module.lexer_state.remaining = module.lexer_state.remaining.substr(1);
 
 						auto saved = module.save_state();
-						module.lex(lexer);	
+						module.lex(lexer);
 						if(module.current_lexer_token<LexerTokens>() == LexerTokens::Semicolon || module.current_lexer_token<LexerTokens>() == LexerTokens::CloseCurly)
 							break;
 						module.restore_state(saved);
@@ -386,7 +386,7 @@ namespace lox {
 			ZoneScoped;
 			comp::Parameters args;
 			do {
-				auto e = expression(module); 
+				auto e = expression(module);
 				if(module.has_attribute<doir::Error>(e)) {
 					if(args.empty()) return args; // If the first expression fails, just assume there are no arguments!
 					return {e};
@@ -910,9 +910,11 @@ namespace lox {
 			) {
 				module.restore_state(next);
 				if(module.current_lexer_token<LexerTokens>() == Dot) {
-					// TODO: Classes
 					return module.make_error<doir::Error>({"Classes are not yet supported!"});
 				} else {
+					if(module.has_attribute<components::Literal>(prim))
+						return module.make_error<doir::Error>({"Can only call functions (Can't call literals)"});
+
 					auto t = module.make_token();
 					PROPAGATE_OPTIONAL_ERROR(module.expect_and_lex(lexer, LexerTokens::OpenParenthesis));
 

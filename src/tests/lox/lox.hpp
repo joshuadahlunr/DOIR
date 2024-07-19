@@ -75,11 +75,7 @@ namespace lox {
 
 	inline Type token_type(doir::Module& module, doir::Token t) {
 		ZoneScoped;
-		if(module.has_attribute<lox::comp::Null>(t)) return Type::Null;
-		else if(module.has_attribute<lox::comp::String>(t)) return Type::String;
-		else if(module.has_attribute<bool>(t)) return Type::Boolean;
-		else if(module.has_attribute<double>(t)) return Type::Number;
-		else if(module.has_attribute<lox::comp::Variable>(t)) return Type::Variable;
+		if(module.has_attribute<lox::comp::Variable>(t)) return Type::Variable;
 		else if(module.has_attribute<lox::comp::Function>(t)) return Type::Call;
 		else if(module.has_hashtable_attribute<lox::comp::VariableDeclaire>(t)) return Type::VariableDeclaire;
 		else if(module.has_hashtable_attribute<lox::comp::FunctionDeclaire>(t)) return Type::FunctionDeclaire;
@@ -103,6 +99,10 @@ namespace lox {
 		else if(module.has_attribute<lox::comp::While>(t)) return Type::While;
 		else if(module.has_attribute<lox::comp::If>(t)) return Type::If;
 		else if(module.has_attribute<lox::comp::Block>(t)) return Type::Block; // This check needs to happen after other types which might have blocks
+		else if(module.has_attribute<lox::comp::Null>(t)) return Type::Null;
+		else if(module.has_attribute<lox::comp::String>(t)) return Type::String;
+		else if(module.has_attribute<bool>(t)) return Type::Boolean;
+		else if(module.has_attribute<double>(t)) return Type::Number;
 		else return Type::Invalid;
 	}
 }
