@@ -4,9 +4,9 @@
 	#define ECS_IMPLEMENTATION
 #endif
 #include "utility.hpp"
-#include "../thirdparty/ECS.hpp"
-#include "../thirdparty/ECSquery.hpp"
-#include "../thirdparty/ECSadapter.hpp"
+#include "ECS/ecs.hpp"
+#include "ECS/query.hpp"
+#include "ECS/adapter.hpp"
 #include "fnv1a.hpp"
 
 #include <nowide/iostream.hpp>
@@ -45,62 +45,64 @@ namespace doir {
 
 		inline Token make_token() { return create_entity(); }
 
-		template<typename Tattr>
-		inline Tattr& add_attribute(Token t) { return *add_component<Tattr>(t); }
+		template<typename Tattr, size_t Unique = 0>
+		inline Tattr& add_attribute(Token t) { return *add_component<Tattr, Unique>(t); }
 
-		template<typename Tattr>
+		template<typename Tattr, size_t Unique = 0>
 		inline Tattr& add_hashtable_attribute(Token t) {
 			return ecs::hashtable::get_key_and_mark_occupied<Tattr>(
-				add_attribute<hashtable_t<Tattr>>(t)
+				add_attribute<hashtable_t<Tattr>, Unique>(t)
 			);
 		}
 
-		template<typename Tattr>
-		bool remove_attribute(Token t) { return remove_component<Tattr>(t); }
-		template<typename Tattr>
-		bool remove_hashtable_attribute(Token t) { return remove_component<hashtable_t<Tattr>>(t); }
+		template<typename Tattr, size_t Unique = 0>
+		bool remove_attribute(Token t) { return remove_component<Tattr, Unique>(t); }
+		template<typename Tattr, size_t Unique = 0>
+		bool remove_hashtable_attribute(Token t) { return remove_component<hashtable_t<Tattr>, Unique>(t); }
 
-		template<typename Tattr>
-		inline ecs::optional_reference<Tattr> get_attribute(Token t) { return get_component<Tattr>(t); }
-		template<typename Tattr>
-		inline ecs::optional_reference<const Tattr> get_attribute(Token t) const { return get_component<Tattr>(t); }
+		template<typename Tattr, size_t Unique = 0>
+		inline ecs::optional_reference<Tattr> get_attribute(Token t) { return get_component<Tattr, Unique>(t); }
+		template<typename Tattr, size_t Unique = 0>
+		inline ecs::optional_reference<const Tattr> get_attribute(Token t) const { return get_component<Tattr, Unique>(t); }
 
-		template<typename Tattr>
-		inline auto get_hashtable_attribute(Token t) { return get_component<hashtable_t<Tattr>>(t); }
-		template<typename Tattr>
-		inline auto get_hashtable_attribute(Token t) const { return get_component<hashtable_t<Tattr>>(t); }
+		template<typename Tattr, size_t Unique = 0>
+		inline auto get_hashtable_attribute(Token t) { return get_component<hashtable_t<Tattr>, Unique>(t); }
+		template<typename Tattr, size_t Unique = 0>
+		inline auto get_hashtable_attribute(Token t) const { return get_component<hashtable_t<Tattr>, Unique>(t); }
 
-		template<typename Tattr>
-		optional_reference<ecs::hashtable::component_storage<Tattr, void, fnv::fnv1a_64<Tattr>>> get_hashtable(bool skip_rehash = false) {
-			auto hashtable = ecs::get_adapted_component_storage<ecs::hashtable::component_storage<Tattr, void, fnv::fnv1a_64<Tattr>>>(*this);
+		template<typename Tattr, size_t Unique = 0>
+		optional_reference<ecs::hashtable::component_storage<Tattr, void, fnv::fnv1a_64<Tattr>, Unique>> get_hashtable(bool skip_rehash = false) {
+			auto hashtable = ecs::get_adapted_component_storage<ecs::hashtable::component_storage<Tattr, void, fnv::fnv1a_64<Tattr>, Unique>>(*this);
 			if(!hashtable) return {};
 			doir::hash_lookup_module = this;
 			if(!skip_rehash) if(!hashtable->rehash(*this)) return {};
 			return hashtable;
 		}
 
-		template<typename Tattr>
-		inline bool has_attribute(Token t) const { return has_component<Tattr>(t); }
+		template<typename Tattr, size_t Unique = 0>
+		inline bool has_attribute(Token t) const { return has_component<Tattr, Unique>(t); }
 
-		template<typename Tattr>
-		inline bool has_hashtable_attribute(Token t) const { return has_component<hashtable_t<Tattr>>(t); }
+		template<typename Tattr, size_t Unique = 0>
+		inline bool has_hashtable_attribute(Token t) const { return has_component<hashtable_t<Tattr>, Unique>(t); }
 
-		template<typename Tattr>
+		template<typename Tattr, size_t Unique = 0>
 		auto get_attribute_as_span() {
-			auto storage = ecs::get_adapted_component_storage<ecs::typed::component_storage<Tattr>>(*this);
+			auto storage = ecs::get_adapted_component_storage<ecs::typed::component_storage<Tattr, Unique>>(*this);
 			if(!storage) return decltype(storage->span()){};
 			return storage->span();
 		}
 
-		template<typename Tattr>
+		template<typename Tattr, size_t Unique = 0>
 		auto get_hashtable_attribute_as_span() {
-			auto storage = ecs::get_adapted_component_storage<ecs::typed::component_storage<hashtable_t<Tattr>>>(*this);
+			auto storage = ecs::get_adapted_component_storage<ecs::typed::component_storage<hashtable_t<Tattr>, Unique>>(*this);
 			if(!storage) return decltype(storage->span()){};
 			return storage->span();
 		}
 
 		template<typename... Tattrs>
 		void make_monotonic() { ecs::scene::make_monotonic<Tattrs...>(); }
+		template<typename Tattr, size_t Unique = 0>
+		void make_monotonic() { ecs::scene::make_monotonic<Tattr, Unique>(); }
 
 		template<typename... Tattrs>
 		inline ecs::scene_view<Tattrs...> view() { return {*this}; }

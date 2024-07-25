@@ -26,7 +26,7 @@
 #ifndef __ECS_ADAPTER_HPP__
 #define __ECS_ADAPTER_HPP__
 
-#include "ECS.hpp"
+#include "ecs.hpp"
 
 #include <bit>
 #include <cmath>
@@ -43,7 +43,7 @@ namespace ecs {
 	}
 
 	namespace typed {
-		template<typename Tcomponent>
+		template<typename Tcomponent, size_t Unique = 0>
 		struct component_storage : public scene::component_storage {
 			using Base = scene::component_storage;
 			using component_type = Tcomponent;
@@ -52,20 +52,21 @@ namespace ecs {
 			optional_reference<Tcomponent> get(entity e) { return Base::get<Tcomponent>(e); }
 			std::optional<std::pair<Tcomponent&, size_t>> allocate(size_t count = 1) { return Base::allocate<Tcomponent>(count); }
 			optional_reference<Tcomponent> get_or_allocate(entity e) { return Base::get_or_allocate<Tcomponent>(e); }
-			bool remove(struct scene& scene, entity e) { return Base::remove<Tcomponent>(scene, e); }
+			bool remove(struct scene& scene, entity e) { return Base::remove<Tcomponent, Unique>(scene, e); }
+			void reorder(struct scene& scene, std::span<size_t> order) { Base::reorder<Tcomponent, Unique>(scene, order); }
 			template<typename F, bool with_entities = false>
-			void sort(struct scene& scene, const F& comparator) { Base::sort<Tcomponent, F, with_entities>(scene, comparator); }
-			void sort_by_value(struct scene& scene) { Base::sort_by_value<Tcomponent>(scene); }
-			void sort_monotonic(struct scene& scene) { Base::sort_monotonic<Tcomponent>(scene); }
+			void sort(struct scene& scene, const F& comparator) { Base::sort<Tcomponent, F, with_entities, Unique>(scene, comparator); }
+			void sort_by_value(struct scene& scene) { Base::sort_by_value<Tcomponent, Unique>(scene); }
+			void sort_monotonic(struct scene& scene) { Base::sort_monotonic<Tcomponent, Unique>(scene); }
+			bool swap(size_t a, std::optional<size_t> b = {}) { return Base::swap<Tcomponent>(a, b); }
+			bool swap(struct scene& scene, size_t a, std::optional<size_t> b = {}, bool swap_if_one_elementless = false) {
+				return Base::swap<Tcomponent, Unique>(scene, a, b, swap_if_one_elementless);
+			}
 
 			Tcomponent* data() { return (Tcomponent*)Base::data.data(); }
 			const Tcomponent* data() const { return (const Tcomponent*)Base::data.data(); }
 			std::span<Tcomponent> span() { return {data(), Base::size()}; }
 			std::span<const Tcomponent> span() const { return {data(), Base::size()}; }
-
-		protected:
-			bool swap(size_t a, std::optional<size_t> _b = {}) { return Base::swap<Tcomponent>(a, _b); }
-			bool swap(struct scene& scene, size_t a, std::optional<size_t> _b = {}, bool swap_if_one_elementless = false) { return Base::swap<Tcomponent>(scene, a, _b, swap_if_one_elementless); }
 		};
 	}
 
@@ -155,17 +156,25 @@ namespace ecs {
 #endif
 
 		// An adapter over a component storage which treats the underlying data as a hopscotch hash table
-		template<typename Tkey, typename Tvalue = void, typename Hash = std::hash<Tkey>, size_t OneOverOneMinusMaxLoadFactor = /*one_over_one_minus(.95)*/20, size_t NeighborhoodSize = 8, size_t MaxRetries = 5>
+		template<
+			typename Tkey,
+			typename Tvalue = void,
+			typename Hash = std::hash<Tkey>,
+			size_t Unique = 0,
+			size_t OneOverOneMinusMaxLoadFactor = /*one_over_one_minus(.95)*/20,
+			size_t NeighborhoodSize = 8,
+			size_t MaxRetries = 5
+		>
 		class component_storage
 			: public typed::component_storage<
-				component_wrapper<ecs::detail::remove_with_entity_t<Tkey>, ecs::detail::remove_with_entity_t<Tvalue>>
+				component_wrapper<ecs::detail::remove_with_entity_t<Tkey>, ecs::detail::remove_with_entity_t<Tvalue>>, Unique
 			>
 		{
 		protected:
 			using key_type = ecs::detail::remove_with_entity_t<Tkey>;
 			using value_type = ecs::detail::remove_with_entity_t<Tvalue>;
 			using component_t = component_wrapper<key_type, value_type>;
-			using Base = typed::component_storage<component_t>;
+			using Base = typed::component_storage<component_t, Unique>;
 
 			// static constexpr bool has_value_type = std::is_same_v<value_type, void>;
 			// using kv_pair = std::conditional_t<has_value_type, key_type, std::pair<key_type, value_type>>;

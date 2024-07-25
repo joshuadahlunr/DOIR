@@ -26,7 +26,7 @@
 #ifndef __ECS_QUERY_HPP__
 #define __ECS_QUERY_HPP__
 
-#include "ECS.hpp"
+#include "ecs.hpp"
 #include <ranges>
 #include <variant>
 

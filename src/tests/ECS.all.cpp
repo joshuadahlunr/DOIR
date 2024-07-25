@@ -1,6 +1,6 @@
-#include "../../thirdparty/ECS.hpp"
-#include "../../thirdparty/ECSquery.hpp"
-#include "../../thirdparty/ECSadapter.hpp"
+#include "../ECS/ecs.hpp"
+#include "../ECS/query.hpp"
+#include "../ECS/adapter.hpp"
 
 #include "tests.utils.hpp"
 
@@ -118,6 +118,7 @@ TEST_SUITE("ECS") {
 
 		auto& storage = *scene.get_storage<float>();
 		storage.sort_monotonic<float>(scene);
+		// scene.make_monotonic();
 		float* storage_as_float = (float*)storage.data.data();
 		CHECK(storage_as_float[0] == 3);
 		CHECK(*scene.get_component<float>(e0) == 3);
@@ -189,6 +190,52 @@ TEST_SUITE("ECS") {
 		for(ecs::entity e = first; e < first + 100; ++e) {
 			CHECK(*hashtable.find(e) == e);
 			CHECK(get_key<int>(scene.get_component<C>(*hashtable.find(e))) == e);
+		}
+	}
+
+	TEST_CASE("ECS::UniqueTag") {
+		ZoneScoped;
+		ecs::scene scene;
+		auto e0 = scene.create_entity();
+		auto e1 = scene.create_entity();
+		auto e2 = scene.create_entity();
+		auto e3 = scene.create_entity();
+		*scene.add_component<float>(e3) = 0;
+		*scene.add_component<float>(e0) = 3;
+		*scene.add_component<float>(e2) = 5;
+		*scene.add_component<float>(e1) = 27;
+		*scene.add_component<float, 1>(e3) = 27;
+		*scene.add_component<float, 1>(e0) = 5;
+		*scene.add_component<float, 1>(e2) = 3;
+		*scene.add_component<float, 1>(e1) = 0;
+
+		{
+			auto& storage = *scene.get_storage<float>();
+			storage.sort_monotonic<float>(scene);
+			// scene.make_monotonic();
+			float* storage_as_float = (float*)storage.data.data();
+			CHECK(storage_as_float[0] == 3);
+			CHECK(*scene.get_component<float>(e0) == 3);
+			CHECK(storage_as_float[1] == 27);
+			CHECK(*scene.get_component<float>(e1) == 27);
+			CHECK(storage_as_float[2] == 5);
+			CHECK(*scene.get_component<float>(e2) == 5);
+			CHECK(storage_as_float[3] == 0);
+			CHECK(*scene.get_component<float>(e3) == 0);
+		}
+		{
+			auto& storage = *scene.get_storage<float, 1>();
+			storage.sort_monotonic<float, 1>(scene);
+			// scene.make_monotonic();
+			float* storage_as_float = (float*)storage.data.data();
+			CHECK(storage_as_float[0] == 5);
+			CHECK(*scene.get_component<float, 1>(e0) == 5);
+			CHECK(storage_as_float[1] == 0);
+			CHECK(*scene.get_component<float, 1>(e1) == 0);
+			CHECK(storage_as_float[2] == 3);
+			CHECK(*scene.get_component<float, 1>(e2) == 3);
+			CHECK(storage_as_float[3] == 27);
+			CHECK(*scene.get_component<float, 1>(e3) == 27);
 		}
 	}
 }
