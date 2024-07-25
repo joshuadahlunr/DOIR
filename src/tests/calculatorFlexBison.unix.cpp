@@ -1,12 +1,9 @@
-#include <doctest/doctest.h>
-#include <tracy/Tracy.hpp>
 #include <nowide/iostream.hpp>
 #include <sstream>
 
 #include "tests.utils.hpp"
 
-
-
+#ifndef DOIR_DISABLE_FLEX_BISON
 
 // Include the parser and the lexer
 extern "C" {
@@ -207,3 +204,11 @@ TEST_CASE("Yacc Multi") {
 	CHECK(capture.str() == " = 4\n = 2\n = -1\n");
 	FrameMark;
 }
+
+#else
+
+TEST_CASE("Lex Test 1") {
+	CHECK(true);
+}
+
+#endif // DOIR_DISABLE_FLEX_BISON

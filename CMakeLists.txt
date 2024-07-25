@@ -10,6 +10,7 @@ endif()
 
 option(DOIR_ENABLE_TESTS "Weather or not Unit Tests should be built." ${PROJECT_IS_TOP_LEVEL})
 option(DOIR_ENABLE_PROFILING "Weather or not profiling instrumentation will be added." ${DOIR_PROFILE_DEFAULT})
+option(DOIR_ENABLE_CODE_COVERAGE "Weather or not a code coverage report should be generated" false)
 
 add_subdirectory(thirdparty/nowide)
 
@@ -20,7 +21,7 @@ target_link_libraries(doir PUBLIC nowide::nowide)
 
 if(${DOIR_ENABLE_TESTS})
 	include(FetchContent) # once in the project to include the module
-
+	include(${CMAKE_SOURCE_DIR}/cmake/includeable.cmake)
 
 	file(GLOB sources "src/tests/*.all.cpp" "thirdparty/*.cpp")
 	file(GLOB lox_sources "src/tests/lox/*.cpp" "src/tests/tests.all.cpp" "thirdparty/*.cpp")
@@ -46,6 +47,25 @@ if(${DOIR_ENABLE_TESTS})
 	include(${CMAKE_BINARY_DIR}/_deps/fetch_doctest-src/scripts/cmake/doctest.cmake)
 	doctest_discover_tests(tst)
 	doctest_discover_tests(lox)
+
+	if(${DOIR_ENABLE_CODE_COVERAGE})
+		include(${CMAKE_SOURCE_DIR}/cmake/CodeCoverage.cmake)
+		append_coverage_compiler_flags_to_target(tst)
+		append_coverage_compiler_flags_to_target(lox)
+		target_compile_definitions(tst PUBLIC DOIR_DISABLE_FLEX_BISON)
+    	setup_target_for_coverage_gcovr_html(
+			NAME coverage
+			EXECUTABLE tst
+			BASE_DIRECTORY "${PROJECT_SOURCE_DIR}/src"
+			EXCLUDE "tests/flexbison/*"
+		)
+		setup_target_for_coverage_gcovr_xml(
+			NAME coverage_xml
+			EXECUTABLE tst
+			BASE_DIRECTORY "${PROJECT_SOURCE_DIR}/src"
+			EXCLUDE "tests/flexbison/*"
+		)
+	endif()
 else()
 	target_compile_definitions(doir PRIVATE DOCTEST_CONFIG_DISABLE)
 endif()
