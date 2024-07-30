@@ -311,17 +311,19 @@ namespace ecs {
 			* @brief Constructor for the component storage with a specified element size and reserved memory.
 			*
 			* @param element_size The size of each component.
+			* @param reserved_element_count Number of elements to initially reserve
 			*/
-			component_storage(size_t element_size, size_t element_count = 5) : element_size(element_size) { data.reserve(element_count * element_size); }
+			component_storage(size_t element_size, size_t reserved_element_count = 64) : element_size(element_size) { data.reserve(reserved_element_count * element_size); }
 
 			/**
 			* @brief Template constructor that initializes the component storage with a specified element size and type.
 			*
 			* @tparam Tcomponent The type of component.
 			* @param reference A reference to the component (default is an empty object).
+			* @param reserved_element_count Number of elements to initially reserve
 			*/
 			template<typename Tcomponent>
-			component_storage(Tcomponent reference = {}, size_t element_count = 5) : component_storage(sizeof(Tcomponent), element_count) {}
+			component_storage(Tcomponent reference = {}, size_t reserved_element_count = 64) : component_storage(sizeof(Tcomponent), reserved_element_count) {}
 
 			/**
 			* @brief Template function that retrieves a component by its entity index, if it exists and matches the expected type.
@@ -561,7 +563,11 @@ namespace ecs {
 		/**
 		* @brief Vector of storage objects for storing and retrieving components.
 		*/
-		std::vector<component_storage> storages = {component_storage()};
+		std::vector<component_storage> storages = []{
+			std::vector<component_storage> out = {component_storage()};
+			out.reserve(64);
+			return out;
+		}();
 
 		/**
 		* @brief Queue of available entities that can be reused.
