@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.21)
-project(DOIR LANGUAGES CXX)
+project(DOIR LANGUAGES C CXX)
 
 if(CMAKE_BUILD_TYPE MATCHES Debug)
 	set(DOIR_PROFILE_DEFAULT false)
@@ -20,6 +20,8 @@ set_property(TARGET doir PROPERTY CXX_STANDARD 23)
 target_link_libraries(doir PUBLIC nowide::nowide)
 
 if(${DOIR_ENABLE_TESTS})
+	option(DOIR_ENABLE_CLOX "Weather or not Clox test cases for comparison should be built." ${PROJECT_IS_TOP_LEVEL})
+
 	include(FetchContent) # once in the project to include the module
 	include(${CMAKE_SOURCE_DIR}/cmake/includeable.cmake)
 
@@ -48,11 +50,27 @@ if(${DOIR_ENABLE_TESTS})
 	set_property(TARGET lox PROPERTY CXX_STANDARD 23)
 	target_link_libraries(lox PUBLIC nowide::nowide)
 
+	if(${DOIR_ENABLE_CLOX})
+		file(GLOB clox_sources "${CMAKE_BINARY_DIR}/_deps/fetch_lox-src/c/*.c")
+		file(GLOB additional_clox_sources "src/tests/clox/*.cpp" "src/tests/tests.all.cpp")
+		list(REMOVE_ITEM clox_sources "${CMAKE_BINARY_DIR}/_deps/fetch_lox-src/c/main.c")
+		add_executable(clox ${clox_sources} ${additional_clox_sources})
+		target_include_directories(clox PUBLIC "${CMAKE_BINARY_DIR}/_deps/fetch_lox-src/c" "src/tests/clox")
+		set_property(TARGET clox PROPERTY CXX_STANDARD 23)
+		target_link_libraries(clox PUBLIC nowide::nowide)
+
+		include(${CMAKE_SOURCE_DIR}/cmake/CloxPatch.cmake)
+		CLOX_PATCH("${clox_sources}")
+	endif()
+
 	FetchContent_Declare(fetch_doctest GIT_REPOSITORY https://github.com/doctest/doctest.git GIT_SHALLOW true)
 	FetchContent_MakeAvailable(fetch_doctest)
 
 	target_link_libraries(tst PUBLIC doctest)
 	target_link_libraries(lox PUBLIC doctest)
+	if(TARGET clox)
+		target_link_libraries(clox PUBLIC doctest)
+	endif()
 	include(${CMAKE_BINARY_DIR}/_deps/fetch_doctest-src/scripts/cmake/doctest.cmake)
 	doctest_discover_tests(tst)
 	doctest_discover_tests(lox)
@@ -92,6 +110,9 @@ if(${DOIR_ENABLE_PROFILING})
 	if (TARGET lox)
 		target_link_libraries(lox PUBLIC TracyClient)
 	endif()
+	if (TARGET clox)
+		target_link_libraries(clox PUBLIC TracyClient)
+	endif()
 
 	if(${DOIR_BUILD_TRACY_PROFILER})
 		set(LEGACY ON CACHE BOOL "Instead of Wayland, use the legacy X11 backend on Linux")
@@ -105,6 +126,7 @@ else()
 	if (TARGET lox)
 		target_include_directories(lox PUBLIC thirdparty/stubs)
 	endif()
+	if (TARGET clox)
+		target_include_directories(clox PUBLIC thirdparty/stubs)
+	endif()
 endif()
-
-

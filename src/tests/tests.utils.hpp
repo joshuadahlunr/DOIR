@@ -2,6 +2,8 @@
 
 #include <doctest/doctest.h>
 #include <tracy/Tracy.hpp>
+#include <nowide/iostream.hpp>
+#include <sstream>
 
 #define CAPTURE_CONSOLE_BEGIN std::stringstream capture; \
 /* capture(nowide::cout) */{\
