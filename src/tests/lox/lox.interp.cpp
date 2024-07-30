@@ -1,8 +1,11 @@
 #include "lox.hpp"
 #include <chrono>
+#include <cmath>
 #include <sstream>
 #include <string>
-#include <print>
+#ifdef LOX_PERFORMANT_PRINTING
+	#include <print>
+#endif
 
 struct runtime_value_type { lox::Type type = lox::Type::Null; };
 
@@ -169,7 +172,10 @@ bool interpret_divide(doir::Module& module, doir::Token div) {
 	auto& op = *module.get_attribute<lox::comp::Operation>(div);
 	if(module.has_attribute<double>(op.left) && module.has_attribute<double>(op.right)) {
 		get_or_add<runtime_value_type>(module, div).type = lox::Type::Number;
-		get_or_add<double>(module, div) = *module.get_attribute<double>(op.left) / *module.get_attribute<double>(op.right);
+		auto denom = *module.get_attribute<double>(op.right);
+		if(doir::float_equal<double>(denom, 0))
+			get_or_add<double>(module, div) = std::nan(""); // Dividing by zero returns nan
+		else get_or_add<double>(module, div) = *module.get_attribute<double>(op.left) / denom;
 		return true;
 	}
 	if(auto left = value_type(module, op.left), right = value_type(module, op.right); left != right)
@@ -306,6 +312,7 @@ bool interpret_print(doir::Module& module, doir::Token print) {
 		doir::print_diagnostic(module, print, "Attempted to print something with no value!");
 		return false;
 	}
+	return false; // Nessicary?
 }
 
 bool interpret_builtin_clock(doir::Module& module, doir::Token call) {
@@ -321,6 +328,11 @@ bool interpret_builtin_clock(doir::Module& module, doir::Token call) {
 std::pair<bool, bool> operator<<(std::pair<bool&, bool&> ref, std::pair<bool, bool> val) {
 	ref.first &= val.first;
 	ref.second |= val.second;
+	return val;
+}
+std::pair<bool, bool> operator<<(std::tuple<bool&, bool&> ref, std::pair<bool, bool> val) {
+	std::get<0>(ref) &= val.first;
+	std::get<1>(ref) |= val.second;
 	return val;
 }
 
@@ -362,7 +374,8 @@ std::pair<bool, bool> interpret(doir::Module& module, doir::Token root, doir::To
 		}
 		break; case lox::Type::Return: {
 			if(returnTo == 0) {
-				doir::print_diagnostic(module, t, "Can't return from outside a function!", doir::diagnostic_type::Warning) << std::endl;
+				doir::print_diagnostic(module, t, "Can't return from outside a function!") << std::endl;
+				valid = false;
 				continue;
 			}
 
@@ -418,7 +431,7 @@ std::pair<bool, bool> interpret(doir::Module& module, doir::Token root, doir::To
 			auto& op = *module.get_attribute<lox::components::Operation>(t);
 
 			std::tie(valid, should_return) << interpret(module, op.left, returnTo);
-			while(is_truthy(module, op.left)) {
+			while(is_truthy(module, op.left) && !should_return) {
 				// Evaluate the body of the loop
 				std::tie(valid, should_return) << interpret(module, op.right, returnTo, t);
 				// Evaluate the condition for the next truthyness check
@@ -432,8 +445,8 @@ std::pair<bool, bool> interpret(doir::Module& module, doir::Token root, doir::To
 			std::tie(valid, should_return) << interpret(module, left, returnTo);
 			if(is_truthy(module, left)) {
 				std::tie(valid, should_return) << interpret(module, right, returnTo);
-				auto dbg = module.add_attribute<bool>(t) = is_truthy(module, right);
-			} else module.add_attribute<bool>(t) = false;
+				copy_runtime_value(module, t, right);
+			} else copy_runtime_value(module, t, left);
 		}
 		break; case lox::Type::Or: {
 			auto [a] = *module.get_attribute<lox::components::OperationIf>(t);
@@ -442,8 +455,8 @@ std::pair<bool, bool> interpret(doir::Module& module, doir::Token root, doir::To
 			std::tie(valid, should_return) << interpret(module, left, returnTo);
 			if(!is_truthy(module, left)) {
 				std::tie(valid, should_return) << interpret(module, right, returnTo);
-				module.add_attribute<bool>(t) = is_truthy(module, right);
-			} else module.add_attribute<bool>(t) = true;
+				copy_runtime_value(module, t, right);
+			} else copy_runtime_value(module, t, left);
 		}
 		break; case lox::Type::Add: valid &= interpret_add(module, t);
 		break; case lox::Type::Subtract: valid &= interpret_subtract(module, t);
@@ -506,6 +519,7 @@ TEST_CASE("Lox::Interp::TailRecursion") {
 
 		REQUIRE(interpret(module));
 	CAPTURE_CONSOLE_END
+#ifndef LOX_PERFORMANT_PRINTING
 	CHECK(capture.str() == R"(Warning at <transient>:1:44-45
    fun fib(x) { if(x < 2) return 1; return fib(x - 2); } fib(5);
                                               ^
@@ -515,6 +529,7 @@ Warning at <transient>:1:44-45
                                               ^
                        Tail recursion detected.
 )");
+#endif
 	FrameMark;
 }
 
@@ -541,6 +556,30 @@ TEST_CASE("Lox::Interp::Expressions") {
 Hello world!
 false
 true
+)");
+#endif
+	FrameMark;
+}
+
+TEST_CASE("Lox::Interp::UseBeforeDefine") {
+	ZoneScopedN("Lox::Interp::UseBeforeDefine");
+	CAPTURE_ERROR_CONSOLE_BEGIN CAPTURE_CONSOLE_BEGIN
+		doir::ParseModule module("x = 5; var x;");
+		auto root = lox::parse{}.start(module);
+		REQUIRE(root != 0);
+		canonicalize(module, root, false);
+		REQUIRE(!verify_references(module));
+		// REQUIRE(verify_redeclarations(module));
+		// REQUIRE(verify_call_arrities(module));
+		// REQUIRE(identify_trailing_calls(module));
+
+		// REQUIRE(interpret(module));
+	CAPTURE_CONSOLE_END CAPTURE_ERROR_CONSOLE_END
+#ifndef LOX_PERFORMANT_PRINTING
+	CHECK(capture.str() == R"(An error has occurred at <transient>:1:1-2
+   x = 5; var x;
+   ^
+Failed to find variable: x (4)
 )");
 #endif
 	FrameMark;

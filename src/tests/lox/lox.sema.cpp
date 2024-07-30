@@ -1,4 +1,5 @@
 #include "lox.hpp"
+#include "lox.parse.hpp"
 #include <algorithm>
 #include <iterator>
 #include <ranges>
@@ -270,14 +271,29 @@ void lookup_references(doir::Module& module, bool clear_references = true) {
 			auto& ref = *module.get_attribute<doir::TokenReference>(call.parent);
 			if(ref.looked_up()) continue;
 
-			auto res = blockwise_find<lox::comp::FunctionDeclaire>(module, {ref.lexeme(), current_block(module, t)}, hasFunctions);
+			auto block = current_block(module, t);
+			auto res = blockwise_find<lox::comp::FunctionDeclaire>(module, {ref.lexeme(), block}, hasFunctions);
+			while(res && *res < t) { // Function declaired after... so we need to search in a higher block!
+				if(*res + module.get_attribute<doir::Children>(*res)->total > t) break; // Recursive calls will fail previous check!
+				if(*res <= 2) break; // Builtin functions will fail previous check!
+				block = current_block(module, block);
+				res = blockwise_find<lox::comp::FunctionDeclaire>(module, {ref.lexeme(), block}, hasFunctions);
+			}
 			if(res) ref = *res;
 		}
 		if((module.has_attribute<lox::comp::Variable>(t) || module.has_attribute<lox::comp::Assign>(t))) {
 			auto& ref = *module.get_attribute<doir::TokenReference>(t);
 			if(ref.looked_up()) continue;
+			if(module.has_attribute<lox::comp::Function>(t - 1)) continue;
 
-			auto res = blockwise_find<lox::comp::VariableDeclaire>(module, {ref.lexeme(), current_block(module, t)}, hasVariables);
+			auto block = current_block(module, t);
+			auto res = blockwise_find<lox::comp::VariableDeclaire>(module, {ref.lexeme(), block}, hasVariables);
+			while(res && *res < t) { // Variable declaired after... so we need to search in a higher block!
+				if(module.has_hashtable_attribute<lox::components::ParameterDeclaire>(*res)) break; // Parameters will fail the previous check!
+				if(module.has_attribute<lox::components::Call>(t - 1)) break; // Call targets will also fail!
+				block = current_block(module, block);
+				res = blockwise_find<lox::comp::VariableDeclaire>(module, {ref.lexeme(), block}, hasVariables);
+			}
 			if(res) ref = *res;
 		}
 	}
@@ -296,8 +312,7 @@ bool verify_references(doir::Module& module) {
 				doir::print_diagnostic(module, t, (std::stringstream{} << "Failed to find function: " << ref.lexeme().view(module.buffer) << " (" << t << ")").str()) << std::endl;
 				valid = false;
 			}
-		}
-		if(module.has_attribute<lox::comp::Variable>(t) || module.has_attribute<lox::comp::Assign>(t)) {
+		} else if(module.has_attribute<lox::comp::Variable>(t) || module.has_attribute<lox::comp::Assign>(t)) {
 			auto& ref = *module.get_attribute<doir::TokenReference>(t);
 			if(!ref.looked_up()) {
 				doir::print_diagnostic(module, t, (std::stringstream{} << "Failed to find variable: " << ref.lexeme().view(module.buffer) << " (" << t << ")").str()) << std::endl;
@@ -319,7 +334,11 @@ bool verify_redeclarations(doir::Module& module) {
 
 	bool valid = true;
 	for(doir::Token t = module.get_attribute<doir::Children>(1)->total + 2; t--;) {
-		if(!module.has_hashtable_attribute<lox::components::VariableDeclaire>(t) && !module.has_hashtable_attribute<lox::components::FunctionDeclaire>(t)) continue;
+		if(
+			!module.has_hashtable_attribute<lox::components::VariableDeclaire>(t) 
+			&& !module.has_hashtable_attribute<lox::components::FunctionDeclaire>(t)
+			&& !module.has_hashtable_attribute<lox::components::ParameterDeclaire>(t)
+		) continue;
 
 		if(module.has_hashtable_attribute<lox::components::FunctionDeclaire>(t)) {
 			auto& lexeme = *module.get_attribute<doir::Lexeme>(t);
@@ -330,9 +349,9 @@ bool verify_redeclarations(doir::Module& module) {
 				valid = false;
 			}
 		}
-		if(module.has_hashtable_attribute<lox::components::VariableDeclaire>(t)) {
+		if(bool isParam = module.has_hashtable_attribute<lox::components::ParameterDeclaire>(t); module.has_hashtable_attribute<lox::components::VariableDeclaire>(t) || isParam) {
 			auto& lexeme = *module.get_attribute<doir::Lexeme>(t);
-			auto res = *blockwise_find<lox::comp::VariableDeclaire>(module, {lexeme, current_block(module, t)}, hasVariables);
+			auto res = *blockwise_find<lox::comp::VariableDeclaire>(module, {lexeme, isParam ? current_function(module, t) + 1 : current_block(module, t)}, hasVariables);
 			if(res != t) {
 				doir::print_diagnostic(module, res, (std::stringstream{} << "Variable " << lexeme.view(module.buffer) << " redeclaired!").str()) << "\n";
 				doir::print_diagnostic(module, t, "Identified here...", doir::diagnostic_type::Info) << std::endl;

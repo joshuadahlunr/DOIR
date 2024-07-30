@@ -284,7 +284,7 @@ namespace lox {
 			doir::Token topBlock = currentBlock;
 
 			std::optional<doir::Token> error;
-			while(module.has_more_input()) {
+			do {
 				doir::Token decl = declaration(module);
 				if(module.has_attribute<doir::Error>(decl)) {
 					error = decl;
@@ -308,7 +308,7 @@ namespace lox {
 					tb.children.emplace_back(decl);
 					module.lex(lexer);
 				}
-			}
+			} while(module.has_more_input());
 			PROPAGATE_OPTIONAL_ERROR(error);
 			declaire_builtin_functions(module);
 			return currentBlock;
@@ -647,7 +647,7 @@ namespace lox {
 					currentBlock = oldBlock;
 					return decl;
 				}
-				block.children.emplace_back(decl);
+				module.get_attribute<comp::Block>(currentBlock)->children.emplace_back(decl);
 				module.lex(lexer);
 			}
 

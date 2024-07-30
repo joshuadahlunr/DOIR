@@ -5,6 +5,7 @@
 #include <ostream>
 #include <sstream>
 #include <iomanip>
+#include <string_view>
 
 #ifdef __cpp_exceptions
 #include <exception>
@@ -52,6 +53,8 @@ namespace doir {
 		if(lineStart == std::string::npos) lineStart = 0;
 		auto lineEnd = module.buffer.find("\n", lexeme.start);
 		if(lineEnd == std::string::npos) lineEnd = module.buffer.size() - 1;
+		if(lexeme.start > module.buffer.size() || lexeme.length > module.buffer.size())
+			lexeme = *doir::Lexeme::from_view(module.buffer, std::string_view(module.buffer).substr(lineStart + 1, lineEnd - lineStart));
 
 		return (std::stringstream{} << introducer(type) << location.to_string(lexeme.length) << "\n"
 			<< "   " << module.buffer.substr(lineStart, lineEnd - lineStart) << "\n"

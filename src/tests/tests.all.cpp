@@ -7,5 +7,5 @@
 #include <doctest/doctest.h>
 
 // TEST_CASE("KeepAlive") {
-// 	while(true);
+// 	std::this_thread::sleep_for(std::chrono::seconds(3));
 // }

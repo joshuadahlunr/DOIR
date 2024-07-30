@@ -23,8 +23,17 @@ if(${DOIR_ENABLE_TESTS})
 	include(FetchContent) # once in the project to include the module
 	include(${CMAKE_SOURCE_DIR}/cmake/includeable.cmake)
 
+	FetchContent_Declare(fetch_lox GIT_REPOSITORY https://github.com/munificent/craftinginterpreters GIT_SHALLOW true)
+	FetchContent_MakeAvailable(fetch_lox)
+
+	file(GLOB lox_tests "${CMAKE_BINARY_DIR}/_deps/fetch_lox-src/test/**/*.lox")
+	foreach(lox_test IN LISTS lox_tests)
+		STRING(REGEX REPLACE "^${CMAKE_BINARY_DIR}/_deps/fetch_lox-src/test/" "" lox_test_file ${lox_test})
+		make_includeable(${lox_test} "${CMAKE_SOURCE_DIR}/generated/${lox_test_file}.hpp")
+	endforeach()
+
 	file(GLOB sources "src/tests/*.all.cpp" "thirdparty/*.cpp")
-	file(GLOB lox_sources "src/tests/lox/*.cpp" "src/tests/tests.all.cpp" "thirdparty/*.cpp")
+	file(GLOB lox_sources "src/tests/lox/*.cpp" "src/tests/lox/nystrom/*.cpp" "src/tests/tests.all.cpp" "thirdparty/*.cpp")
 	if(WIN32)
 		set(unix_only_sources "")
 	else()
