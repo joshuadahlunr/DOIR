@@ -3,6 +3,16 @@
 #include <vector>
 #include <string>
 
+#ifdef _MSC_VER
+    #define DOIR_INLINE __forceinline
+#elif defined(__GNUC__) || defined(__clang__)  // GCC and Clang
+    #define DOIR_INLINE inline __attribute__((always_inline))
+#elif defined(__INTEL_COMPILER)  // Intel Compiler
+    #define DOIR_INLINE inline __forceinline
+#else
+    #define DOIR_INLINE  // Default fallback
+#endif
+
 namespace doir {
 
 	inline std::vector<std::string_view> split(std::string_view s, std::string delimiter) {
