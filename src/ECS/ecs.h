@@ -72,6 +72,13 @@ void* doir_ecs_module_add_component(Module* module, entity_t e, size_t component
 #endif
 #define doir_ecs_module_add_component_typed(type, module, e, componentID) doir_ecs_module_add_component((module), (e), (componentID), sizeof(type))
 
+bool doir_ecs_module_remove_component(Module* module, entity_t e, size_t componentID)
+#ifdef DOIR_IMPLEMENTATION
+{ return module->remove_component(e, componentID); }
+#else
+;
+#endif
+
 void* doir_ecs_module_get_component(Module* module, entity_t e, size_t componentID)
 #ifdef DOIR_IMPLEMENTATION
 { return module->get_component(e, componentID); }
