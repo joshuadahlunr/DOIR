@@ -7,6 +7,8 @@
 #include <algorithm>
 #include <limits>
 #include <utility>
+#include <numeric>
+#include <optional>
 
 #include "../utility/profile.hpp"
 
@@ -14,6 +16,61 @@ namespace doir::ecs {
 
 	using entity_t = size_t;
 	static constexpr size_t invalid_entity = 0;
+
+	template<typename T>
+	struct with_entity {
+		T value;
+		entity_t entity = invalid_entity;
+		operator T() { return value; }
+		operator const T() const { return value; }
+		T* operator->() { return &value; }
+		const T* operator->() const { return &value; }
+
+		template<std::convertible_to<with_entity> To>
+		std::partial_ordering operator<=>(const To& other) const requires(requires(T t) {
+			{ t <=> t };
+		}) {
+			if(other.entity == entity) return other.value <=> value;
+			return other.entity <=> entity;
+		}
+		bool operator==(const with_entity& other) const requires(requires(T t) {
+			{ t == t };
+		}) {
+			return other.entity == entity && other.value == value;
+		}
+
+		static void swap_entities(with_entity& a, entity_t eA, entity_t eB) {
+			if(a.entity == eA) a.entity = eB;
+			else if(a.entity == eB) a.entity = eA;
+		}
+	};
+
+	namespace detail {
+		template<typename T>
+		struct is_with_entity : public std::false_type {};
+		template<typename T>
+		struct is_with_entity<with_entity<T>> : public std::true_type {};
+		template<typename T>
+		constexpr static bool is_with_entity_v = is_with_entity<T>::value;
+
+		template<typename T>
+		struct remove_with_entity { using type = T; };
+		template<typename T>
+		struct remove_with_entity<with_entity<T>> { using type = typename remove_with_entity<T>::type; };
+		template<typename T>
+		using remove_with_entity_t = typename remove_with_entity<T>::type;
+
+		template<typename T>
+		concept has_swap_entities = requires(T t, entity_t e) {
+			{T::swap_entities(t, e, e)};
+		};
+
+		// From: https://stackoverflow.com/a/29753388
+		// template<int N, typename... Ts>
+		// using nth_type = typename std::tuple_element<N, std::tuple<Ts...>>::type;
+
+		struct void_like{};
+	}
 
 	struct Storage {
 		static constexpr size_t invalid = std::numeric_limits<size_t>::max();
@@ -110,6 +167,63 @@ namespace doir::ecs {
 				allocate(std::max<int64_t>(int64_t(e) - size + 1, 1));
 			return get(e);
 		}
+
+		template<typename Tcomponent>
+		void swap(size_t a, std::optional<size_t> _b = {}) {
+			DOIR_ZONE_SCOPED_AGRO;
+			size_t b = _b.value_or(size() - 1);
+			assert(a < size());
+			assert(b < size());
+
+			Tcomponent* aPtr = data<Tcomponent>() + a;
+			Tcomponent* bPtr = data<Tcomponent>() + b;
+			std::swap(*aPtr, *bPtr);
+		}
+		void swap(size_t a, std::optional<size_t> _b = {}) {
+			DOIR_ZONE_SCOPED_AGRO;
+			size_t b = _b.value_or(size() - 1);
+			assert(a < size());
+			assert(b < size());
+
+			void* aPtr = raw + a * element_size;
+			void* bPtr = raw + b * element_size;
+			memswap(aPtr, bPtr, element_size);
+		}
+
+		template<typename Tcomponent, size_t Unique = 0>
+		bool swap(struct TrivialModule& module, size_t a, std::optional<size_t> _b = {}, bool swap_if_one_elementless = false);
+		bool swap(struct TrivialModule& module, size_t component_id, size_t a, std::optional<size_t> _b = {}, bool swap_if_one_elementless = false);
+
+		template<typename Tcomponent, size_t Unique = 0>
+		bool remove(struct TrivialModule& module, entity_t e) { DOIR_ZONE_SCOPED_AGRO; return remove(module, e, get_global_component_id<Tcomponent, Unique>()); }
+		bool remove(struct TrivialModule&, entity_t, size_t component_id);
+
+		template<typename Tcomponent, size_t Unique = 0>
+		void reorder(struct TrivialModule& module, fp_view(size_t) order);
+		void reorder(struct TrivialModule& module, size_t component_id, fp_view(size_t) order);
+
+		template<typename Tcomponent, typename F, bool with_entities = false, size_t Unique = 0>
+		void sort(struct TrivialModule& module, const F& _comparator);
+		template<typename F, bool with_entities = false>
+		void sort(struct TrivialModule& module, size_t component_id, const F& comparator);
+
+		template<typename Tcomponent, size_t Unique = 0>
+		void sort_by_value(struct TrivialModule& module) {
+			DOIR_ZONE_SCOPED_AGRO;
+			constexpr static auto comparator = [](Tcomponent* a, Tcomponent* b) {
+				return std::less<Tcomponent>{}(*a, *b);
+			};
+			sort<Tcomponent, decltype(comparator), false, Unique>(module, comparator);
+		}
+
+		template<typename Tcomponent, size_t Unique = 0>
+		void sort_monotonic(struct TrivialModule& module) {
+			DOIR_ZONE_SCOPED_AGRO;
+			auto comparator = [](Tcomponent* a, entity_t eA, Tcomponent* b, entity_t eB) {
+				return std::less<entity_t>{}(eA, eB);
+			};
+			sort<Tcomponent, decltype(comparator), true, Unique>(module, comparator);
+		}
 	};
 
 	struct TrivialModule {
@@ -189,9 +303,9 @@ namespace doir::ecs {
 			DOIR_ZONE_SCOPED_AGRO;
 			if(e >= fpda_size(entity_component_indices)) return false;
 
-			// if(clearMemory && storages && !fpda_empty(storages))
-			// 	for(size_t i = 0, size = fpda_size(storages); i < size; ++i)
-			// 		storages[i].remove(*this, e, i);
+			if(clearMemory && storages && !fpda_empty(storages))
+				for(size_t i = 0, size = fpda_size(storages); i < size; ++i)
+					storages[i].remove(*this, e, i);
 
 			if(entity_component_indices[e])
 				fpda_free_and_null(entity_component_indices[e]);
@@ -219,15 +333,19 @@ namespace doir::ecs {
 				DOIR_ECS_ADD_COMPONENT_COMMON(componentID, sizeof(T));
 				auto& res = storage.template get_or_allocate<T>(entity_component_indices[e][componentID]);
 
-				// if constexpr(detail::is_with_entity_v<Tcomponent>)
-				// 	res.entity = e;
+				if constexpr(detail::is_with_entity_v<T>)
+					res.entity = e;
 				return res;
 			}
 		}
 		#undef DOIR_ECS_ADD_COMPONENT_COMMON
 
-		// template<typename Tcomponent, size_t Unique = 0>
-		// bool remove_component(entity e) { return get_storage<Tcomponent, Unique>()->template remove<Tcomponent>(*this, e); }
+		bool remove_component(entity_t e, size_t componentID) noexcept {
+			DOIR_ZONE_SCOPED_AGRO; 
+			return get_storage(componentID).remove(*this, e, componentID);
+		}
+		template<typename Tcomponent, size_t Unique = 0>
+		bool remove_component(entity_t e) noexcept { DOIR_ZONE_SCOPED_AGRO; return get_storage<Tcomponent, Unique>().template remove<Tcomponent>(*this, e); }
 
 		#define DOIR_ECS_GET_COMPONENT_COMMON(componentID)\
 			assert(entity_component_indices);\
@@ -295,4 +413,180 @@ namespace doir::ecs {
 		}
 	};
 
+	namespace detail {
+		// Gets the entity associated with a specific component index
+		inline entity_t get_entity(TrivialModule& module, size_t index, size_t component_id) {
+			DOIR_ZONE_SCOPED_AGRO;
+			assert(module.entity_component_indices);
+			for(size_t e = 0; e < fpda_size(module.entity_component_indices); ++e)
+				if(fpda_size(module.entity_component_indices[e]) > component_id && module.entity_component_indices[e][component_id] == index)
+					return e;
+			return invalid_entity;
+		}
+		template<typename Tcomponent, size_t Unique = 0>
+		inline entity_t get_entity(TrivialModule& module, size_t index) {
+			DOIR_ZONE_SCOPED_AGRO;
+			return get_entity(module, index, get_global_component_id<Tcomponent, Unique>());
+		}
+
+		template<typename Tcomponent, size_t Unique = 0>
+		inline entity_t get_entity(Storage& storage, TrivialModule& module, size_t index, std::optional<size_t> component_id = {}) {
+			DOIR_ZONE_SCOPED_AGRO;
+			if constexpr(detail::is_with_entity_v<Tcomponent>)
+				return (storage.data<Tcomponent>() + index)->entity;
+			else if constexpr(std::is_same_v<Tcomponent, detail::void_like>)
+				return get_entity(module, index, component_id.value());
+			else return get_entity<Tcomponent, Unique>(module, index);
+		}
+	}
+
+
+	template<typename Tcomponent, size_t Unique = 0>
+	inline bool swap_impl(Storage* self, TrivialModule& module, size_t a, std::optional<size_t> _b = {}, bool swap_if_one_elementless = false, std::optional<size_t> _component_id = {}) {
+		DOIR_ZONE_SCOPED_AGRO;
+		size_t b = _b.value_or(self->size() - 1);
+		size_t component_id = _component_id.value_or(get_global_component_id<Tcomponent, Unique>());
+		entity_t eA = detail::get_entity<Tcomponent, Unique>(*self, module, a, component_id);
+		entity_t eB = detail::get_entity<Tcomponent, Unique>(*self, module, b, component_id);
+		if (swap_if_one_elementless) {
+			if (eA == invalid_entity && eB == invalid_entity) return false;
+		}
+		else if (eA == invalid_entity || eB == invalid_entity) return false;
+
+		if constexpr(std::is_same_v<Tcomponent, detail::void_like>)
+			self->swap(a, b);
+		else self->swap<Tcomponent>(a, b);
+		if (swap_if_one_elementless && eA == invalid_entity)
+			module.entity_component_indices[eB][component_id] = a;
+		else if (swap_if_one_elementless && eB == invalid_entity)
+			module.entity_component_indices[eA][component_id] = b;
+		else std::swap(
+			module.entity_component_indices[eA][component_id],
+			module.entity_component_indices[eB][component_id]
+		);
+		return true;
+	}
+	template<typename Tcomponent, size_t Unique /*= 0*/>
+	bool Storage::swap(TrivialModule& module, size_t a, std::optional<size_t> b /*= {}*/, bool swap_if_one_elementless /*= false*/) {
+		DOIR_ZONE_SCOPED_AGRO;
+		return swap_impl<Tcomponent, Unique>(this, module, a, b, swap_if_one_elementless);
+	}
+	inline bool Storage::swap(TrivialModule& module, size_t component_id, size_t a, std::optional<size_t> b /*= {}*/, bool swap_if_one_elementless /*= false*/) {
+		DOIR_ZONE_SCOPED_AGRO;
+		return swap_impl<detail::void_like, 0>(this, module, a, b, swap_if_one_elementless, component_id);
+	}
+
+
+	inline bool Storage::remove(TrivialModule& module, entity_t e, size_t component_id) {
+		DOIR_ZONE_SCOPED_AGRO;
+		size_t size = this->size();
+		if(size == 0 || !module.entity_component_indices || e >= fpda_size(module.entity_component_indices)) return false;
+
+		auto& indices = module.entity_component_indices[e];
+		if(fpda_size(indices) <= component_id) return false;
+
+		for(e = 0; e < fpda_size(module.entity_component_indices); ++e)
+			if(fpda_size(module.entity_component_indices[e]) > component_id
+				&& module.entity_component_indices[e][component_id] == size - 1
+			)
+				break;
+		if(e >= fpda_size(module.entity_component_indices)) return false;
+
+		swap(indices[component_id]);
+		std::swap(indices[component_id], module.entity_component_indices[e][component_id]);
+		fpda_delete_range(raw, (size - 1) * element_size, element_size); // TODO: Could we pop back instead?
+		indices[component_id] = invalid;
+		return true;
+	}
+
+
+	template<typename Tcomponent, size_t Unique = 0>
+	inline void reorder_impl(Storage* self, TrivialModule& module, fp_view(size_t) order, std::optional<size_t> _component_id = {}) {
+		DOIR_ZONE_SCOPED_AGRO;
+		assert(fp_view_size(order) == self->size()); // Require order to have an entry for every element in the array
+		size_t component_id = _component_id.value_or(get_global_component_id<Tcomponent, Unique>());
+
+		size_t* swaps = fp_alloca(size_t, fp_view_size(order));
+		// Transpose the order (it now stores what needs to be swapped with what)
+		for(size_t i = 0; i < fp_view_size(order); i++)
+			swaps[*fp_view_access(size_t, order, i)] = i;
+
+		// Update the data storage and book keeping
+		for(size_t i = 0; i < fp_view_size(order); ++i)
+			while(swaps[i] != i) {
+				if constexpr(std::is_same_v<Tcomponent, detail::void_like>)
+					self->swap(module, component_id, swaps[i], i);
+				else self->swap<Tcomponent, Unique>(module, swaps[i], i);
+				std::swap(swaps[swaps[i]], swaps[i]);
+			}
+	}
+	inline void Storage::reorder(TrivialModule& module, size_t component_id, fp_view(size_t) order) {
+		DOIR_ZONE_SCOPED_AGRO;
+		reorder_impl<detail::void_like, 0>(this, module, order, component_id);
+	}
+	template<typename Tcomponent, size_t Unique /*= 0*/>
+	inline void Storage::reorder(TrivialModule& module, fp_view(size_t) order) {
+		DOIR_ZONE_SCOPED_AGRO;
+		reorder_impl<Tcomponent, Unique>(this, module, order);
+	}
+
+
+	template<typename Tcomponent, typename F, bool with_entities /*= false*/, size_t Unique /*= 0*/>
+	void sort_impl(Storage* self, TrivialModule& module, const F& _comparator, std::optional<size_t> _component_id = {}) {
+		DOIR_ZONE_SCOPED_AGRO;
+		size_t component_id = _component_id.value_or(get_global_component_id<Tcomponent, Unique>());
+		// Create a list of indices
+		size_t size = self->size();
+		size_t* order = fp_alloca(size_t, size);
+		std::iota(order, fp_end(order), 0);
+
+		// Sort the list of indices into the correct order (possibly alongside a list of entities)
+		if constexpr(with_entities) {
+			entity_t* entities = fp_alloca(entity_t, size);
+			for(size_t i = size; i--; )
+				entities[i] = detail::get_entity<Tcomponent, Unique>(*self, module, i, component_id);
+
+			auto comparator = [self, entities, &_comparator](size_t _a, size_t _b) {
+				void* a = self->data<Tcomponent>() + _a;
+				void* b = self->data<Tcomponent>() + _b;
+				return _comparator(a, entities[_a], b, entities[_b]);
+			};
+
+			DOIR_ZONE_SCOPED_NAMED_AGRO("sort");
+			std::sort(order, fp_end(order), comparator);
+		} else {
+			auto comparator = [self, &_comparator](size_t _a, size_t _b) {
+				void* a = self->data<Tcomponent>() + _a;
+				void* b = self->data<Tcomponent>() + _b;
+				return _comparator(a, b);
+			};
+
+			DOIR_ZONE_SCOPED_NAMED_AGRO("sort");
+			std::sort(order, fp_end(order), comparator);
+		}
+
+		if constexpr(std::is_same_v<Tcomponent, detail::void_like>)
+			self->reorder(module, component_id, fp_view_make_full(size_t, order));
+		else self->reorder<Tcomponent, Unique>(module, fp_view_make_full(size_t, order));
+	}
+	template<typename F, bool with_entities>
+	inline void Storage::sort(TrivialModule& module, size_t component_id, const F& comparator) {
+		DOIR_ZONE_SCOPED_AGRO;
+		sort_impl<detail::void_like, F, with_entities, 0>(this, module, comparator, component_id);
+	}
+	template<typename Tcomponent, typename F, bool with_entities /*= false*/, size_t Unique /*= 0*/>
+	inline void Storage::sort(TrivialModule& module, const F& _comparator) {
+		DOIR_ZONE_SCOPED_AGRO;
+		if constexpr(with_entities) {
+			auto comparator = [&_comparator](void* a, entity_t aE, void* b, entity_t bE) {
+				return _comparator((Tcomponent*)a, aE, (Tcomponent*)b, bE);
+			};
+			sort_impl<Tcomponent, decltype(comparator), with_entities, Unique>(this, module, comparator);
+		} else {
+			auto comparator = [&_comparator](void* a, void* b) {
+				return _comparator((Tcomponent*)a, (Tcomponent*)b);
+			};
+			sort_impl<Tcomponent, decltype(comparator), with_entities, Unique>(this, module, comparator);
+		}
+	}
 }
