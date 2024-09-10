@@ -1,8 +1,8 @@
 #include "tests.utils.hpp"
 
 #include "../src/ECS/ecs.hpp"
+#include "../src/ECS/adapter.hpp"
 // #include "../src/ECS/query.hpp"
-// #include "../src/ECS/adapter.hpp"
 
 TEST_SUITE("ECS") {
 	TEST_CASE("doir::ecs::get_global_component_id") {
@@ -272,34 +272,52 @@ TEST_SUITE("ECS") {
 	// 	}
 	// }
 
-	// TEST_CASE("doir::ecs::typed") {
-	// 	ZoneScoped;
-	// 	doir::ecs::module module;
-	// 	doir::ecs::entity e = module.create_entity();
-	// 	*module.add_component<float>(e) = 5;
-	// 	auto& storage = *get_adapted_component_storage<doir::ecs::typed::component_storage<float>>(module);
-	// 	CHECK(*storage.get(e) == 5);
-	// }
+	TEST_CASE("doir::ecs::Typed") {
+#ifdef DOIR_ENABLE_BENCHMARKING
+		ankerl::nanobench::Bench().run("doir::ecs::Typed", []{
+#endif
+			ZoneScopedN("doir::ecs::Typed");
+			doir::ecs::Module module;
+			doir::ecs::entity_t e = module.create_entity();
+			module.add_component<float>(e) = 5;
+			size_t floatID = doir::ecs::get_global_component_id<float>();
+			auto& storage = get_adapted_storage<doir::ecs::typed::Storage<float>>(module);
+			CHECK(storage.get(module.entity_component_indices[e][floatID]) == 5);
+			// module.should_leak = true; // Don't bother cleaning up after ourselves...
+#ifdef DOIR_ENABLE_BENCHMARKING
+		});
+#endif
+		FrameMark;
+	}
 
-	// TEST_CASE("doir::ecs::hashtable") {
-	// 	ZoneScoped;
-	// 	using C = doir::ecs::hashtable::component_storage<int>::component_type;
+	TEST_CASE("doir::ecs::Hashtable") {
+#ifdef DOIR_ENABLE_BENCHMARKING
+		ankerl::nanobench::Bench().run("doir::ecs::Hashtable", []{
+#endif
+			ZoneScopedN("doir::ecs::Hashtable");
+			using C = doir::ecs::hashtable::Storage<int>::component_type;
 
-	// 	doir::ecs::module module;
-	// 	doir::ecs::entity first = module.create_entity();
-	// 	doir::ecs::entity current = first;
-	// 	for(size_t i = 0; i < 100; ++i) {
-	// 		get_key_and_mark_occupied<int>(module.add_component<C>(current)) = current;
-	// 		current = module.create_entity();
-	// 	}
+			doir::ecs::Module module;
+			doir::ecs::entity_t first = module.create_entity();
+			doir::ecs::entity_t current = first;
+			for(size_t i = 0; i < 100; ++i) {
+				get_key_and_mark_occupied<int>(module.add_component<C>(current)) = current;
+				current = module.create_entity();
+			}
 
-	// 	auto& hashtable = *get_adapted_component_storage<doir::ecs::hashtable::component_storage<int>>(module);
-	// 	CHECK(hashtable.rehash(module) == true);
-	// 	for(doir::ecs::entity e = first; e < first + 100; ++e) {
-	// 		CHECK(*hashtable.find(e) == e);
-	// 		CHECK(get_key<int>(module.get_component<C>(*hashtable.find(e))) == e);
-	// 	}
-	// }
+			auto& hashtable = get_adapted_storage<doir::ecs::hashtable::Storage<int>>(module);
+			CHECK(hashtable.rehash(module) == true);
+			// CHECK(hashtable.rehash(module) == true);
+			for(doir::ecs::entity_t e = first; e < first + 50; ++e) {
+				CHECK(*hashtable.find(e) == e);
+				CHECK(get_key<int>(module.get_component<C>(*hashtable.find(e))) == e);
+			}
+			// module.should_leak = true; // Don't bother cleaning up after ourselves...
+#ifdef DOIR_ENABLE_BENCHMARKING
+		});
+#endif
+		FrameMark;
+	}
 
 	TEST_CASE("doir::ecs::component_id_free_maps") {
 		ZoneScopedN("doir::ecs::component_id_free_maps");

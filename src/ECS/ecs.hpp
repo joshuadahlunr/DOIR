@@ -10,8 +10,6 @@
 #include <numeric>
 #include <optional>
 
-#include "../utility/profile.hpp"
-
 namespace doir::ecs {
 
 	using entity_t = size_t;
@@ -141,9 +139,9 @@ namespace doir::ecs {
 		template<typename T>
 		void allocate(size_t count = 1) noexcept {
 			DOIR_ZONE_SCOPED_AGRO;
-			auto data = this->data<T>();
 			auto originalEnd = size();
 			fpda_grow(raw, element_size * count);
+			auto data = this->data<T>();
 			for (size_t i = 0; i < count; i++)
 				new(data + originalEnd + i) T();
 		}
@@ -341,7 +339,7 @@ namespace doir::ecs {
 		#undef DOIR_ECS_ADD_COMPONENT_COMMON
 
 		bool remove_component(entity_t e, size_t componentID) noexcept {
-			DOIR_ZONE_SCOPED_AGRO; 
+			DOIR_ZONE_SCOPED_AGRO;
 			return get_storage(componentID).remove(*this, e, componentID);
 		}
 		template<typename Tcomponent, size_t Unique = 0>
@@ -456,11 +454,19 @@ namespace doir::ecs {
 		if constexpr(std::is_same_v<Tcomponent, detail::void_like>)
 			self->swap(a, b);
 		else self->swap<Tcomponent>(a, b);
-		if (swap_if_one_elementless && eA == invalid_entity)
+		if (swap_if_one_elementless && eA == invalid_entity) {
+			if(auto idx = module.entity_component_indices[eB]; fpda_size(idx) <= component_id) {
+				fpda_grow_to_size_and_initialize(idx, component_id + 1, Storage::invalid);
+				module.entity_component_indices[eB] = idx;
+			}
 			module.entity_component_indices[eB][component_id] = a;
-		else if (swap_if_one_elementless && eB == invalid_entity)
+		} else if (swap_if_one_elementless && eB == invalid_entity) {
+			if(auto idx = module.entity_component_indices[eA]; fpda_size(idx) <= component_id) {
+				fpda_grow_to_size_and_initialize(idx, component_id + 1, Storage::invalid);
+				module.entity_component_indices[eA] = idx;
+			}
 			module.entity_component_indices[eA][component_id] = b;
-		else std::swap(
+		} else std::swap(
 			module.entity_component_indices[eA][component_id],
 			module.entity_component_indices[eB][component_id]
 		);
@@ -493,6 +499,7 @@ namespace doir::ecs {
 		if(e >= fpda_size(module.entity_component_indices)) return false;
 
 		swap(indices[component_id]);
+		if(fpda_size(module.entity_component_indices[e]) <= component_id) fpda_grow_to_size_and_initialize(module.entity_component_indices[e], component_id + 1, Storage::invalid);
 		std::swap(indices[component_id], module.entity_component_indices[e][component_id]);
 		fpda_delete_range(raw, (size - 1) * element_size, element_size); // TODO: Could we pop back instead?
 		indices[component_id] = invalid;
