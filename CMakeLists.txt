@@ -12,6 +12,8 @@ option(DOIR_ENABLE_TESTS "Weather or not Unit Tests should be built." ${PROJECT_
 option(DOIR_ENABLE_PROFILING "Weather or not profiling instrumentation will be added." ${DOIR_PROFILE_DEFAULT})
 option(DOIR_ENABLE_CODE_COVERAGE "Weather or targets to generated a code coverage report should be created." false)
 
+# set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fsanitize=address")
+
 add_subdirectory(thirdparty/libfp)
 
 add_executable(hello hello.cpp)
