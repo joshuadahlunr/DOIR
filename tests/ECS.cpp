@@ -5,36 +5,38 @@
 // #include "../src/ECS/query.hpp"
 
 TEST_SUITE("ECS") {
+#ifndef DOIR_DISABLE_STRING_COMPONENT_LOOKUP
 	TEST_CASE("doir::ecs::get_global_component_id") {
-		ZoneScopedN("doir::ecs::get_global_component_id");
-		{ZoneScopedN("First"); CHECK(doir::ecs::get_global_component_id<float>() == 0);}
-		{ZoneScopedN("Second"); CHECK(doir::ecs::get_global_component_id<float>() == 0);}
-		{ZoneScopedN("Int"); CHECK(doir::ecs::get_global_component_id<int>() == 1);}
-		{ZoneScopedN("Lookup"); CHECK(doir::ecs::doir_ecs_component_id_from_name("float") == 0);}
-		{ZoneScopedN("Lookup::NonExist"); CHECK(doir::ecs::doir_ecs_component_id_from_name("alice") == 2);}
-		{ZoneScopedN("Lookup::NonExistNorCreate"); CHECK(doir::ecs::doir_ecs_component_id_from_name("bob", false) == -1);}
-		{ZoneScopedN("Name");
+		DOIR_ZONE_SCOPED_NAMED("doir::ecs::get_global_component_id");
+		{DOIR_ZONE_SCOPED_NAMED("First"); CHECK(doir::ecs::get_global_component_id<float>() == 0);}
+		{DOIR_ZONE_SCOPED_NAMED("Second"); CHECK(doir::ecs::get_global_component_id<float>() == 0);}
+		{DOIR_ZONE_SCOPED_NAMED("Int"); CHECK(doir::ecs::get_global_component_id<int>() == 1);}
+		{DOIR_ZONE_SCOPED_NAMED("Lookup"); CHECK(doir::ecs::doir_ecs_component_id_from_name("float") == 0);}
+		{DOIR_ZONE_SCOPED_NAMED("Lookup::NonExist"); CHECK(doir::ecs::doir_ecs_component_id_from_name("alice") == 2);}
+		{DOIR_ZONE_SCOPED_NAMED("Lookup::NonExistNorCreate"); CHECK(doir::ecs::doir_ecs_component_id_from_name("bob", false) == -1);}
+		{DOIR_ZONE_SCOPED_NAMED("Name");
 			CHECK(std::string_view(doir::ecs::doir_ecs_component_id_name(0)) == "float");
 			CHECK(std::string_view(doir::ecs::doir_ecs_component_id_name(1)) == "int");
 			CHECK(std::string_view(doir::ecs::doir_ecs_component_id_name(2)) == "alice");
 		}
-		FrameMark;
+		DOIR_FRAME_MARK;
 	}
+#endif
 
 	TEST_CASE("doir::ecs::Basic") {
 #ifdef DOIR_ENABLE_BENCHMARKING
 		ankerl::nanobench::Bench().run("doir::ecs::Basic", []{
 #endif
-			ZoneScopedN("doir::ecs::Basic");
+			DOIR_ZONE_SCOPED_NAMED("doir::ecs::Basic");
 			doir::ecs::Module module;
 			doir::ecs::entity_t e = module.create_entity();
 			CHECK(e == 1);
 			{
-				ZoneScopedN("Add::Initial");
+				DOIR_ZONE_SCOPED_NAMED("Add::Initial");
 				CHECK((module.add_component<float>(e) = 5) == 5);
 			}
 			{
-				ZoneScopedN("Get");
+				DOIR_ZONE_SCOPED_NAMED("Get");
 				CHECK(module.get_component<float>(e) == 5);
 				module.get_component<float>(e) = 6;
 				CHECK(module.get_component<float>(e) == 6);
@@ -42,7 +44,7 @@ TEST_SUITE("ECS") {
 			}
 
 			{
-				ZoneScopedN("E2");
+				DOIR_ZONE_SCOPED_NAMED("E2");
 				doir::ecs::entity_t e2 = module.create_entity();
 				CHECK(e2 == 2);
 				CHECK((module.add_component<float>(e2) = 5) == 5);
@@ -52,14 +54,14 @@ TEST_SUITE("ECS") {
 #ifdef DOIR_ENABLE_BENCHMARKING
 		});
 #endif
-		FrameMark;
+		DOIR_FRAME_MARK;
 	}
 
 	TEST_CASE("doir::ecs::Removal") {
 #ifdef DOIR_ENABLE_BENCHMARKING
 		ankerl::nanobench::Bench().run("doir::ecs::Removal", []{
 #endif
-			ZoneScopedN("doir::ecs::Removal");
+			DOIR_ZONE_SCOPED_NAMED("doir::ecs::Removal");
 			doir::ecs::Module module;
 			doir::ecs::entity_t e = module.create_entity();
 			CHECK(e == 1);
@@ -89,14 +91,14 @@ TEST_SUITE("ECS") {
 #ifdef DOIR_ENABLE_BENCHMARKING
 		});
 #endif
-		FrameMark;
+		DOIR_FRAME_MARK;
 	}
 
 	TEST_CASE("doir::ecs::SortByValue") {
 #ifdef DOIR_ENABLE_BENCHMARKING
 		ankerl::nanobench::Bench().run("doir::ecs::SortByValue", []{
 #endif
-			ZoneScopedN("doir::ecs::SortByValue");
+			DOIR_ZONE_SCOPED_NAMED("doir::ecs::SortByValue");
 			doir::ecs::Module module;
 			auto e0 = module.create_entity();
 			module.add_component<float>(e0) = 3;
@@ -122,14 +124,14 @@ TEST_SUITE("ECS") {
 #ifdef DOIR_ENABLE_BENCHMARKING
 		});
 #endif
-		FrameMark;
+		DOIR_FRAME_MARK;
 	}
 
 	TEST_CASE("doir::ecs::SortMontonic") {
 #ifdef DOIR_ENABLE_BENCHMARKING
 		ankerl::nanobench::Bench().run("doir::ecs::SortMontonic", []{
 #endif
-			ZoneScopedN("doir::ecs::SortMontonic");
+			DOIR_ZONE_SCOPED_NAMED("doir::ecs::SortMontonic");
 			doir::ecs::Module module;
 			auto e0 = module.create_entity();
 			auto e1 = module.create_entity();
@@ -156,14 +158,14 @@ TEST_SUITE("ECS") {
 #ifdef DOIR_ENABLE_BENCHMARKING
 		});
 #endif
-		FrameMark;
+		DOIR_FRAME_MARK;
 	}
 
 	TEST_CASE("doir::ecs::WithEntity") {
 #ifdef DOIR_ENABLE_BENCHMARKING
 		ankerl::nanobench::Bench().run("doir::ecs::WithEntity", []{
 #endif
-			ZoneScopedN("doir::ecs::WithEntity");
+			DOIR_ZONE_SCOPED_NAMED("doir::ecs::WithEntity");
 			doir::ecs::Module module;
 			doir::ecs::entity_t e = module.create_entity();
 			CHECK(e == 1);
@@ -198,14 +200,14 @@ TEST_SUITE("ECS") {
 #ifdef DOIR_ENABLE_BENCHMARKING
 		});
 #endif
-		FrameMark;
+		DOIR_FRAME_MARK;
 	}
 
 	TEST_CASE("doir::ecs::UniqueTag") {
 #ifdef DOIR_ENABLE_BENCHMARKING
 		ankerl::nanobench::Bench().run("doir::ecs::UniqueTag", []{
 #endif
-			ZoneScopedN("doir::ecs::UniqueTag");
+			DOIR_ZONE_SCOPED_NAMED("doir::ecs::UniqueTag");
 			doir::ecs::Module module;
 			auto e0 = module.create_entity();
 			auto e1 = module.create_entity();
@@ -250,7 +252,7 @@ TEST_SUITE("ECS") {
 #ifdef DOIR_ENABLE_BENCHMARKING
 		});
 #endif
-		FrameMark;
+		DOIR_FRAME_MARK;
 	}
 
 	// TEST_CASE("doir::ecs::Query") {
@@ -276,7 +278,7 @@ TEST_SUITE("ECS") {
 #ifdef DOIR_ENABLE_BENCHMARKING
 		ankerl::nanobench::Bench().run("doir::ecs::Typed", []{
 #endif
-			ZoneScopedN("doir::ecs::Typed");
+			DOIR_ZONE_SCOPED_NAMED("doir::ecs::Typed");
 			doir::ecs::Module module;
 			doir::ecs::entity_t e = module.create_entity();
 			module.add_component<float>(e) = 5;
@@ -287,14 +289,14 @@ TEST_SUITE("ECS") {
 #ifdef DOIR_ENABLE_BENCHMARKING
 		});
 #endif
-		FrameMark;
+		DOIR_FRAME_MARK;
 	}
 
 	TEST_CASE("doir::ecs::Hashtable") {
 #ifdef DOIR_ENABLE_BENCHMARKING
 		ankerl::nanobench::Bench().run("doir::ecs::Hashtable", []{
 #endif
-			ZoneScopedN("doir::ecs::Hashtable");
+			DOIR_ZONE_SCOPED_NAMED("doir::ecs::Hashtable");
 			using C = doir::ecs::hashtable::Storage<int>::component_type;
 
 			doir::ecs::Module module;
@@ -316,11 +318,11 @@ TEST_SUITE("ECS") {
 #ifdef DOIR_ENABLE_BENCHMARKING
 		});
 #endif
-		FrameMark;
+		DOIR_FRAME_MARK;
 	}
 
-	TEST_CASE("doir::ecs::component_id_free_maps") {
-		ZoneScopedN("doir::ecs::component_id_free_maps");
-		doir::ecs::component_id_free_maps();
-	}
+	// TEST_CASE("doir::ecs::component_id_free_maps") {
+	// 	DOIR_ZONE_SCOPED_NAMED("doir::ecs::component_id_free_maps");
+	// 	doir::ecs::component_id_free_maps();
+	// }
 }

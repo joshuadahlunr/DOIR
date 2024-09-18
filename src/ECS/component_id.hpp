@@ -5,7 +5,7 @@
 #include <stdexcept>
 #include <utility>
 
-#include "../utility/profile.hpp"
+#include "../utility/profile.config.hpp"
 
 #include <typeinfo>
 #ifdef __GNUC__
