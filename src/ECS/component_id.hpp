@@ -4,7 +4,7 @@
 #include <stdexcept>
 #include <utility>
 
-#include "../utility/profile.hpp"
+#include "../utility/profile.config.hpp"
 
 #ifndef DOIR_DISABLE_STRING_COMPONENT_LOOKUP
 	#define FP_HASH_DYNAMIC_HASH_FUNCTION
@@ -103,7 +103,7 @@ namespace doir::ecs {
 		{ DOIR_ZONE_SCOPED_AGRO;
 			fp_string name = fp_string_view_make_dynamic(view); // TODO: Is there a way to skip the allocation here?
 			ForwardPair lookup{name, 0};
-			if(fp_hash_find(ForwardPair, doir_ecs_get_forward_map(), lookup) == nullptr) {
+			if(!fp_hash_contains(ForwardPair, doir_ecs_get_forward_map(), lookup)) {
 				if(create_if_not_found) {
 					size_t id = doir_ecs_get_next_component_id();
 					lookup.second = id;

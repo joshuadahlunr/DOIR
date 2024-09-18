@@ -1,6 +1,9 @@
 cmake_minimum_required(VERSION 3.21)
 project(DOIR LANGUAGES C CXX)
 
+set(CMAKE_CXX_STANDARD 23)
+set(CMAKE_C_STANDARD 23)
+
 if(CMAKE_BUILD_TYPE MATCHES Debug)
 	set(DOIR_PROFILE_DEFAULT false)
 else()
@@ -14,12 +17,14 @@ option(DOIR_ENABLE_CODE_COVERAGE "Weather or targets to generated a code coverag
 
 # set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fsanitize=address")
 
+include(scripts/flex-bison.cmake)
+fetch_flex_bison()
 add_subdirectory(thirdparty/libfp)
 
 add_executable(hello hello.cpp)
 target_link_libraries(hello PUBLIC libfp::fp)
-set_property(TARGET hello PROPERTY CXX_STANDARD 23)
-set_property(TARGET hello PROPERTY C_STANDARD 23)
+
+add_subdirectory(src/Calculator)
 
 if(${DOIR_ENABLE_TESTS})
 	include(FetchContent) # once in the project to include the module
@@ -39,15 +44,9 @@ if(${DOIR_ENABLE_TESTS})
 		FetchContent_MakeAvailable(fetch_nanobench)
 	endif()
 
-	file(GLOB sources "tests/*.all.cpp")
-	if(WIN32)
-		set(unix_only_sources "")
-	else()
-		file(GLOB unix_only_sources "tests/*.unix.cpp")
-	endif()
-
-	add_executable(tst ${sources} ${unix_only_sources})
-	target_link_libraries(tst PUBLIC libfp::fp doctest nanobench)
+	file(GLOB sources "tests/*.cpp")
+	add_executable(tst ${sources})
+	target_link_libraries(tst PUBLIC libfp::fp calculator doctest nanobench)
 	set_property(TARGET tst PROPERTY CXX_STANDARD 23)
 	set_property(TARGET tst PROPERTY C_STANDARD 23)
 
@@ -80,6 +79,8 @@ if(${DOIR_ENABLE_PROFILING})
 	FetchContent_Declare(fetch_tracy GIT_REPOSITORY https://github.com/wolfpld/tracy GIT_SHALLOW true)
 	FetchContent_MakeAvailable(fetch_tracy)
 
+	target_link_libraries(calculator PUBLIC TracyClient)
+	target_compile_definitions(calculator PUBLIC DOIR_ENABLE_PROFILING)
 	target_link_libraries(tst PUBLIC TracyClient)
 	target_compile_definitions(tst PUBLIC DOIR_ENABLE_PROFILING)
 
