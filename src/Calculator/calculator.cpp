@@ -5,7 +5,7 @@
 #include <io.h>
 #endif
 
-#include <iostream>
+#include <nowide/iostream.hpp>
 #include <cmath>
 
 namespace doir::Calculator {

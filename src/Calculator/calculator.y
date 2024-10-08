@@ -18,8 +18,8 @@ void yyerror(const char* s);
 %% /* Rules */
 
 
-expressionList: expressionList expression ';' { DOIR_ZONE_SCOPED_NAMED_AGRO("Print"); std::cout << " = " << $<n>2 << std::endl; }
-	| expression ';' { DOIR_ZONE_SCOPED_NAMED_AGRO("Print"); std::cout << " = " << $<n>1 << std::endl; };
+expressionList: expressionList expression ';' { DOIR_ZONE_SCOPED_NAMED_AGRO("Print"); nowide::cout << " = " << $<n>2 << std::endl; }
+	| expression ';' { DOIR_ZONE_SCOPED_NAMED_AGRO("Print"); nowide::cout << " = " << $<n>1 << std::endl; };
 
 expression: identifier '=' expression { DOIR_ZONE_SCOPED_NAMED_AGRO("Parse Assignment");
 		auto owned = fp_string_view_make_dynamic($<i>1);
@@ -58,5 +58,5 @@ identifier: IDENTIFIER { $<i>$ = yylval.i; };
 
 
 void yyerror(const char* s) {
-	std::cerr << s << std::endl;
+	nowide::cerr << s << std::endl;
 }

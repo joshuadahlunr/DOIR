@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.21)
 project(DOIR LANGUAGES C CXX)
 
-set(CMAKE_CXX_STANDARD 23)
+set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_C_STANDARD 23)
 
 if(CMAKE_BUILD_TYPE MATCHES Debug)
@@ -20,6 +20,10 @@ option(DOIR_ENABLE_CODE_COVERAGE "Weather or targets to generated a code coverag
 include(scripts/flex-bison.cmake)
 fetch_flex_bison()
 add_subdirectory(thirdparty/libfp)
+
+add_library(nowide thirdparty/nowide-standalone/src/iostream.cpp)
+target_include_directories(nowide PUBLIC thirdparty/nowide-standalone/include) #NOTE: Anything using libfp also gets nowide
+target_link_libraries(libfp INTERFACE nowide)
 
 add_executable(hello hello.cpp)
 target_link_libraries(hello PUBLIC libfp::fp)
