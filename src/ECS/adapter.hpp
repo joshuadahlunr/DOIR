@@ -176,7 +176,7 @@ namespace doir::ecs {
 
 			inline size_t hash(const key_type& key) const {
 				DOIR_ZONE_SCOPED_AGRO;
-				return Hash{}(key) % Base::size();
+				return Hash{}(key) % std::max<size_t>(Base::size(), 1);
 			}
 
 			std::optional<size_t> find_position(const key_type& key) const {
@@ -270,6 +270,7 @@ namespace doir::ecs {
 				// Clear the neighborhood information
 				auto data = Base::data();
 				size_t size = Base::size(), half = size / 2;
+				if(size == 0) return false;
 				for(size_t i = 0; i < size; ++i) {
 					auto dbg = data[i];
 					bool occupied = data[i]->is_occupied();
@@ -338,7 +339,8 @@ namespace doir::ecs {
 
 			inline std::optional<entity_t> find(const key_type& key) const {
 				DOIR_ZONE_SCOPED_AGRO;
-				if(auto index = find_position(key))
+				if(Base::size() == 0) return {};
+				if(auto index = find_position(key); index)
 					return Base::data()[*index].entity;
 				return {};  // Key not found
 			}
@@ -384,6 +386,11 @@ namespace doir::ecs {
 			DOIR_ZONE_SCOPED_AGRO;
 			return comp->key;
 		}
+		template<typename Tkey, typename Tvalue = void>
+		inline const Tkey& get_key(const component_wrapper<Tkey, Tvalue>& comp) {
+			DOIR_ZONE_SCOPED_AGRO;
+			return comp->key;
+		}
 		// template<typename Tkey, typename Tvalue = void>
 		// inline Tkey& get_key(optional_reference<component_wrapper<Tkey, Tvalue>> opt) {
 		// 	return opt.value()->key;
@@ -404,6 +411,12 @@ namespace doir::ecs {
 		template<typename Tkey, typename Tvalue = void>
 			requires((!std::is_same_v<Tvalue, void>))
 		inline Tvalue& get_value(component_wrapper<Tkey, Tvalue>& comp) {
+			DOIR_ZONE_SCOPED_AGRO;
+			return comp.value.value;
+		}
+		template<typename Tkey, typename Tvalue = void>
+			requires((!std::is_same_v<Tvalue, void>))
+		inline const Tvalue& get_value(const component_wrapper<Tkey, Tvalue>& comp) {
 			DOIR_ZONE_SCOPED_AGRO;
 			return comp.value.value;
 		}
