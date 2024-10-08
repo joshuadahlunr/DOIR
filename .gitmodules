@@ -1,0 +1,3 @@
+[submodule "thirdparty/libfp"]
+	path = thirdparty/libfp
+	url = https://github.com/joshuadahlunr/libfp.git
