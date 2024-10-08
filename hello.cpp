@@ -3,8 +3,8 @@
 #define FP_IMPLEMENTATION
 #include "src/ECS/ecs.h"
 
-#include <iostream>
+#include <nowide/iostream.hpp>
 
 int main() {
-	std::cout << "Hello World" << std::endl;
+	nowide::cout << "Hello World" << std::endl;
 }
