@@ -29,6 +29,7 @@ add_executable(hello hello.cpp)
 target_link_libraries(hello PUBLIC libfp::fp)
 
 add_subdirectory(src/Calculator)
+add_subdirectory(src/JSON)
 
 if(${DOIR_ENABLE_TESTS})
 	include(FetchContent) # once in the project to include the module
@@ -50,7 +51,7 @@ if(${DOIR_ENABLE_TESTS})
 
 	file(GLOB sources "tests/*.cpp")
 	add_executable(tst ${sources})
-	target_link_libraries(tst PUBLIC libfp::fp calculator doctest nanobench)
+	target_link_libraries(tst PUBLIC libfp::fp calculator json doctest nanobench)
 	set_property(TARGET tst PROPERTY CXX_STANDARD 23)
 	set_property(TARGET tst PROPERTY C_STANDARD 23)
 

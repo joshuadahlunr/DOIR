@@ -68,6 +68,7 @@ function(add_flex_target TARGET IN OUTPUT OUT)
 	add_custom_command(
 		OUTPUT ${OUT}
 		COMMAND flex --outfile=${OUT} ${IN}
+		# COMMAND flex --debug --outfile=${OUT} ${IN}
 		DEPENDS ${In}
 	)
 	add_custom_target(${TARGET} ALL DEPENDS ${OUT})
@@ -81,6 +82,7 @@ function(add_bison_target TARGET IN OUTPUT OUT)
 	add_custom_command(
 		OUTPUT ${OUT}
 		COMMAND bison --output=${OUT} ${IN}
+		# COMMAND bison --debug --output=${OUT} ${IN}
 		DEPENDS ${In}
 	)
 	add_custom_target(${TARGET} ALL DEPENDS ${OUT})
