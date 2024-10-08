@@ -244,6 +244,8 @@ namespace doir::ecs {
 			if(freelist) fpda_free_and_null(freelist);
 		}
 
+		size_t entity_count() { return fpda_size(entity_component_indices); }
+
 		Storage& get_storage(size_t componentID, size_t element_size = Storage::invalid) noexcept {
 			DOIR_ZONE_SCOPED_AGRO;
 			if(!storages || fpda_size(storages) <= componentID) {
@@ -387,6 +389,18 @@ namespace doir::ecs {
 		inline bool has_component(entity_t e) const noexcept {
 			DOIR_ZONE_SCOPED_AGRO;
 			return has_component(e, get_global_component_id<T, Unique>());
+		}
+
+		void* get_or_add_component(entity_t e, size_t componentID, size_t element_size) noexcept {
+			if(has_component(e, componentID))
+				return get_component(e, componentID);
+			else return add_component(e, componentID, element_size);
+		}
+		template<typename T, size_t Unique = 0>
+		T& get_or_add_component(entity_t e) noexcept {
+			if(has_component<T, Unique>(e))
+				return get_component<T, Unique>(e);
+			else return add_component<T, Unique>(e);
 		}
 	};
 
