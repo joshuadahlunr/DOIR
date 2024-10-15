@@ -47,20 +47,49 @@ DBL_QUOTE ["]
 
 {DBL_QUOTE}{DBL_QUOTE} |
 {DBL_QUOTE}{CHARS}{DBL_QUOTE} {
-	yylval=fp_string_make_dynamic(yytext);
+	size_t len = fp_string_length(yytext);
+	yylval = module->create_entity();
+	module->add_component<doir::comp::lexeme>(yylval) = {location, len};
+	module->add_component<comp::string>(yylval);
+	location += len;
 	return STRING;
 };
 {NUMBER} {
-	yylval=fp_string_make_dynamic(yytext);
+	size_t len = fp_string_length(yytext);
+	yylval = module->create_entity();
+	module->add_component<doir::comp::lexeme>(yylval) = {location, len};
+	module->add_component<double>(yylval) = atof(yytext);
+	location += len;
 	return NUMBER;
 }
-"true" { return Jtrue; };
-"false" { return Jfalse; };
-"null" { return Jnull; };
+"true" { 
+	size_t len = fp_string_length(yytext);
+	yylval = module->create_entity();
+	module->add_component<doir::comp::lexeme>(yylval) = {location, len};
+	module->add_component<bool>(yylval) = true;
+	location += len;
+	return Jtrue; 
+};
+"false" { 
+	size_t len = fp_string_length(yytext);
+	yylval = module->create_entity();
+	module->add_component<doir::comp::lexeme>(yylval) = {location, len};
+	module->add_component<bool>(yylval) = false;
+	location += len;
+	return Jfalse; 
+};
+"null" { 
+	size_t len = fp_string_length(yytext);
+	yylval = module->create_entity();
+	module->add_component<doir::comp::lexeme>(yylval) = {location, len};
+	module->add_component<comp::null>(yylval);
+	location += len;
+	return Jnull; 
+};
 
-[ \t\n]+ /* ignore whitespace */;
+[ \t\n]+ { location += fp_string_length(yytext); };
 
-. { return yytext[0]; }
+. { ++location; return yytext[0]; }
 
 %%
 
