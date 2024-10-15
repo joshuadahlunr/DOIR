@@ -26,7 +26,7 @@ THE SOFTWARE. */
 	extern int yylex();
 	extern int yyparse();
 	void yyerror(const char* s);
-	#define YYSTYPE char*
+	#define YYSTYPE ecs::entity_t
 %}
 
 %token NUMBER
@@ -38,50 +38,70 @@ THE SOFTWARE. */
 
 %%
 
-START: ARRAY {
-	result = $1;
-} | OBJECT {
-	result = $1;
-} | VALUE {
-	result = $1;
-};
+START: ARRAY { objects.push($1); }
+	| OBJECT { objects.push($1); }
+	| VALUE { objects.push($1); };
 OBJECT: '{' '}' {
-	$$ = (char*)"{}";
-} | '{' MEMBERS '}' {
-	$$ = (char *)malloc(sizeof(char)*(1+strlen($2)+1+1));
-	sprintf($$,"{%s}",$2);
+	$$ = module->create_entity();
+	module->add_component<doir::comp::lexeme>($$) = {location - 1, 2};
+	module->add_component<comp::object>($$);
+} | '{' {
+	$$ = module->create_entity();
+	module->add_component<doir::comp::lexeme>($$) = {location - 1, 2};
+	module->add_component<comp::object>($$);
+	objects.push($$);
+} MEMBERS '}' {
+	$$ = objects.top();
+	auto& lexeme = module->get_component<doir::comp::lexeme>($$);
+	lexeme.length = location - lexeme.start;
+	objects.pop();
 };
-MEMBERS: PAIR {
-	$$ = $1;
-} | PAIR ',' MEMBERS {
-	$$ = (char *)malloc(sizeof(char)*(strlen($1)+1+strlen($3)+1));
-	sprintf($$,"%s,%s",$1,$3);
+MEMBERS: PAIR | PAIR ',' MEMBERS;
+PAIR: VALUE_STRING ':' VALUE {
+	auto obj = objects.top();
+	auto& members = module->get_component<comp::object>(obj).members;
+	get_key_and_mark_occupied(module->add_component<comp::object_entry_hash>($3)) = {obj, module->get_component<doir::comp::lexeme>($1)};
+	fpda_push_back(members, $3);
+	// $$ = $1;
 };
-PAIR: STRING ':' VALUE {
-	$$ = (char *)malloc(sizeof(char)*(strlen($1)+1+strlen($3)+1));
-	sprintf($$,"%s:%s",$1,$3);
-};
-ARRAY: '[' ']' {
-	$$ = (char *)malloc(sizeof(char)*(2+1));
-	sprintf($$,"[]");
-} | '[' ELEMENTS ']' {
-	$$ = (char *)malloc(sizeof(char)*(1+strlen($2)+1+1));
-	sprintf($$,"[%s]",$2);
+ARRAY: '[' {
+	$$ = module->create_entity();
+	module->add_component<doir::comp::lexeme>($$) = {location - 1, 2};
+	module->add_component<comp::array>($$);
+} ']' | '[' {
+	$$ = module->create_entity();
+	module->add_component<doir::comp::lexeme>($$) = {location - 1, 2};
+	module->add_component<comp::array>($$);
+	objects.push($$);
+} ELEMENTS ']' {
+	$$ = objects.top();
+	auto& lexeme = module->get_component<doir::comp::lexeme>($$);
+	lexeme.length = location - lexeme.start;
+	auto& members = module->get_component<comp::array>($$).members;
+	std::reverse(members, members + fpda_size(members));
+	objects.pop();
 };
 ELEMENTS: VALUE {
-	$$ = $1;
+	auto array = objects.top();
+	auto& members = module->get_component<comp::array>(array).members;
+	// get_key_and_mark_occupied(module->add_component<comp::array_entry_hash>($1)) = {array, fpda_size(members)};
+	fpda_push_back(members, $1);
+	// $$ = $1;
 } | VALUE ',' ELEMENTS {
-	$$ = (char *)malloc(sizeof(char)*(strlen($1)+1+strlen($3)+1));
-	sprintf($$,"%s,%s",$1,$3);
+	auto array = objects.top();
+	auto& members = module->get_component<comp::array>(array).members;
+	// get_key_and_mark_occupied(module->add_component<comp::array_entry_hash>($1)) = {array, fpda_size(members)};
+	fpda_push_back(members, $1);
+	// $$ = $1;
 };
-VALUE: STRING {$$=yylval;}
-| NUMBER {$$=yylval;}
-| OBJECT {$$=$1;}
-| ARRAY {$$=$1;}
-| Jtrue {$$=(char*)"true";}
-| Jfalse {$$=(char*)"false";}
-| Jnull {$$=(char*)"null";}
-;
+VALUE: VALUE_STRING {$$=$1;}
+	| NUMBER {$$=yylval;}
+	| OBJECT {$$=$1;}
+	| ARRAY {$$=$1;}
+	| Jtrue {$$=yylval;}
+	| Jfalse {$$=yylval;}
+	| Jnull {$$=yylval;};
+VALUE_STRING: STRING {$$=yylval;};
 
 %%
 
