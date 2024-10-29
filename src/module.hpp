@@ -25,6 +25,9 @@ namespace doir {
 			table.rehash(underlying());
 			return table;
 		}
+
+		template<typename Th>
+		using HashtableComponent = ecs::hashtable::component_wrapper<Th, void>;
 	};
 
 	struct TrivialModule : public ecs::TrivialModule, public ModuleCRTP<TrivialModule> {};
