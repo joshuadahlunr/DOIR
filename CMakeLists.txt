@@ -30,6 +30,7 @@ target_link_libraries(hello PUBLIC libfp::fp)
 
 add_subdirectory(src/Calculator)
 add_subdirectory(src/JSON)
+add_subdirectory(src/Lox)
 
 if(${DOIR_ENABLE_TESTS})
 	include(FetchContent) # once in the project to include the module
