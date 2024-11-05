@@ -1,10 +1,6 @@
 #include "json.hpp"
 
-#ifdef _MSC_VER
-#define YY_NO_UNISTD_H
-#include <io.h>
-#endif
-
+#include <reflex/input.h>
 #include <nowide/iostream.hpp>
 #include <stack>
 #include <fp/string.h>
@@ -32,11 +28,28 @@ namespace doir::JSON {
 	std::stack<ecs::entity_t> objects;
 
 	#include "gen/parser.h"
-	#include "gen/scanner.h"
+}
+
+#include "gen/scanner.h"
+
+namespace doir::JSON {
+
+	inline int yylex(reflex::Input* input /* = nullptr */) {
+		static Lexer lexer;
+		if(input) { lexer = Lexer(*input); return true; }
+		else return lexer.lex();
+	}
+
+	inline void set_input(reflex::Input& input) { 
+		yylex(&input); 
+	}
+	inline void set_input(reflex::Input&& input) { 
+		yylex(&input); 
+	}
 
 	std::pair<TrivialModule, ecs::entity_t> parse_view(const fp_string_view view) {
 		DOIR_ZONE_SCOPED_AGRO;
-		yy_scan_bytes(fp_view_data(char, view), fp_view_size(view));
+		set_input(reflex::Input(fp_view_data(char, view), fp_view_size(view)));
 		TrivialModule out;
 		module = &out;
 
