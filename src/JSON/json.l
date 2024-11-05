@@ -32,8 +32,8 @@ DIGIT [0-9]
 DIGITS {DIGIT}+
 INT {DIGIT}|{DIGIT1to9}{DIGITS}|-{DIGIT}|-{DIGIT1to9}{DIGITS}
 FRAC [.]{DIGITS}
-EXP {E}{DIGITS}
 E [eE][+-]?
+EXP {E}{DIGITS}
 HEX_DIGIT [0-9a-f]
 NUMBER {INT}|{INT}{FRAC}|{INT}{EXP}|{INT}{FRAC}{EXP}
 UNESCAPEDCHAR [ -!#-\[\]-~]
@@ -47,7 +47,7 @@ DBL_QUOTE ["]
 
 {DBL_QUOTE}{DBL_QUOTE} |
 {DBL_QUOTE}{CHARS}{DBL_QUOTE} {
-	size_t len = fp_string_length(yytext);
+	size_t len = fp_string_length(text());
 	yylval = module->create_entity();
 	module->add_component<doir::comp::lexeme>(yylval) = {location, len};
 	module->add_component<comp::string>(yylval);
@@ -55,15 +55,15 @@ DBL_QUOTE ["]
 	return STRING;
 };
 {NUMBER} {
-	size_t len = fp_string_length(yytext);
+	size_t len = fp_string_length(text());
 	yylval = module->create_entity();
 	module->add_component<doir::comp::lexeme>(yylval) = {location, len};
-	module->add_component<double>(yylval) = atof(yytext);
+	module->add_component<double>(yylval) = atof(text());
 	location += len;
 	return NUMBER;
 }
 "true" { 
-	size_t len = fp_string_length(yytext);
+	size_t len = fp_string_length(text());
 	yylval = module->create_entity();
 	module->add_component<doir::comp::lexeme>(yylval) = {location, len};
 	module->add_component<bool>(yylval) = true;
@@ -71,7 +71,7 @@ DBL_QUOTE ["]
 	return Jtrue; 
 };
 "false" { 
-	size_t len = fp_string_length(yytext);
+	size_t len = fp_string_length(text());
 	yylval = module->create_entity();
 	module->add_component<doir::comp::lexeme>(yylval) = {location, len};
 	module->add_component<bool>(yylval) = false;
@@ -79,7 +79,7 @@ DBL_QUOTE ["]
 	return Jfalse; 
 };
 "null" { 
-	size_t len = fp_string_length(yytext);
+	size_t len = fp_string_length(text());
 	yylval = module->create_entity();
 	module->add_component<doir::comp::lexeme>(yylval) = {location, len};
 	module->add_component<comp::null>(yylval);
@@ -87,9 +87,9 @@ DBL_QUOTE ["]
 	return Jnull; 
 };
 
-[ \t\n]+ { location += fp_string_length(yytext); };
+[ \t\n]+ { location += fp_string_length(text()); };
 
-. { ++location; return yytext[0]; }
+. { ++location; return text()[0]; }
 
 %%
 

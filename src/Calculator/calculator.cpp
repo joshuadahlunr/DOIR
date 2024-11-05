@@ -3,11 +3,7 @@
 #include <functional>
 #include <string_view>
 
-#ifdef _MSC_VER
-#define YY_NO_UNISTD_H
-#include <io.h>
-#endif
-
+#include <reflex/input.h>
 #include <nowide/iostream.hpp>
 #include <cmath>
 
@@ -53,11 +49,28 @@ namespace doir::Calculator {
 	ecs::entity_t moduleRoot;
 
 	#include "gen/parser.h"
-	#include "gen/scanner.h"
+}
+
+#include "gen/scanner.h"
+
+namespace doir::Calculator {
+
+	inline int yylex(reflex::Input* input /* = nullptr */) {
+		static Lexer lexer;
+		if(input) { lexer = Lexer(*input); return true; }
+		else return lexer.lex();
+	}
+
+	inline void set_input(reflex::Input& input) {
+		yylex(&input);
+	}
+	inline void set_input(reflex::Input&& input) {
+		yylex(&input);
+	}
 
 	TrivialModule parse_view(const fp_string_view view, TrivialModule* existing /*= nullptr*/) {
 		DOIR_ZONE_SCOPED_AGRO;
-		yy_scan_bytes(fp_view_data(char, view), fp_view_size(view));
+		set_input(reflex::Input(fp_view_data(char, view), fp_view_size(view)));
 
 		TrivialModule out = existing ? std::move(*existing) : TrivialModule{};
 		module = &out;

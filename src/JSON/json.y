@@ -23,10 +23,10 @@ THE SOFTWARE. */
 /* Modified from: https://gist.github.com/justjkk/436828 */
 
 %{
-	extern int yylex();
-	extern int yyparse();
+	int yylex(reflex::Input* input = nullptr);
+	int yyparse();
 	void yyerror(const char* s);
-	#define YYSTYPE ecs::entity_t
+	#define YYSTYPE doir::ecs::entity_t
 %}
 
 %token NUMBER
@@ -105,6 +105,6 @@ VALUE_STRING: STRING {$$=yylval;};
 
 %%
 
-void yyerror(const char* s) {
+inline void yyerror(const char* s) {
 	nowide::cerr << s << std::endl;
 }
