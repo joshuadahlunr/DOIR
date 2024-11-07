@@ -6,12 +6,14 @@
 
 #include "../utility/profile.config.hpp"
 
-#ifndef DOIR_DISABLE_STRING_COMPONENT_LOOKUP
+// #define DOIR_DISABLE_STRING_COMPONENT_LOOKUP
+
+// #ifndef DOIR_DISABLE_STRING_COMPONENT_LOOKUP
 	#define FP_HASH_DYNAMIC_HASH_FUNCTION
 	#define FP_HASH_DYNAMIC_EQUALS_FUNCTION
 	#define FP_HASH_DYNAMIC_FINALIZE_FUNCTION
 	#include <fp/hash.h>
-#endif // DOIR_DISABLE_STRING_COMPONENT_LOOKUP
+// #endif // DOIR_DISABLE_STRING_COMPONENT_LOOKUP
 
 #include <typeinfo>
 #ifdef __GNUC__
@@ -101,6 +103,7 @@ namespace doir::ecs {
 		size_t doir_ecs_component_id_from_name_view(const fp_string_view view, bool create_if_not_found = true) noexcept
 #ifdef DOIR_IMPLEMENTATION
 		{ DOIR_ZONE_SCOPED_AGRO;
+			bool free = false;
 			fp_string name = fp_string_view_make_dynamic(view); // TODO: Is there a way to skip the allocation here?
 			ForwardPair lookup{name, 0};
 			if(!fp_hash_contains(ForwardPair, doir_ecs_get_forward_map(), lookup)) {
@@ -115,8 +118,11 @@ namespace doir::ecs {
 					fp_string_free(name);
 					return -1;
 				}
-			} else fp_string_free(name);
-			return fp_hash_find(ForwardPair, doir_ecs_get_forward_map(), lookup)->second;
+			} else free = true;
+
+			auto out = fp_hash_find(ForwardPair, doir_ecs_get_forward_map(), lookup)->second;
+			if (free) fp_string_free(name);
+			return out;
 		}
 #else
 		;
