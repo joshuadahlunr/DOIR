@@ -4,3 +4,7 @@
 [submodule "thirdparty/nowide-standalone"]
 	path = thirdparty/nowide-standalone
 	url = https://github.com/nephatrine/nowide-standalone.git
+[submodule "tests/glaze"]
+	path = tests/glaze
+	url = https://github.com/stephenberry/glaze.git
+	shallow = true
