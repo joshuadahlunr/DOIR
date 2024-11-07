@@ -4,3 +4,7 @@
 [submodule "thirdparty/nowide-standalone"]
 	path = thirdparty/nowide-standalone
 	url = https://github.com/nephatrine/nowide-standalone.git
+[submodule "tests/json"]
+	path = tests/json
+	url = https://github.com/nlohmann/json.git
+	shallow = true

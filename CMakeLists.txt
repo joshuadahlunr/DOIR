@@ -49,9 +49,11 @@ if(${DOIR_ENABLE_TESTS})
 		FetchContent_MakeAvailable(fetch_nanobench)
 	endif()
 
+	add_subdirectory(tests/json)
+
 	file(GLOB sources "tests/*.cpp")
 	add_executable(tst ${sources})
-	target_link_libraries(tst PUBLIC libfp::fp calculator json doctest nanobench)
+	target_link_libraries(tst PUBLIC libfp::fp calculator json doctest nanobench nlohmann_json)
 	set_property(TARGET tst PROPERTY CXX_STANDARD 23)
 	set_property(TARGET tst PROPERTY C_STANDARD 23)
 
