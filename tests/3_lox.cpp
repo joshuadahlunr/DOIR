@@ -10,6 +10,7 @@ TEST_SUITE("calculator") {
 			DOIR_ZONE_SCOPED_NAMED("doir::Lox::HelloWorld");
 			auto [module, root] = doir::Lox::parse("print \"Hello World\";");
 			CHECK(root == 1);
+			doir::Lox::sort_parse_into_reverse_post_order_traversal(module, root);
 #ifdef DOIR_ENABLE_BENCHMARKING
 		});
 #endif
@@ -51,6 +52,7 @@ while (i < 10000000) {
 }
 			)");
 			CHECK(root == 1);
+			doir::Lox::sort_parse_into_reverse_post_order_traversal(module, root);
 #ifdef DOIR_ENABLE_BENCHMARKING
 		});
 #endif

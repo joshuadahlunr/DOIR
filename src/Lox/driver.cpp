@@ -11,9 +11,9 @@ int main() {
 	while(nowide::cin) {
 		std::getline(std::cin, line, '~');
 		auto [module, root] = doir::Lox::parse(line.c_str());
-		// auto str = doir::JSON::dump(module, root);
-		if(root) doir::Lox::dump(module, root);
-		// nowide::cout << str << std::endl;
-		// fp_string_free(str);
+
+		if(!root) continue;
+		doir::Lox::sort_parse_into_reverse_post_order_traversal(module, root);
+		doir::Lox::dump(module, root);
 	}
 }

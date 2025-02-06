@@ -13,7 +13,7 @@ endif()
 
 option(DOIR_ENABLE_TESTS "Weather or not Unit Tests should be built." ${PROJECT_IS_TOP_LEVEL})
 option(DOIR_ENABLE_PROFILING "Weather or not profiling instrumentation will be added." ${DOIR_PROFILE_DEFAULT})
-option(DOIR_ENABLE_CODE_COVERAGE "Weather or targets to generated a code coverage report should be created." false)
+option(DOIR_ENABLE_CODE_COVERAGE "Weather or not targets to generated a code coverage report should be created." false)
 
 # set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fsanitize=address")
 

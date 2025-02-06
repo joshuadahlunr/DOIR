@@ -64,8 +64,8 @@ namespace doir::ecs {
 		};
 
 		// From: https://stackoverflow.com/a/29753388
-		// template<int N, typename... Ts>
-		// using nth_type = typename std::tuple_element<N, std::tuple<Ts...>>::type;
+		template<int N, typename... Ts>
+		using nth_type = typename std::tuple_element<N, std::tuple<Ts...>>::type;
 
 		struct void_like{};
 	}
@@ -221,6 +221,13 @@ namespace doir::ecs {
 				return std::less<entity_t>{}(eA, eB);
 			};
 			sort<Tcomponent, decltype(comparator), true, Unique>(module, comparator);
+		}
+		void sort_monotonic(struct TrivialModule& module, size_t component_id) {
+			DOIR_ZONE_SCOPED_AGRO;
+			auto comparator = [](void* a, entity_t eA, void* b, entity_t eB) {
+				return std::less<entity_t>{}(eA, eB);
+			};
+			sort<decltype(comparator), true>(module, component_id, comparator);
 		}
 	};
 
@@ -402,6 +409,112 @@ namespace doir::ecs {
 				return get_component<T, Unique>(e);
 			else return add_component<T, Unique>(e);
 		}
+
+
+
+	protected:
+		template<typename Tcomponent, size_t Unique = 0>
+		struct NotifySwapOp {
+			inline void operator()(TrivialModule& self, entity_t a, entity_t b) const {
+				// if constexpr(!detail::has_swap_entities<Tcomponent>) return true;
+				auto& storage = self.get_storage<Tcomponent, Unique>();
+				Tcomponent* data = storage.template data<Tcomponent>();
+				for(size_t i = storage.size(); i--; ) {
+					// This commented code runs half as fast as the current code!
+					// if(!self.has_component<Tcomponent>(i)) continue;
+					// Tcomponent::swap_entities(*self.get_component<Tcomponent>(i), a, b);
+					Tcomponent::swap_entities(data[i], a, b);
+				}
+			}
+		};
+	public:
+		void swap_entities(entity_t a, std::optional<entity_t> _b = {}) {
+			entity_t b = _b.value_or(fpda_size(entity_component_indices) - 1);
+
+			assert(a < fpda_size(entity_component_indices));
+			assert(b < fpda_size(entity_component_indices));
+			std::swap(entity_component_indices[a], entity_component_indices[b]);
+		}
+
+		template<typename... Tcomponents2notify>
+		void swap_entities(entity_t a, std::optional<entity_t> _b = {}) {
+			entity_t b = _b.value_or(fpda_size(entity_component_indices) - 1);
+
+			[&, this]<std::size_t... I>(std::index_sequence<I...>) {
+				(NotifySwapOp<detail::nth_type<I, Tcomponents2notify...>>{}(*this, a, b), ...);
+			}(std::make_index_sequence<sizeof...(Tcomponents2notify)>{});
+
+			swap_entities(a, b);
+		}
+
+#define DOIR_ECS_REORDER_ENTITIES_COMMON(_order, SWAP_ENTITIES)\
+			size_t size = fp_view_size(_order);\
+			assert(size == entity_count()); /* Require order to have an entry for every element in the array */\
+			auto swaps = fp_alloca(size_t, size);\
+			/* Transpose the order (it now stores what needs to be swapped with what) */\
+			for(size_t i = 0; i < size; ++i)\
+				swaps[*fp_view_access(size_t, order, i)] = i;\
+			/* Update the data storage and book keeping */\
+			for(size_t i = 0; i < size; ++i)\
+				while(swaps[i] != i) {\
+					SWAP_ENTITIES;\
+					std::swap(swaps[swaps[i]], swaps[i]);\
+				}
+		void reorder_entities(fp_view(size_t) order) {
+            DOIR_ECS_REORDER_ENTITIES_COMMON(order, swap_entities(swaps[i], i));
+        }
+		template<typename... Tcomponents2notify>
+		void reorder_entities(fp_view(size_t) order) {
+            DOIR_ECS_REORDER_ENTITIES_COMMON(order, swap_entities<Tcomponents2notify...>(swaps[i], i));
+			// auto& _order = order;
+			
+			// assert(fp_view_size(_order) == entity_count()); /* Require order to have an entry for every element in the array */
+			// auto swaps = fp_alloca(size_t, size);
+			// /* Transpose the order (it now stores what needs to be swapped with what) */
+			// for(size_t i = 0; i < size; ++i)
+			// 	swaps[*fp_view_access(size_t, order, i)] = i;
+			// /* Update the data storage and book keeping */\
+			// for(size_t i = 0; i < size; ++i)
+			// 	while(swaps[i] != i) {
+			// 		swap_entities<Tcomponents2notify...>(swaps[i], i);
+			// 		std::swap(swaps[swaps[i]], swaps[i]);
+			// 	}
+        }
+
+	protected:
+		template<typename Tcomponent>
+		struct MonotonicOp {
+			inline void operator()(TrivialModule& module, Storage& storage) const {
+				storage.sort_monotonic<Tcomponent>(module);
+			}
+		};
+	public:
+		template<typename... Tcomponents>
+		void make_monotonic() {
+			[&, this]<std::size_t... I>(std::index_sequence<I...>) {
+				(MonotonicOp<detail::nth_type<I, Tcomponents...>>{}(*this, get_storage<detail::nth_type<I, Tcomponents...>>()), ...);
+			}(std::make_index_sequence<sizeof...(Tcomponents)>{});
+		}
+		template<typename Tcomponent, size_t Unique = 0>
+		void make_monotonic() {
+			get_storage<Tcomponent, Unique>()->template sort_monotonic<Tcomponent, Unique>(*this);
+		}
+		void make_monotonic(fp_view(size_t) component_ids) {
+			fp_view_iterate_named(size_t, component_ids, id)
+				make_monotonic(*id);
+		}
+		void make_monotonic(size_t component_id) {
+			get_storage(component_id).sort_monotonic(*this, component_id);
+		}
+
+		void make_all_monotonic() {
+			fp_iterate_named(storages, storage) {
+				if(storage->element_size == Storage::invalid) continue; // Only initalized storages can be made monotonic
+				auto id = fp_iterate_calculate_index(storages, storage);
+				storage->sort_monotonic(*this, id);
+			}
+		}
+
 	};
 
 	struct Module : public TrivialModule {
@@ -525,6 +638,7 @@ namespace doir::ecs {
 	inline void reorder_impl(Storage* self, TrivialModule& module, fp_view(size_t) order, std::optional<size_t> _component_id = {}) {
 		DOIR_ZONE_SCOPED_AGRO;
 		assert(fp_view_size(order) == self->size()); // Require order to have an entry for every element in the array
+		if(self->size() <= 1) return; // Zero or one elements are always sorted
 		size_t component_id = _component_id.value_or(get_global_component_id<Tcomponent, Unique>());
 
 		size_t* swaps = fp_alloca(size_t, fp_view_size(order));
@@ -558,8 +672,15 @@ namespace doir::ecs {
 		size_t component_id = _component_id.value_or(get_global_component_id<Tcomponent, Unique>());
 		// Create a list of indices
 		size_t size = self->size();
+		if(size <= 1) return; // Zero or one elements are always sorted
 		size_t* order = fp_alloca(size_t, size);
 		std::iota(order, fp_end(order), 0);
+
+		constexpr static auto data = std::is_same_v<Tcomponent, detail::void_like> ? +[](Storage* self, size_t i) -> void* {
+			return ((char*)self->raw) + i * self->element_size;
+		} : +[](Storage* self, size_t i) -> void* {
+			return self->data<Tcomponent>() + i;
+		};
 
 		// Sort the list of indices into the correct order (possibly alongside a list of entities)
 		if constexpr(with_entities) {
@@ -568,8 +689,8 @@ namespace doir::ecs {
 				entities[i] = detail::get_entity<Tcomponent, Unique>(*self, module, i, component_id);
 
 			auto comparator = [self, entities, &_comparator](size_t _a, size_t _b) {
-				void* a = self->data<Tcomponent>() + _a;
-				void* b = self->data<Tcomponent>() + _b;
+				void* a = data(self, _a);
+				void* b = data(self, _b);
 				return _comparator(a, entities[_a], b, entities[_b]);
 			};
 
@@ -577,8 +698,8 @@ namespace doir::ecs {
 			std::sort(order, fp_end(order), comparator);
 		} else {
 			auto comparator = [self, &_comparator](size_t _a, size_t _b) {
-				void* a = self->data<Tcomponent>() + _a;
-				void* b = self->data<Tcomponent>() + _b;
+				void* a = data(self, _a);
+				void* b = data(self, _b);
 				return _comparator(a, b);
 			};
 
