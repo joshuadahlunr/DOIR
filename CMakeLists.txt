@@ -19,6 +19,7 @@ option(DOIR_ENABLE_CODE_COVERAGE "Weather or targets to generated a code coverag
 
 include(scripts/flex-bison.cmake)
 fetch_flex_bison()
+include(cmake/FetchPackCC.cmake)
 add_subdirectory(thirdparty/libfp)
 
 add_library(nowide thirdparty/nowide-standalone/src/iostream.cpp)

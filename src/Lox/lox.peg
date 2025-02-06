@@ -1,0 +1,278 @@
+%prefix "lox"
+%value "ecs::entity_t"
+%auxil "auxilary*"
+
+program <- _ declaration*
+
+declaration <- classDecl
+/ funDecl
+/ varDecl
+/ statement
+
+classDecl <- "class"_&{ return false; } IDENTIFIER ("<"_ IDENTIFIER)? "{"_ function* "}"_
+funDecl <- ("fun"/"fn")_ f:function { $$ = f; }
+varDecl <- "var"_ i:IDENTIFIER ("="_ init:expression)? EoL {
+	auto& lexeme = MODULE().get_component<doir::comp::lexeme>($$ = i);
+	MODULE().add_component<variable_declaire>($$) = {lexeme, BLOCKS().back()};
+	APPEND_TO_CURRENT_BLOCK($$);
+
+	if(init) {
+		auto assignment = MODULE().create_entity();
+		MODULE().add_component<doir::comp::lexeme>(assignment) = lexeme + MODULE().get_component<doir::comp::lexeme>(init);
+		MODULE().add_component<assign>(assignment);
+		MODULE().add_component<operation>(assignment) = {$$, init};
+		APPEND_TO_CURRENT_BLOCK(assignment);
+	}
+}
+
+function <- i:IDENTIFIER { MODULE().add_component<parameters>(i); OBJECTS().push_back(i); } "("_ parameters? ")"_ b:block {
+	$$ = b;
+	if(!MODULE().get_component<parameters>(i).parameters.empty())
+		MODULE().add_component<parameters>($$) = MODULE().get_component<parameters>(i);
+
+	auto& decl = MODULE().add_component<function_declaire>($$) = {declaire{.name = MODULE().get_component<doir::comp::lexeme>(i), .parent = BLOCKS().back()}};
+	auto& lexeme = MODULE().get_component<doir::comp::lexeme>($$);
+	lexeme = decl.name + lexeme;
+	// APPEND_TO_CURRENT_BLOCK($$); // NOTE: `b` is already a member of the current block
+}
+parameters <- i:IDENTIFIER parametersTail {
+	auto func = OBJECTS().back();
+	MODULE().add_component<parameter_declaire>(i) = {declaire{.name = MODULE().get_component<doir::comp::lexeme>(i), .parent = func}};
+	auto& params = MODULE().get_component<parameters>(func);
+	params.parameters.push_back(i);
+}
+parametersTail <- ","_ i:IDENTIFIER parametersTail {
+	auto func = OBJECTS().back();
+	MODULE().add_component<parameter_declaire>(i) = {declaire{.name = MODULE().get_component<doir::comp::lexeme>(i), .parent = func}};
+	auto& params = MODULE().get_component<parameters>(func);
+	params.parameters.push_back(i);
+} / {$$ = 0;}
+arguments <- e1:expression {MODULE().get_component<call>(BLOCKS().back()).children.push_back(e1);} 
+	(","_ e2:expression {MODULE().get_component<call>(BLOCKS().back()).children.push_back(e2);})*
+
+
+statement <- exprStmt
+/ forStmt
+/ ifStmt
+/ printStmt
+/ returnStmt
+/ whileStmt
+/ block
+
+exprStmt <- e:expression EoL { APPEND_TO_CURRENT_BLOCK($$ = e); }
+forStmt <- "for"_ "("_ (varDecl / exprStmt / EoL) cond:expression? EoL up:expression? ")"_ body:statement {
+	CURRENT_BLOCK().children.pop_back(); // Pop body out of the block
+	// NOTE: The init expression is just allowed to exist in the outer scope, long term this causes issues but is fine for this test
+
+	$$ = MODULE().create_entity();
+
+	if(!cond) {
+		cond = MODULE().create_entity();
+		MODULE().add_component<lexeme>(cond) = MODULE().get_component<lexeme>(up ? up : body);
+		MODULE().add_component<literal>(cond);
+		MODULE().add_component<bool>(cond) = true;
+	}
+
+	if(up && !MODULE().has_component<block>(body)) {
+		auto old = body;
+		auto& block = MODULE().add_component<struct block>(body = MODULE().create_entity()) = { BLOCKS().back() };
+		MODULE().add_component<lexeme>(body) = MODULE().get_component<lexeme>(old);
+		block.children.push_back(old);
+		block.children.push_back(up);
+	} else if(up) MODULE().get_component<block>(body).children.push_back(up);
+
+	MODULE().add_component<lexeme>($$) = MODULE().get_component<lexeme>(cond) + MODULE().get_component<lexeme>(body);
+	MODULE().add_component<while_>($$);
+	MODULE().add_component<operation>($$) = {cond, body};
+	APPEND_TO_CURRENT_BLOCK($$);
+}
+ifStmt <- "if"_ "("_ cond:expression ")"_ then:statement {CURRENT_BLOCK().children.pop_back();} ("else"_ el:statement {CURRENT_BLOCK().children.pop_back();})? {
+	$$ = MODULE().create_entity();
+	auto& lexeme = MODULE().add_component<struct lexeme>($$) = MODULE().get_component<struct lexeme>(cond) + MODULE().get_component<struct lexeme>(then);
+	if(el) lexeme = lexeme + MODULE().get_component<struct lexeme>(el);
+	MODULE().add_component<if_>($$);
+	MODULE().add_component<operation>($$) = {cond, then, el};
+	APPEND_TO_CURRENT_BLOCK($$);
+}
+printStmt <- "print"_ e:expression EoL {
+	$$ = MODULE().create_entity();
+	MODULE().add_component<lexeme>($$) = MODULE().get_component<lexeme>(e);
+	MODULE().add_component<print>($$);
+	MODULE().add_component<operation>($$) = {e};
+	APPEND_TO_CURRENT_BLOCK($$);
+}
+returnStmt <- "return"_ e:expression? EoL {
+	$$ = MODULE().create_entity();
+	MODULE().add_component<lexeme>($$) = MODULE().get_component<lexeme>(e);
+	MODULE().add_component<return_>($$);
+	MODULE().add_component<operation>($$) = {e};
+	APPEND_TO_CURRENT_BLOCK($$);
+}
+whileStmt <- "while"_ "("_ cond:expression ")"_ body:statement {
+	CURRENT_BLOCK().children.pop_back(); // Pop statement out of block
+	$$ = MODULE().create_entity();
+	MODULE().add_component<lexeme>($$) = MODULE().get_component<lexeme>(cond) + MODULE().get_component<lexeme>(body);
+	MODULE().add_component<while_>($$);
+	MODULE().add_component<operation>($$) = {cond, body};
+	APPEND_TO_CURRENT_BLOCK($$);
+}
+block <- "{"_ {
+	APPEND_TO_CURRENT_BLOCK($$ = MODULE().create_entity());
+	MODULE().add_component<block>($$) = { BLOCKS().back() };
+	BLOCKS().push_back($$);
+} declaration* "}"_ {
+	auto& block = MODULE().get_component<struct block>($$ = BLOCKS().pop_back());
+	MODULE().add_component<lexeme>($$) = MODULE().get_component<lexeme>(block.children.front()) + MODULE().get_component<lexeme>(block.children.back());
+}
+
+
+expression <- a:assignment { $$ = a; }
+
+assignment <- (call "."_&{ return false; })? i:IDENTIFIER "="_ e:assignment {
+	$$ = MODULE().create_entity();
+	MODULE().add_component<lexeme>($$) = MODULE().get_component<lexeme>(i) + MODULE().get_component<lexeme>(e);
+	MODULE().add_component<assign>($$);
+	MODULE().add_component<operation>($$) = {i, e};
+} / l:logic_or { $$ = l; }
+
+logic_or <- o:logic_or "or"_ a:logic_and {
+	$$ = MODULE().create_entity();
+	MODULE().add_component<lexeme>($$) = MODULE().get_component<lexeme>(o) + MODULE().get_component<lexeme>(a);
+	MODULE().add_component<and_>($$);
+	MODULE().add_component<operation>($$) = {o, a};
+} / l:logic_and { $$ = l; }
+logic_and <- l:logic_and "and"_ e:equality {
+	$$ = MODULE().create_entity();
+	MODULE().add_component<lexeme>($$) = MODULE().get_component<lexeme>(l) + MODULE().get_component<lexeme>(e);
+	MODULE().add_component<and_>($$);
+	MODULE().add_component<operation>($$) = {l, e};
+} / e:equality { $$ = e;}
+equality <- e:equality "!="_ c:comparison {
+	$$ = MODULE().create_entity();
+	MODULE().add_component<lexeme>($$) = MODULE().get_component<lexeme>(e) + MODULE().get_component<lexeme>(c);
+	MODULE().add_component<not_equal_to>($$);
+	MODULE().add_component<operation>($$) = {e, c};
+} / e:equality "=="_ c:comparison {
+	$$ = MODULE().create_entity();
+	MODULE().add_component<lexeme>($$) = MODULE().get_component<lexeme>(e) + MODULE().get_component<lexeme>(c);
+	MODULE().add_component<equal_to>($$);
+	MODULE().add_component<operation>($$) = {e, c};
+} / c:comparison { $$ = c; }
+comparison <- c:comparison ">"_ t:term {
+	$$ = MODULE().create_entity();
+	MODULE().add_component<lexeme>($$) = MODULE().get_component<lexeme>(c) + MODULE().get_component<lexeme>(t);
+	MODULE().add_component<greater_than>($$);
+	MODULE().add_component<operation>($$) = {c, t};
+} / c:comparison ">="_ t:term {
+	$$ = MODULE().create_entity();
+	MODULE().add_component<lexeme>($$) = MODULE().get_component<lexeme>(c) + MODULE().get_component<lexeme>(t);
+	MODULE().add_component<greater_than_equal_to>($$);
+	MODULE().add_component<operation>($$) = {c, t};
+} / c:comparison "<"_ t:term {
+	$$ = MODULE().create_entity();
+	MODULE().add_component<lexeme>($$) = MODULE().get_component<lexeme>(c) + MODULE().get_component<lexeme>(t);
+	MODULE().add_component<less_than>($$);
+	MODULE().add_component<operation>($$) = {c, t};
+} / c:comparison "<="_ t:term {
+	$$ = MODULE().create_entity();
+	MODULE().add_component<lexeme>($$) = MODULE().get_component<lexeme>(c) + MODULE().get_component<lexeme>(t);
+	MODULE().add_component<less_than_equal_to>($$);
+	MODULE().add_component<operation>($$) = {c, t};
+} / t:term { $$ = t; }
+term <- t:term "-"_ f:factor {
+	$$ = MODULE().create_entity();
+	MODULE().add_component<lexeme>($$) = MODULE().get_component<lexeme>(t) + MODULE().get_component<lexeme>(f);
+	MODULE().add_component<subtract>($$);
+	MODULE().add_component<operation>($$) = {t, f};
+} / t:term "+"_ f:factor {
+	$$ = MODULE().create_entity();
+	MODULE().add_component<lexeme>($$) = MODULE().get_component<lexeme>(t) + MODULE().get_component<lexeme>(f);
+	MODULE().add_component<add>($$);
+	MODULE().add_component<operation>($$) = {t, f};
+} / f:factor { $$ = f; }
+factor <- f:factor "/"_ u:unary {
+	$$ = MODULE().create_entity();
+	MODULE().add_component<lexeme>($$) = MODULE().get_component<lexeme>(f) + MODULE().get_component<lexeme>(u);
+	MODULE().add_component<divide>($$);
+	MODULE().add_component<operation>($$) = {f, u};
+} / f:factor "*"_ u:unary {
+	$$ = MODULE().create_entity();
+	MODULE().add_component<lexeme>($$) = MODULE().get_component<lexeme>(f) + MODULE().get_component<lexeme>(u);
+	MODULE().add_component<multiply>($$);
+	MODULE().add_component<operation>($$) = {f, u};
+} / u:unary { $$ = u; }
+
+unary <- "!"_ u:unary {
+	$$ = MODULE().create_entity();
+	MODULE().add_component<lexeme>($$) = MODULE().get_component<lexeme>(u);
+	MODULE().add_component<not_>($$);
+	MODULE().add_component<operation>($$) = {u};
+} / "-"_ u:unary {
+	$$ = MODULE().create_entity();
+	MODULE().add_component<lexeme>($$) = MODULE().get_component<lexeme>(u);
+	MODULE().add_component<negate>($$);
+	MODULE().add_component<operation>($$) = {u};
+} / c:call { $$ = c; }
+call <- p:primary tail:callTail {
+	if(tail) {
+		MODULE().get_component<call>(tail).parent = p;
+		$$ = OBJECTS().pop_back();
+	} else $$ = p;
+}
+callTail <- "("_ ({MODULE().add_component<call>($$ = MODULE().create_entity()); BLOCKS().push_back($$); } arguments)? ")"_ tail:callTail {
+	auto& call = MODULE().get_component<struct call>($$ = BLOCKS().pop_back());
+	if(!call.children.empty())
+		MODULE().add_component<lexeme>($$) = MODULE().get_component<lexeme>(call.children.front()) + MODULE().get_component<lexeme>(call.children.back());
+	else MODULE().add_component<lexeme>($$); // Empty lexeme good enough for test
+	
+	if(tail)
+		MODULE().get_component<struct call>(tail).parent = $$;
+	else OBJECTS().push_back($$);
+} / "."_&{ return false; } IDENTIFIER t:callTail { $$ = t; } / { $$ = 0;}
+
+primary <- <"true">_ {
+	$$ = MODULE().create_entity();
+	MODULE().add_component<lexeme>($$) = {START(1), END(1) - START(1)};
+	MODULE().add_component<literal>($$);
+	MODULE().add_component<bool>($$) = true;
+} / <"false">_ {
+	$$ = MODULE().create_entity();
+	MODULE().add_component<lexeme>($$) = {START(2), END(2) - START(2)};
+	MODULE().add_component<literal>($$);
+	MODULE().add_component<bool>($$) = false;
+} / <("nil"/"null")>_ {
+	$$ = MODULE().create_entity();
+	MODULE().add_component<lexeme>($$) = {START(3), END(3) - START(3)};
+	MODULE().add_component<literal>($$);
+	MODULE().add_component<null>($$);
+} / n:NUMBER {
+	MODULE().add_component<literal>($$ = n);
+} / s:STRING {
+	MODULE().add_component<literal>($$ = s);
+} / i:IDENTIFIER {
+	MODULE().add_component<variable>($$ = i);
+} / "("_ e:expression ")"_ { $$ = e; }
+/ "this"_ &{ return false; }
+/ "super"_ &{ return false; } "."_ IDENTIFIER
+
+NUMBER <- [0-9]+ ("." [0-9]+)? {
+	$$ = MODULE().create_entity();
+	MODULE().add_component<lexeme>($$) = {$0s, $0e - $0s};
+	MODULE().add_component<double>($$) = strtod($0, nullptr);
+}_
+STRING <- '"' (!'"' .)* '"' {
+	$$ = MODULE().create_entity();
+	auto& dbg = MODULE().add_component<lexeme>($$) = {$0s, $0e - $0s};
+	MODULE().add_component<string>($$);
+}_
+IDENTIFIER <- [a-zA-Z_] ([a-zA-Z_] / [0-9])* {
+	$$ = MODULE().create_entity();
+	MODULE().add_component<lexeme>($$) = {$0s, $0e - $0s};
+}_
+EoL <- ("\n" / "\r\n" / ";") _
+# EoF <- !.
+
+WS <- [ \t\n]+
+COMMENT <- "/*" (!"*/" .)* "*/"
+COMMENT_LINE <- "//" (!"\n" .)* "\n"
+_ <- (WS / COMMENT / COMMENT_LINE)*

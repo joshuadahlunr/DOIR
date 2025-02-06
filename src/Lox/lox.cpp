@@ -95,51 +95,46 @@ namespace doir::Lox {
 	}
 	namespace comp = component;
 
-	size_t location = 0;
-	TrivialModule* module;
-	fp_dynarray(ecs::entity_t) blocks = nullptr;
-	fp_dynarray(ecs::entity_t) objects = nullptr;
 
-	block& current_block() {
-		return module->get_component<block>(*fpda_back(blocks));
+	struct auxilary {
+		size_t location = 0;
+		TrivialModule module;
+		fp::dynarray<ecs::entity_t> blocks = nullptr;
+		fp::dynarray<ecs::entity_t> objects = nullptr;
+	};
+
+	int next_char(auxilary* aux) {
+		if(aux->location >= fp_string_length(aux->module.buffer)) 
+			return EOF;
+		return aux->module.buffer[aux->location++];
 	}
+	#define PCC_GETCHAR(auxil) next_char(auxil)
 
-	#include "gen/parser.h"
-}
+	#define MODULE() auxil->module
+	#define OBJECTS() auxil->objects
+	#define BLOCKS() auxil->blocks
+	#define CURRENT_BLOCK() (MODULE().get_component<struct block>(BLOCKS().back()))
+	#define APPEND_TO_CURRENT_BLOCK(_v) CURRENT_BLOCK().children.push_back(_v)
 
-#include "gen/scanner.h"
+	#define START(_idx) static_cast<size_t>(_ ## _idx ## s)
+	#define END(_idx) static_cast<size_t>(_ ## _idx ## s)
 
-namespace doir::Lox {
+	#include "gen/peg-parser.c"
 
-	inline int yylex(reflex::Input* input /* = nullptr */) {
-		static Lexer lexer;
-		if(input) { lexer = Lexer(*input); return true; }
-		else return lexer.lex();
-	}
-
-	inline void set_input(reflex::Input& input) {
-		yylex(&input);
-	}
-	inline void set_input(reflex::Input&& input) {
-		yylex(&input);
-	}
 
 	std::pair<TrivialModule, ecs::entity_t> parse_view(const fp_string_view view) {
 		DOIR_ZONE_SCOPED_AGRO;
-		set_input(reflex::Input(fp_view_data(char, view), fp_view_size(view)));
-		TrivialModule out;
-		module = &out;
-
-		// yydebug = 1;
-		location = 0;
-		fp_string_view_concatenate_inplace(out.buffer, view);
-		if(objects) fpda_free_and_null(objects);
-		if(blocks) fpda_free_and_null(blocks);
-		fpda_push_back(blocks, module->create_entity());
-		module->add_component<block>(*fpda_back(blocks)) = {0, nullptr};
-
-		yyparse();
-		return {out, fpda_empty(blocks) ? 0 : *fpda_back(blocks)};
+		auxilary aux{};
+		aux.location = fp_string_length(aux.module.buffer);
+		fp_string_view_concatenate_inplace(aux.module.buffer, view);
+		aux.blocks.push_back(aux.module.create_entity());
+		aux.module.add_component<block>(aux.blocks.back()) = {0, nullptr};
+		
+		lox_context_t *ctx = lox_create(&aux);
+		while (lox_parse(ctx, NULL));
+		// std::cout << "parsed" << std::endl;
+		lox_destroy(ctx);
+		return {aux.module, aux.blocks.empty() ? 0 : aux.blocks.back()};
 	}
 
 	std::pair<TrivialModule, ecs::entity_t> parse(const fp_string string) {
