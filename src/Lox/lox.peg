@@ -1,0 +1,275 @@
+%{
+	#include <cassert>
+%}
+
+program = - declaration* (EoF | @{ nowide::cerr << "Parse Failed! " << yytext << std::endl; }&{false})
+
+declaration = classDecl
+	| funDecl
+	| varDecl
+	| statement
+
+classDecl = "class"&{false}~{ nowide::cerr << "Classes not supported!" << std::endl; } IDENTIFIER ("<" IDENTIFIER)? "{" (function)* "}"
+funDecl = ("fun" | "fn") - f:function { $$ = f; }
+varDecl = "var"- i:IDENTIFIER ("="- init:expression)? EoL {
+	auto& lexeme = yy->module->get_component<doir::comp::lexeme>($$ = i);
+	yy->module->add_component<variable_declaire>($$) = {lexeme, yy->blocks.back()};
+	APPEND_TO_CURRENT_BLOCK($$);
+
+	if(init) {
+		auto assignment = yy->module->create_entity();
+		yy->module->add_component<doir::comp::lexeme>(assignment) = lexeme + yy->module->get_component<doir::comp::lexeme>(init);
+		yy->module->add_component<assign>(assignment);
+		yy->module->add_component<operation>(assignment) = {$$, init};
+		APPEND_TO_CURRENT_BLOCK(assignment);
+	}
+}
+
+function = i:IDENTIFIER { yy->module->add_component<parameters>(i); yy->objects.push_back(i); } "("- parameters? ")"- b:block {
+	$$ = b;
+	if(!yy->module->get_component<parameters>(i).parameters.empty())
+		yy->module->add_component<parameters>($$) = yy->module->get_component<parameters>(i);
+
+	auto& decl = yy->module->add_component<function_declaire>($$) = {declaire{.name = yy->module->get_component<doir::comp::lexeme>(i), .parent = yy->blocks.back()}};
+	auto& lexeme = yy->module->get_component<doir::comp::lexeme>($$);
+	lexeme = decl.name + lexeme;
+	APPEND_TO_CURRENT_BLOCK($$);
+}
+parameters = i:IDENTIFIER parametersTail {
+	auto func = yy->objects.back();
+	yy->module->add_component<parameter_declaire>(i) = {declaire{.name = yy->module->get_component<doir::comp::lexeme>(i), .parent = func}};
+	auto& params = yy->module->get_component<parameters>(func);
+	params.parameters.push_back(i);
+}
+parametersTail = ","- i:IDENTIFIER parametersTail {
+	auto func = yy->objects.back();
+	yy->module->add_component<parameter_declaire>(i) = {declaire{.name = yy->module->get_component<doir::comp::lexeme>(i), .parent = func}};
+	auto& params = yy->module->get_component<parameters>(func);
+	params.parameters.push_back(i);
+} | {$$ = 0;}
+arguments = e:expression argumentsTail {
+	yy->module->get_component<call>(yy->blocks.back()).children.push_back(e);
+}
+argumentsTail = ","- e:expression argumentsTail {
+	yy->module->get_component<call>(yy->blocks.back()).children.push_back(e);
+} | {/*Nothing*/}
+
+statement = exprStmt
+	| forStmt
+	| ifStmt
+	| printStmt
+	| returnStmt
+	| whileStmt
+	| block
+
+exprStmt = e:expression EoL { APPEND_TO_CURRENT_BLOCK(e); }
+forStmt = "for"- "("- init:forInit cond:expression? ";"- up:expression? ")"- body:statement {
+	CURRENT_BLOCK().children.pop_back(); // Pop body out of the block
+	// NOTE: The init expression is just allowed to exist in the outer scope, long term this causes issues but is fine for this test
+
+	$$ = yy->module->create_entity();
+
+	if(!cond) {
+		cond = yy->module->create_entity(); DEFAULT_LEXEME(cond);
+		yy->module->add_component<literal>(cond);
+		yy->module->add_component<bool>(cond) = true;
+	}
+
+	if(up && !yy->module->has_component<block>(body)) {
+		auto old = body;
+		auto& block = yy->module->add_component<struct block>(body = yy->module->create_entity()) = { yy->blocks.back() };
+		yy->module->add_component<lexeme>(body) = yy->module->get_component<lexeme>(old);
+		block.children.push_back(old);
+		block.children.push_back(up);
+	} else if(up) yy->module->get_component<block>(body).children.push_back(up);
+
+	yy->module->add_component<doir::comp::lexeme>($$) = yy->module->get_component<doir::comp::lexeme>(cond) + yy->module->get_component<doir::comp::lexeme>(body);
+	yy->module->add_component<while_>($$);
+	yy->module->add_component<operation>($$) = {cond, body};
+	APPEND_TO_CURRENT_BLOCK($$);
+}
+forInit = d:varDecl { $$ = d; } | e:exprStmt { $$ = e; } | ";"- { $$ = 0; }
+ifStmt = "if"- "("- cond:expression ")"- then:statement { CURRENT_BLOCK().children.pop_back(); }
+	("else"- el:statement { CURRENT_BLOCK().children.pop_back(); })?
+{
+	$$ = yy->module->create_entity();
+	auto& lexeme = yy->module->add_component<doir::comp::lexeme>($$) = yy->module->get_component<doir::comp::lexeme>(cond) + yy->module->get_component<doir::comp::lexeme>(then);
+	if(el) lexeme = lexeme + yy->module->get_component<doir::comp::lexeme>(el);
+	yy->module->add_component<if_>($$);
+	yy->module->add_component<operation>($$) = {cond, then, el};
+	APPEND_TO_CURRENT_BLOCK($$);
+}
+printStmt = "print"- e:expression EoL {
+	$$ = yy->module->create_entity();
+	yy->module->add_component<doir::comp::lexeme>($$) = yy->module->get_component<doir::comp::lexeme>(e);
+	yy->module->add_component<operation>($$) = {e};
+	yy->module->add_component<print>($$);
+	APPEND_TO_CURRENT_BLOCK($$);
+}
+returnStmt = "return"- e:expression? EoL {
+	$$ = yy->module->create_entity();
+	yy->module->add_component<doir::comp::lexeme>($$) = yy->module->get_component<doir::comp::lexeme>(e);
+	yy->module->add_component<operation>($$) = {e};
+	yy->module->add_component<print>($$);
+	APPEND_TO_CURRENT_BLOCK($$);
+}
+whileStmt = "while"- "("- cond:expression ")"- body:statement {
+	// fpda_pop_back(current_block().children);
+	$$ = yy->module->create_entity();
+	yy->module->add_component<doir::comp::lexeme>($$) = yy->module->get_component<doir::comp::lexeme>(cond) + yy->module->get_component<doir::comp::lexeme>(body);
+	yy->module->add_component<while_>($$);
+	yy->module->add_component<operation>($$) = {cond, body};
+	APPEND_TO_CURRENT_BLOCK($$);
+}
+block = "{"- {
+	yy->module->add_component<block>($$ = yy->module->create_entity()) = { yy->blocks.back() };
+	yy->blocks.push_back($$);
+} declaration* "}"- {
+	auto& block = yy->module->get_component<struct block>($$ = yy->blocks.pop_back());
+	yy->module->add_component<lexeme>($$) = yy->module->get_component<lexeme>(block.children.front()) + yy->module->get_component<lexeme>(block.children.back());
+}
+
+expression = a:assignment { $$ = a; }
+assignment = (call "."&{false}~{ nowide::cerr << "Classes (assignment) not supported!" << std::endl; }-)? name:IDENTIFIER "="- e:assignment {
+	$$ = yy->module->create_entity();
+	yy->module->add_component<lexeme>($$) = yy->module->get_component<lexeme>(name) + yy->module->get_component<lexeme>(e);
+	yy->module->add_component<operation>($$) = {name, e};
+	yy->module->add_component<assign>($$);
+} | l:logic_or { $$ = l; }
+
+objSize = { $$ = yy->objects.size(); }
+logic_or = l:logic_and start:objSize tail:logic_orTail { MERGE_BINARY_OPS(l, start, tail, $$); }
+logic_orTail = "or"- la:logic_and {
+	yy->objects.push_back($$ = yy->module->create_entity());
+	yy->module->add_component<lexeme>($$) = yy->module->get_component<lexeme>(la);
+	yy->module->add_component<operation>($$) = {la};
+	yy->module->add_component<or_>($$);
+} t:logic_orTail { $$ = true; } | { $$ = false; }
+logic_and = e:equality start:objSize tail:logic_andTail { MERGE_BINARY_OPS(e, start, tail, $$); }
+logic_andTail = "and"- eq:equality {
+	yy->objects.push_back($$ = yy->module->create_entity());
+	yy->module->add_component<lexeme>($$) = yy->module->get_component<lexeme>(eq);
+	yy->module->add_component<operation>($$) = {eq};
+	yy->module->add_component<and_>($$);
+} t:logic_andTail { $$ = true; } | { $$ = false; }
+equality = c:comparison start:objSize tail:equalityTail { MERGE_BINARY_OPS(c, start, tail, $$); }
+equalityTail = ("=="- eq:comparison {
+	yy->objects.push_back($$ = yy->module->create_entity());
+	yy->module->add_component<lexeme>($$) = yy->module->get_component<lexeme>(eq);
+	yy->module->add_component<operation>($$) = {eq};
+	yy->module->add_component<equal_to>($$);
+} | "!="- ne:comparison {
+	yy->objects.push_back($$ = yy->module->create_entity());
+	yy->module->add_component<lexeme>($$) = yy->module->get_component<lexeme>(ne);
+	yy->module->add_component<operation>($$) = {ne};
+	yy->module->add_component<not_equal_to>($$);
+}) t:equalityTail { $$ = true; } | { $$ = false; }
+comparison = t:term start:objSize tail:comparisonTail { MERGE_BINARY_OPS(t, start, tail, $$); }
+comparisonTail = (">"- g:term {
+	yy->objects.push_back($$ = yy->module->create_entity());
+	yy->module->add_component<lexeme>($$) = yy->module->get_component<lexeme>(g);
+	yy->module->add_component<operation>($$) = {g};
+	yy->module->add_component<greater_than>($$);
+} | ">="- ge:term {
+	yy->objects.push_back($$ = yy->module->create_entity());
+	yy->module->add_component<lexeme>($$) = yy->module->get_component<lexeme>(ge);
+	yy->module->add_component<operation>($$) = {ge};
+	yy->module->add_component<greater_than_equal_to>($$);
+} | "<"- l:term {
+	yy->objects.push_back($$ = yy->module->create_entity());
+	yy->module->add_component<lexeme>($$) = yy->module->get_component<lexeme>(l);
+	yy->module->add_component<operation>($$) = {l};
+	yy->module->add_component<less_than>($$);
+} | "<="- le:term {
+	yy->objects.push_back($$ = yy->module->create_entity());
+	yy->module->add_component<lexeme>($$) = yy->module->get_component<lexeme>(le);
+	yy->module->add_component<operation>($$) = {le};
+	yy->module->add_component<less_than_equal_to>($$);
+}) t:comparisonTail { $$ = true; } | { $$ = false; }
+term = f:factor start:objSize tail:termTail { MERGE_BINARY_OPS(f, start, tail, $$); }
+termTail = ("-"- sub:factor {
+	yy->objects.push_back($$ = yy->module->create_entity());
+	yy->module->add_component<lexeme>($$) = yy->module->get_component<lexeme>(sub);
+	yy->module->add_component<operation>($$) = {sub};
+	yy->module->add_component<subtract>($$);
+} | "+"- addition:factor {
+	yy->objects.push_back($$ = yy->module->create_entity());
+	yy->module->add_component<lexeme>($$) = yy->module->get_component<lexeme>(addition);
+	yy->module->add_component<operation>($$) = {addition};
+	yy->module->add_component<add>($$);
+}) t:termTail { $$ = true; } | { $$ = false; }
+factor = u:unary start:objSize tail:factorTail { MERGE_BINARY_OPS(u, start, tail, $$); }
+factorTail = ("/"- div:unary {
+	yy->objects.push_back($$ = yy->module->create_entity());
+	yy->module->add_component<lexeme>($$) = yy->module->get_component<lexeme>(div);
+	yy->module->add_component<operation>($$) = {div};
+	yy->module->add_component<divide>($$);
+} | "*"- mul:unary {
+	yy->objects.push_back($$ = yy->module->create_entity());
+	yy->module->add_component<lexeme>($$) = yy->module->get_component<lexeme>(mul);
+	yy->module->add_component<operation>($$) = {mul};
+	yy->module->add_component<multiply>($$);
+}) t:factorTail { $$ = true; } | { $$ = false; }
+
+unary = "!"- u:unary {
+	$$ = yy->module->create_entity(); DEFAULT_LEXEME($$);
+	yy->module->add_component<operation>($$) = {u};
+	yy->module->add_component<not_>($$);
+} | "-"- u:unary {
+	$$ = yy->module->create_entity(); DEFAULT_LEXEME($$);
+	yy->module->add_component<operation>($$) = {u};
+	yy->module->add_component<negate>($$);
+} | c:call { $$ = c; }
+call = p:primary tail:callTail {
+	if(tail) {
+		yy->module->get_component<call>(tail).parent = p;
+		$$ = yy->objects.pop_back();
+	} else $$ = p;
+}
+callTail = ("("- {yy->module->add_component<call>($$ = yy->module->create_entity()); yy->blocks.push_back($$); } arguments? ")"-
+  | "."&{false}~{nowide::cerr << "Classes (member access) not supported!" << std::endl;} IDENTIFIER) tail:callTail {
+	auto& call = yy->module->get_component<struct call>($$ = yy->blocks.pop_back());
+	if(!call.children.empty())
+		yy->module->add_component<lexeme>($$) = yy->module->get_component<lexeme>(call.children.front()) + yy->module->get_component<lexeme>(call.children.back());
+	else yy->module->add_component<lexeme>($$); // Empty lexeme good enough for test
+	if(tail)
+		yy->module->get_component<struct call>(tail).parent = $$;
+	else yy->objects.push_back($$);
+} | { $$ = 0; }
+
+primary = "true"- {
+	$$ = yy->module->create_entity(); DEFAULT_LEXEME($$);
+	yy->module->add_component<literal>($$);
+	yy->module->add_component<bool>($$) = true;
+} | "false"- {
+	$$ = yy->module->create_entity(); DEFAULT_LEXEME($$);
+	yy->module->add_component<literal>($$);
+	yy->module->add_component<bool>($$) = false;
+} | ("null"|"nil")- {
+	$$ = yy->module->create_entity(); DEFAULT_LEXEME($$);
+	yy->module->add_component<literal>($$);
+	yy->module->add_component<null>($$);
+} | "this"&{false}~{nowide::cerr << "Classes (this) not supported!" << std::endl;}
+| NUMBER {
+	$$ = yy->module->create_entity(); DEFAULT_LEXEME($$);
+	yy->module->add_component<literal>($$);
+	yy->module->add_component<double>($$) = strtod(yytext, nullptr);
+} | STRING {
+	$$ = yy->module->create_entity(); DEFAULT_LEXEME($$);
+	yy->module->add_component<literal>($$);
+	yy->module->add_component<string>($$);
+} | i:IDENTIFIER {
+	yy->module->add_component<variable>($$ = i);
+} | "("- e:expression ")"- { $$ = e; }
+  | "super"&{false}~{nowide::cerr << "Classes (super) not supported!" << std::endl;} "." IDENTIFIER
+
+NUMBER = < [0-9]+ ("." [0-9]+)? > -
+STRING = < '\"' (!"\"" .)* '\"' > -
+IDENTIFIER = < [a-zA-Z_] ([a-zA-Z_] | [0-9])* > - { $$ = yy->module->create_entity(); DEFAULT_LEXEME($$); }
+EoL = ("\n" | "\r\n" | ";") -
+EoF = !.
+
+WS = [ \t\n]+
+COMMENT = "/*" (!"*/" .)* "*/"
+COMMENT_LINE = "//" (!"\n" .)* "\n"
+- = (WS | COMMENT | COMMENT_LINE)*

@@ -18,6 +18,7 @@ option(DOIR_ENABLE_CODE_COVERAGE "Weather or targets to generated a code coverag
 # set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fsanitize=address")
 
 include(scripts/flex-bison.cmake)
+include(scripts/FetchPeg.cmake)
 fetch_flex_bison()
 add_subdirectory(thirdparty/libfp)
 

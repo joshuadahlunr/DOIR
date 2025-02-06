@@ -1,5 +1,6 @@
 add_flex_target(lox_flex ${CMAKE_SOURCE_DIR}/src/Lox/lox.l OUTPUT ${CMAKE_SOURCE_DIR}/src/Lox/gen/scanner.h --namespace=doir::Lox --fast --noindent)
 add_bison_target(lox_bison ${CMAKE_SOURCE_DIR}/src/Lox/lox.y OUTPUT ${CMAKE_SOURCE_DIR}/src/Lox/gen/parser.h)
+add_peg_target(lox_peg ${CMAKE_SOURCE_DIR}/src/Lox/lox.peg OUTPUT ${CMAKE_SOURCE_DIR}/src/Lox/gen/peg-parser.h)
 add_library(lox lox.cpp)
 add_dependencies(lox lox_flex lox_bison)
 target_link_libraries(lox PUBLIC libfp::fp ReflexLibStatic)

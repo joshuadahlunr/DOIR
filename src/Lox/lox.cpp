@@ -94,52 +94,58 @@ namespace doir::Lox {
 		struct if_ {};
 	}
 	namespace comp = component;
-
-	size_t location = 0;
-	TrivialModule* module;
-	fp_dynarray(ecs::entity_t) blocks = nullptr;
-	fp_dynarray(ecs::entity_t) objects = nullptr;
-
-	block& current_block() {
-		return module->get_component<block>(*fpda_back(blocks));
+	
+	// #define YY_DEBUG
+	#define YYSTYPE ecs::entity_t
+	#define YY_CTX_LOCAL
+	#define YY_CTX_MEMBERS fp_string_view source;\
+		TrivialModule* module;\
+		fp::dynarray<ecs::entity_t> blocks = nullptr;\
+		fp::dynarray<ecs::entity_t> objects = nullptr;
+	#define YY_INPUT(yy, buf, result, max_size) {\
+		result = std::min<size_t>(fp_view_size(yy->source), max_size);\
+		if(result > 0)\
+			memcpy(buf, fp_view_data(char, yy->source), result);\
+		yy->source = fp_view_subview(char, yy->source, result, fp_view_size(yy->source) - result);\
 	}
 
-	#include "gen/parser.h"
-}
+	#define CURRENT_BLOCK() yy->module->get_component<block>(yy->blocks.back())
+	#define APPEND_TO_CURRENT_BLOCK(v) CURRENT_BLOCK().children.push_back(v)
+	#define DEFAULT_LEXEME(_entity) (yy->module->add_component<lexeme>(_entity) = lexeme::from_module_and_view(*yy->module, fp_string_view_literal(yytext, static_cast<size_t>(yyleng))))
+	#define MERGE_BINARY_OPS(_leftmost, _start, _tail, _res) if(!_tail) _res = _leftmost;\
+		else {\
+			auto left = _res = yy->objects.pop_back(), right = left;\
+			while(yy->objects.size() > _start) {\
+				right = std::exchange(left, yy->objects.pop_back());\
+				auto& op = yy->module->get_component<operation>(right);\
+				op.b = std::exchange(op.a, left);\
+				yy->module->get_component<lexeme>(right) = yy->module->get_component<lexeme>(left) + yy->module->get_component<lexeme>(right);\
+			}\
+			auto& op = yy->module->get_component<operation>(left);\
+			op.b = std::exchange(op.a, _leftmost);\
+			yy->module->get_component<lexeme>(left) = yy->module->get_component<lexeme>(_leftmost) + yy->module->get_component<lexeme>(left);\
+		}
 
-#include "gen/scanner.h"
-
-namespace doir::Lox {
-
-	inline int yylex(reflex::Input* input /* = nullptr */) {
-		static Lexer lexer;
-		if(input) { lexer = Lexer(*input); return true; }
-		else return lexer.lex();
-	}
-
-	inline void set_input(reflex::Input& input) {
-		yylex(&input);
-	}
-	inline void set_input(reflex::Input&& input) {
-		yylex(&input);
-	}
+	#include "gen/peg-parser.h"
 
 	std::pair<TrivialModule, ecs::entity_t> parse_view(const fp_string_view view) {
 		DOIR_ZONE_SCOPED_AGRO;
-		set_input(reflex::Input(fp_view_data(char, view), fp_view_size(view)));
+
+		yycontext ctx;
+		memset(&ctx, 0, sizeof(yycontext));
+		ctx.source = view;
 		TrivialModule out;
-		module = &out;
-
-		// yydebug = 1;
-		location = 0;
+		ctx.module = &out;
 		fp_string_view_concatenate_inplace(out.buffer, view);
-		if(objects) fpda_free_and_null(objects);
-		if(blocks) fpda_free_and_null(blocks);
-		fpda_push_back(blocks, module->create_entity());
-		module->add_component<block>(*fpda_back(blocks)) = {0, nullptr};
-
-		yyparse();
-		return {out, fpda_empty(blocks) ? 0 : *fpda_back(blocks)};
+		ctx.blocks.push_back(ctx.module->create_entity());
+		ctx.module->add_component<block>(ctx.blocks.back()) = {0, nullptr};
+		
+		yyparse(&ctx);
+		// std::cout << "parsed!" << std::endl;
+		auto pair = std::pair<TrivialModule, ecs::entity_t>{out, ctx.blocks.empty() ? 0 : ctx.blocks.back()};
+		if(ctx.objects) ctx.objects.free_and_null();
+		if(ctx.blocks) ctx.blocks.free_and_null();
+		return pair;
 	}
 
 	std::pair<TrivialModule, ecs::entity_t> parse(const fp_string string) {

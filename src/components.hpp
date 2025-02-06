@@ -55,6 +55,13 @@ namespace doir {
 			size_t start, length;
 
 #ifdef __cplusplus
+			static lexeme from_module_and_view(const TrivialModule& module, fp_string_view view) {
+				lexeme out;
+				out.start = fp_view_data(char, view) - module.buffer;
+				out.length = fp_view_size(view);
+				return out;
+			}
+
 			inline fp_string_view view(fp_string buffer) const {
 				return {buffer + start, length};
 			}
