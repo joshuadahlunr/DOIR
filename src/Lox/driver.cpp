@@ -13,6 +13,7 @@ int main() {
 		auto [module, root] = doir::Lox::parse(line.c_str());
 
 		if(!root) continue;
+		doir::Lox::calculate_child_count(module, root, true);
 		doir::Lox::sort_parse_into_reverse_post_order_traversal(module, root);
 		doir::Lox::dump(module, root);
 	}

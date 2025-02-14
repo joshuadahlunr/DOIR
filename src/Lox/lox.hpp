@@ -103,4 +103,5 @@ namespace doir::Lox {
 	void dump(TrivialModule& module, ecs::entity_t root, size_t depth = 0);
 
 	void sort_parse_into_reverse_post_order_traversal(TrivialModule& module, ecs::entity_t root);
+	size_t calculate_child_count(TrivialModule& module, ecs::entity_t root = 1, bool annotate = false);
 }

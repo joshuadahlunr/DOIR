@@ -11,6 +11,53 @@
 
 namespace doir::Lox {
 
+	size_t calculate_child_count(TrivialModule& module, ecs::entity_t root /* = 1 */, bool annotate /* = true */) {
+		DOIR_ZONE_SCOPED_AGRO;
+		// using namespace lox::components;
+		size_t immediate = 0, inChildren = 0;
+
+		// TODO: Needs Tweaks
+		if(module.has_component<operation>(root)) {
+			auto& op = module.get_component<operation>(root);
+			if(module.has_component<assign>(root)) {
+				++immediate;
+				inChildren = calculate_child_count(module, op.b, annotate);
+			} else for(auto& child: op.array()) {
+				if(!child) continue;
+				++immediate;
+				inChildren += calculate_child_count(module, child, annotate);
+			}
+		} else if(module.has_component<Module::HashtableComponent<function_declaire>>(root)){
+			auto& block = module.get_component<struct block>(root);
+			for(auto child: block.children) {
+				++immediate;
+				inChildren += calculate_child_count(module, child, annotate);
+			}
+			for(auto param: module.get_component<parameters>(root).parameters.span() | std::views::reverse) {
+				++immediate;
+				inChildren += calculate_child_count(module, param, annotate);
+			}
+		} else if(module.has_component<block>(root)) {
+			auto& block = module.get_component<struct block>(root);
+			for(auto child: block.children) {
+				++immediate;
+				inChildren += calculate_child_count(module, child, annotate);
+			}
+		} else if(module.has_component<call>(root)) {
+			auto& call = module.get_component<struct call>(root);
+			for(auto& param: call.children.span() | std::views::reverse) {
+				++immediate;
+				inChildren += calculate_child_count(module, param, annotate);
+			}
+			++immediate;
+			inChildren += calculate_child_count(module, call.parent, annotate);
+		} else { /* Do nothing */ }
+
+		if(annotate) module.add_component<doir::comp::children>(root) = {immediate, inChildren + immediate};
+		// auto dbg = module.get_component<doir::comp::children>(root);
+		return inChildren + immediate;
+	}
+
 	void sort_parse_into_post_order_traversal_impl(TrivialModule& module, ecs::entity_t root, std::vector<ecs::entity_t>& order, std::unordered_set<ecs::entity_t>& missing) {
 		constexpr static auto recurse = sort_parse_into_post_order_traversal_impl;
 

@@ -89,6 +89,11 @@ namespace doir {
 			ecs::entity_t entity = doir::ecs::invalid_entity;
 			struct lexeme lexeme;
 		};
+
+		struct children {
+			size_t immediate, total;
+		};
+
 	}
 	namespace comp = component;
 }

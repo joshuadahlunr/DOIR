@@ -5,7 +5,12 @@
 namespace doir::Lox {
     void dump(TrivialModule& module, ecs::entity_t root, size_t depth /* = 0 */) {
 		std::string indent(depth, '\t');
-		auto end = [&](std::ostream& s) { s << " (" << root << ")" << std::endl; };
+		auto end = [&](std::ostream& s) {
+			if(module.has_component<doir::comp::children>(root)) {
+				auto children = module.get_component<doir::comp::children>(root);
+				s << " (" << root << " ↓" << children.total << ")" << std::endl;
+			} else s << " (" << root << ")" << std::endl;
+		};
 		if(module.has_component<literal>(root)) {
 			if(module.has_component<bool>(root))
 				end(nowide::cout << indent << (module.get_component<bool>(root) ? "true" : "false"));
@@ -145,7 +150,7 @@ namespace doir::Lox {
 			for(auto& e: block.children)
 				dump(module, e, depth + 1);
 			nowide::cout << indent << "}" << std::endl;
-		} else 
+		} else
 			end(nowide::cout << "<Unknown Component>");
 	}
 }
