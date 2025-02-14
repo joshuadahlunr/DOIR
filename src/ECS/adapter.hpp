@@ -113,10 +113,10 @@ namespace doir::ecs {
 		> {
 			using Entry = std::conditional_t<is_costly_to_compare_v<Tkey>, detail::hash_entry_with_hash<Tkey, Tvalue>, detail::hash_entry<Tkey, Tvalue>>;
 			using Base = with_entity<Entry>;
-			static inline void swap_entities(component_wrapper& w, ecs::entity_t eA, ecs::entity_t eB) {
-				Base::swap_entities(w, eA, eB);
-				if constexpr(requires(Entry e){Entry::swap_entities(e, eA, eB);})
-					Entry::swap_entities(w.value, eA, eB);
+			static inline void swap_entities(component_wrapper& w, ecs::TrivialModule& module, ecs::entity_t eA, ecs::entity_t eB) {
+				Base::swap_entities(w, module, eA, eB);
+				if constexpr(requires(Entry e){Entry::swap_entities(e, module, eA, eB);})
+					Entry::swap_entities(w.value, module, eA, eB);
 			}
 		};
 

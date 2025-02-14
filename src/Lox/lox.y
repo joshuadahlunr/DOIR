@@ -33,14 +33,14 @@ varDecl: VAR IDENTIFIER varDeclTail {
 	$$ = $2;
 	auto& lexeme2 = module->get_component<doir::comp::lexeme>($$);
 	get_key_and_mark_occupied(module->add_component<Module::HashtableComponent<variable_declaire>>($$)) = {lexeme2, *fpda_back(blocks)};
-	current_block().children.push_back($$);
+	current_block().add_child(*module, $$);
 
 	if($3) {
 		auto assignment = module->create_entity();
 		module->add_component<doir::comp::lexeme>(assignment) = lexeme2 + module->get_component<doir::comp::lexeme>($3);
 		module->add_component<assign>(assignment);
 		module->add_component<operation>(assignment) = {$2, $3};
-		current_block().children.push_back(assignment);
+		current_block().add_child(*module, assignment);
 	}
 };
 varDeclTail: '=' expression ';' { $$ = $2; } | ';' { $$ = 0; };
@@ -53,10 +53,10 @@ statement: exprStmt
 | whileStmt
 | block;
 
-exprStmt: expression ';' { $$ = $1; current_block().children.push_back($$); };
+exprStmt: expression ';' { $$ = $1; current_block().add_child(*module, $$); };
 
 forStmt: FOR '(' forStmtContentFirst forStmtContent forStmtContentLast ')' statement {
-	fpda_pop_back(current_block().children);
+	current_block().pop_back_child(*module);
 	auto $$ = module->create_entity();
 	auto& lexeme = module->add_component<doir::comp::lexeme>($$) = module->get_component<doir::comp::lexeme>($7);
 	if($5) lexeme = module->get_component<doir::comp::lexeme>($5) + lexeme;
@@ -65,56 +65,56 @@ forStmt: FOR '(' forStmtContentFirst forStmtContent forStmtContentLast ')' state
 	if($$ != $$) module->add_component<doir::comp::lexeme>($$) = lexeme;
 	module->add_component<while_>($$);
 	module->add_component<operation>($$) = {$4, $7};
-	current_block().children.push_back($$);
+	current_block().add_child(*module, $$);
 	if($5) {
 		auto innerBlock = module->create_entity();
 		module->get_component<operation>($$).b = innerBlock;
 		module->add_component<doir::comp::lexeme>(innerBlock) = module->get_component<doir::comp::lexeme>($5) + module->get_component<doir::comp::lexeme>($7);
 		auto& block = module->add_component<struct block>(innerBlock);
-		block.children.push_back($7);
-		block.children.push_back($5);
+		block.add_child(*module, $7);
+		block.add_child(*module, $5);
 	}
 };
 forStmtContentFirst: varDecl { $$ = $1; } | exprStmt { $$ = $1; } | ';' { $$ = 0; };
-forStmtContent: exprStmt { $$ = $1; fpda_pop_back(current_block().children); } | ';' { $$ = 0; };
+forStmtContent: exprStmt { $$ = $1; current_block().pop_back_child(*module); } | ';' { $$ = 0; };
 forStmtContentLast: expression { $$ = $1; } | { $$ = 0; };
 
-ifStmt: IF '(' expression ')' statement { fpda_pop_back(current_block().children); } ifStmtTail {
+ifStmt: IF '(' expression ')' statement { current_block().pop_back_child(*module); } ifStmtTail {
 	$$ = module->create_entity();
 	auto& lexeme = module->add_component<doir::comp::lexeme>($$) = module->get_component<doir::comp::lexeme>($3) + module->get_component<doir::comp::lexeme>($5);
 	if($7) lexeme = lexeme + module->get_component<doir::comp::lexeme>($7);
 	module->add_component<if_>($$);
 	module->add_component<operation>($$) = {$3, $5, $7};
-	current_block().children.push_back($$);
+	current_block().add_child(*module, $$);
 };
-ifStmtTail: ELSE statement { $$ = $2; fpda_pop_back(current_block().children); } | { $$ = 0; };
+ifStmtTail: ELSE statement { $$ = $2; current_block().pop_back_child(*module); } | { $$ = 0; };
 
 printStmt: PRINT expression ';' {
 	$$ = module->create_entity();
 	module->add_component<doir::comp::lexeme>($$) = module->get_component<doir::comp::lexeme>($2);
 	module->add_component<print>($$);
 	module->add_component<operation>($$) = {$2};
-	current_block().children.push_back($$);
+	current_block().add_child(*module, $$);
 };
 returnStmt: RETURN expression ';' {
 	$$ = module->create_entity();
 	module->add_component<doir::comp::lexeme>($$) = module->get_component<doir::comp::lexeme>($2);
 	module->add_component<return_>($$);
 	module->add_component<operation>($$) = {$2};
-	current_block().children.push_back($$);
+	current_block().add_child(*module, $$);
 } | RETURN ';' {
 	$$ = module->create_entity();
 	module->add_component<doir::comp::lexeme>($$) = module->get_component<doir::comp::lexeme>($2);
 	module->add_component<return_>($$);
-	current_block().children.push_back($$);
+	current_block().add_child(*module, $$);
 };
 whileStmt: WHILE '(' expression ')' statement {
-	fpda_pop_back(current_block().children);
+	current_block().pop_back_child(*module);
 	$$ = module->create_entity();
 	module->add_component<doir::comp::lexeme>($$) = module->get_component<doir::comp::lexeme>($3) + module->get_component<doir::comp::lexeme>($5);
 	module->add_component<while_>($$);
 	module->add_component<operation>($$) = {$3, $5};
-	current_block().children.push_back($$);
+	current_block().add_child(*module, $$);
 };
 block: '{' {
 	auto dbg = $$ = module->create_entity();
@@ -387,7 +387,7 @@ call: primary callTail {
 callTail: '(' ')' callTail {
 	$$ = module->create_entity();
 	module->add_component<doir::comp::lexeme>($$) = {location - 1, 2};
-	module->add_component<call>($$) = {block{.parent = 0, .children = nullptr}};
+	module->add_component<call>($$) = {block{.parent = 0}};
 	if($3 == 0)
 		fpda_push_back(objects, $$);
 	else {
@@ -399,11 +399,12 @@ callTail: '(' ')' callTail {
 | '(' { $$ = fpda_size(objects); } arguments ')' callTail {
 	auto end_size = $2;
 	$$ = module->create_entity();
-	auto& call = module->add_component<struct call>($$) = {block{.parent = 0, .children = nullptr}};
+	auto& call = module->add_component<struct call>($$) = {block{.parent = 0}};
 	while(fpda_size(objects) > end_size)
-		call.children.push_back(*fpda_pop_back(objects));
-	module->add_component<doir::comp::lexeme>($$) = module->get_component<doir::comp::lexeme>(*fpda_front(call.children)) 
-		+ module->get_component<doir::comp::lexeme>(call.children.back());
+		call.add_child(*module, *fpda_pop_back(objects));
+	// call.finalize_list(*module);
+	module->add_component<doir::comp::lexeme>($$) = module->get_component<doir::comp::lexeme>(call.children.next) 
+		+ module->get_component<doir::comp::lexeme>(call.children_end);
 
 	if($5 == 0)
 		fpda_push_back(objects, $$);
@@ -433,29 +434,31 @@ function: IDENTIFIER '(' ')' block {
 		= {declaire{.name = module->get_component<doir::comp::lexeme>($1), .parent = *fpda_back(blocks)}};
 	auto& lexeme = module->get_component<doir::comp::lexeme>($$);
 	lexeme = decl.name + lexeme;
-	current_block().children.push_back($$);
+	current_block().add_child(*module, $$);
 } | IDENTIFIER '(' {module->add_component<parameters>($1); fpda_push_back(objects, $1);} parameters ')' block {
 	auto dbg = $$ = $6;
 	auto& decl = get_key_and_mark_occupied(module->add_component<Module::HashtableComponent<function_declaire>>($$))
 		= {declaire{.name = module->get_component<doir::comp::lexeme>($1), .parent = *fpda_back(blocks)}};
 	auto& lexeme = module->get_component<doir::comp::lexeme>($$);
 	lexeme = decl.name + lexeme;
-	module->add_component<parameters>($$).parameters = std::exchange(module->get_component<parameters>($1).parameters, {nullptr});
-	current_block().children.push_back($$);
+	auto& oldParams = module->get_component<parameters>($1);
+	module->add_component<parameters>($$) = oldParams;
+	oldParams.parameters = {ecs::invalid_entity}; oldParams.parameters_end = ecs::invalid_entity;
+	current_block().add_child(*module, $$);
 };
 parameters: IDENTIFIER {
 	auto func = *fpda_back(objects);
 	get_key_and_mark_occupied(module->add_component<Module::HashtableComponent<parameter_declaire>>($1))
 		= {declaire{.name = module->get_component<doir::comp::lexeme>($1), .parent = func}};
 	auto& params = module->get_component<parameters>(func);
-	params.parameters.push_back($1);
+	params.add_parameter(*module, $1);
 } parametersTail;
 parametersTail: ',' IDENTIFIER {
 	auto func = *fpda_back(objects);
 	get_key_and_mark_occupied(module->add_component<Module::HashtableComponent<parameter_declaire>>($2))
 		= {declaire{.name = module->get_component<doir::comp::lexeme>($2), .parent = func}};
 	auto& params = module->get_component<parameters>(func);
-	params.parameters.push_back($2);
+	params.add_parameter(*module, $2);
 } parametersTail | { $$ = 0; };
 
 arguments: expression argumentsTail { fpda_push_back(objects, $1); };

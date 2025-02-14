@@ -29,23 +29,24 @@ namespace doir::Lox {
 			}
 		} else if(module.has_component<Module::HashtableComponent<function_declaire>>(root)){
 			auto& block = module.get_component<struct block>(root);
-			for(auto child: block.children) {
+			for(auto child: block.children.iterate(module)) {
 				++immediate;
 				inChildren += calculate_child_count(module, child, annotate);
 			}
-			for(auto param: module.get_component<parameters>(root).parameters.span() | std::views::reverse) {
+			auto& params = module.get_component<parameters>(root);
+			for(auto param: params.parameters.iterate(module).range() | std::views::reverse) {
 				++immediate;
 				inChildren += calculate_child_count(module, param, annotate);
 			}
 		} else if(module.has_component<block>(root)) {
 			auto& block = module.get_component<struct block>(root);
-			for(auto child: block.children) {
+			for(auto child: block.children.iterate(module)) {
 				++immediate;
 				inChildren += calculate_child_count(module, child, annotate);
 			}
 		} else if(module.has_component<call>(root)) {
 			auto& call = module.get_component<struct call>(root);
-			for(auto& param: call.children.span() | std::views::reverse) {
+			for(auto param: call.children.iterate(module).range() | std::views::reverse) {
 				++immediate;
 				inChildren += calculate_child_count(module, param, annotate);
 			}
@@ -70,17 +71,17 @@ namespace doir::Lox {
 				recurse(module, op.a, order, missing);
 		} else if(module.has_component<Module::HashtableComponent<function_declaire>>(root)) {
 			auto& block = module.get_component<struct block>(root);
-			for(auto child: block.children)
+			for(auto child: block.children.iterate(module))
 				recurse(module, child, order, missing);
-			for(auto param: module.get_component<parameters>(root).parameters.span() | std::views::reverse)
+			for(auto param: module.get_component<parameters>(root).parameters.iterate(module).range() | std::views::reverse)
 				recurse(module, param, order, missing);
 		} else if(module.has_component<block>(root)) {
 			auto& block = module.get_component<struct block>(root);
-			for(auto child: block.children)
+			for(auto child: block.children.iterate(module))
 				recurse(module, child, order, missing);
 		} else if(module.has_component<call>(root)) {
 			auto& call = module.get_component<struct call>(root);
-			for(auto& param: call.children.span() | std::views::reverse)
+			for(auto param: call.children.iterate(module).range() | std::views::reverse)
 				recurse(module, param, order, missing);
 			recurse(module, call.parent, order, missing);
 		} else { /* Do nothing */ }
@@ -123,7 +124,9 @@ namespace doir::Lox {
 				operation,
 				block,
 				call,
-				parameters//,
+				block_children_entry,
+				parameters,
+				parameters_entry//,
 				// variable
 			>((fp_view(size_t))fp_void_view_literal(order.data(), order.size()));
 		}

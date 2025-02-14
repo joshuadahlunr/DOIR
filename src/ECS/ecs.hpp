@@ -37,7 +37,7 @@ namespace doir::ecs {
 			return other.entity == entity && other.value == value;
 		}
 
-		static void swap_entities(with_entity& a, entity_t eA, entity_t eB) {
+		static void swap_entities(with_entity& a, struct TrivialModule& module, entity_t eA, entity_t eB) {
 			if(a.entity == eA) a.entity = eB;
 			else if(a.entity == eB) a.entity = eA;
 		}
@@ -59,8 +59,8 @@ namespace doir::ecs {
 		using remove_with_entity_t = typename remove_with_entity<T>::type;
 
 		template<typename T>
-		concept has_swap_entities = requires(T t, entity_t e) {
-			{T::swap_entities(t, e, e)};
+		concept has_swap_entities = requires(T t, struct TrivialModule module, entity_t e) {
+			{T::swap_entities(t, module, e, e)};
 		};
 
 		// From: https://stackoverflow.com/a/29753388
@@ -423,7 +423,7 @@ namespace doir::ecs {
 					// This commented code runs half as fast as the current code!
 					// if(!self.has_component<Tcomponent>(i)) continue;
 					// Tcomponent::swap_entities(*self.get_component<Tcomponent>(i), a, b);
-					Tcomponent::swap_entities(data[i], a, b);
+					Tcomponent::swap_entities(data[i], self, a, b);
 				}
 			}
 		};

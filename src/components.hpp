@@ -1,8 +1,7 @@
 #include "ECS/ecs.hpp"
 
-#include <string_view>
 #include <fp/string.h>
-#include <stddef.h>
+#include <ranges>
 
 #ifdef __cplusplus
 	#include <algorithm>
@@ -92,6 +91,84 @@ namespace doir {
 
 		struct children {
 			size_t immediate, total;
+		};
+
+		struct array_entry {
+			ecs::entity_t next, previous;
+
+			template <std::derived_from<array_entry> Tparent = array_entry>
+			void set_next(ecs::TrivialModule& module, ecs::entity_t next, std::optional<ecs::entity_t> self_ = {}) {
+				array_entry& next_entry = module.get_or_add_component<Tparent>(next);
+				auto self = self_.value_or(module.get_or_add_component<Tparent>(this->previous).next);
+
+				next_entry.previous = self;
+				this->next = next;
+			}
+
+			static void swap_entities(array_entry& e, ecs::TrivialModule& module, ecs::entity_t eA, ecs::entity_t eB) {
+				if(e.next == eA) e.next = eB;
+				else if(e.next == eB) e.next = eA;
+				if(e.previous == eA) e.previous = eB;
+				else if(e.previous == eB) e.previous = eA;
+			}
+
+			struct sentinel {};
+			template<typename T, std::derived_from<array_entry> Tparent = array_entry>
+			struct iterator {
+				constexpr static bool lookup_on_dereference = !std::is_same_v<T, ecs::entity_t>;
+				using iterator_category = std::bidirectional_iterator_tag;
+				using difference_type = std::ptrdiff_t;
+				using value_type = T;
+				using pointer = value_type*;
+				using reference = value_type&;
+
+				ecs::entity_t current, previous;
+				ecs::TrivialModule* module;
+
+				reference operator*() const requires(lookup_on_dereference) { assert(current && module); return module->get_component<T>(current); }
+				pointer operator->() requires(lookup_on_dereference) { assert(current && module); return &module->get_component<T>(current); }
+
+				value_type operator*() const requires(!lookup_on_dereference) { assert(current); return current; }
+				value_type operator->() const requires(!lookup_on_dereference) { assert(current); return current; }
+
+				// Prefix increment
+				iterator& operator++() { assert(current && module); previous = current; current = module->get_component<Tparent>(current).next; return *this; }  
+				// Postfix increment
+				iterator operator++(int) { iterator tmp = *this; ++(*this); return tmp; }
+				
+				// Prefix decrement
+				iterator& operator--() { 
+					assert(module); 
+					if(previous) current = previous;  
+					else if(current) current = module->get_component<Tparent>(current).previous;
+					else assert(false);
+					
+					if(current) previous = module->get_component<Tparent>(current).previous;
+					else previous = ecs::invalid_entity;
+
+					return *this; 
+				}  
+				// Postfix decrement
+				iterator operator--(int) { iterator tmp = *this; --(*this); return tmp; }
+
+				friend bool operator== (const iterator& a, const iterator& b) { return a.current == b.current && a.module == b.module; };
+				friend bool operator!= (const iterator& a, const iterator& b) { return a.current != b.current || a.module != b.module; };
+
+				friend bool operator== (const iterator& a, const sentinel& b) { return a.current == ecs::invalid_entity; };
+			};
+
+			template<typename T, std::derived_from<array_entry> Tparent = array_entry>
+			struct iterate_impl {
+				Tparent& parent;
+				ecs::TrivialModule& module;
+				iterator<T, Tparent> begin() { return iterator<T, Tparent>{parent.next, ecs::invalid_entity, &module}; }
+				sentinel end() { return {}; }
+				std::ranges::subrange<iterator<T, Tparent>, sentinel, std::ranges::subrange_kind::unsized> range() { return {begin(), end()}; }
+			};
+			template<typename T, std::derived_from<array_entry> Tparent = array_entry>
+			iterate_impl<T, Tparent> iterate(ecs::TrivialModule& module) {
+				return {*this, module};
+			}
 		};
 
 	}

@@ -47,7 +47,7 @@ namespace doir::Lox {
 		if(objects) fpda_free_and_null(objects);
 		if(blocks) fpda_free_and_null(blocks);
 		fpda_push_back(blocks, module->create_entity());
-		module->add_component<block>(*fpda_back(blocks)) = {0, nullptr};
+		module->add_component<block>(*fpda_back(blocks)) = {0};
 
 		yyparse();
 		return {out, fpda_empty(blocks) ? 0 : *fpda_back(blocks)};

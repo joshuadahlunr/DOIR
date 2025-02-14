@@ -127,10 +127,10 @@ namespace doir::Lox {
 			auto* params = module.has_component<parameters>(root) ? &module.get_component<parameters>(root) : nullptr;
 			auto& block = module.get_component<struct block>(root);
 			end(nowide::cout << indent << "declaire:fun:" << fp_string_view_to_std(decl.name.view(module.buffer)));
-			if(params) for(auto& param: params->parameters)
+			if(params) for(auto param: params->parameters.iterate(module))
 				dump(module, param, depth + 1);
 			nowide::cout << indent << "{" << "\n";
-			for(auto& e: block.children)
+			for(auto e: block.children.iterate(module))
 				dump(module, e, depth + 1);
 			nowide::cout << indent << "}" << std::endl;
 		} else if(module.has_component<assign>(root)){
@@ -142,12 +142,12 @@ namespace doir::Lox {
 			end(nowide::cout << indent << "call:");
 			dump(module, call.parent, depth + 1);
 			nowide::cout << indent << "call:args:" << "\n";
-			for(auto& e: call.children)
+			for(auto e: call.children.iterate(module))
 				dump(module, e, depth + 1);
 		} else if(module.has_component<block>(root)){
 			auto& block = module.get_component<struct block>(root);
 			end(nowide::cout << indent << "{");
-			for(auto& e: block.children)
+			for(auto e: block.children.iterate(module))
 				dump(module, e, depth + 1);
 			nowide::cout << indent << "}" << std::endl;
 		} else
