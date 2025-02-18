@@ -5,8 +5,6 @@
 	#define YYSTYPE ecs::entity_t
 %}
 
-%define parse.error detailed
-
 %token IDENTIFIER
 %token NUMBER
 %token STRING
@@ -443,7 +441,7 @@ function: IDENTIFIER '(' ')' block {
 	lexeme = decl.name + lexeme;
 	auto& oldParams = module->get_component<parameters>($1);
 	module->add_component<parameters>($$) = oldParams;
-	oldParams.parameters = {ecs::invalid_entity}; oldParams.parameters_end = ecs::invalid_entity;
+	oldParams.params = {ecs::invalid_entity}; oldParams.parameters_end = ecs::invalid_entity;
 	current_block().add_child(*module, $$);
 };
 parameters: IDENTIFIER {

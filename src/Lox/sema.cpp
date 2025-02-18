@@ -34,7 +34,7 @@ namespace doir::Lox {
 				inChildren += calculate_child_count(module, child, annotate);
 			}
 			auto& params = module.get_component<parameters>(root);
-			for(auto param: params.parameters.iterate(module).range() | std::views::reverse) {
+			for(auto param: params.params.iterate(module).range() | std::views::reverse) {
 				++immediate;
 				inChildren += calculate_child_count(module, param, annotate);
 			}
@@ -73,7 +73,7 @@ namespace doir::Lox {
 			auto& block = module.get_component<struct block>(root);
 			for(auto child: block.children.iterate(module))
 				recurse(module, child, order, missing);
-			for(auto param: module.get_component<parameters>(root).parameters.iterate(module).range() | std::views::reverse)
+			for(auto param: module.get_component<parameters>(root).params.iterate(module).range() | std::views::reverse)
 				recurse(module, param, order, missing);
 		} else if(module.has_component<block>(root)) {
 			auto& block = module.get_component<struct block>(root);

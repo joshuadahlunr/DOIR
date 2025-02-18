@@ -127,7 +127,7 @@ namespace doir::Lox {
 			auto* params = module.has_component<parameters>(root) ? &module.get_component<parameters>(root) : nullptr;
 			auto& block = module.get_component<struct block>(root);
 			end(nowide::cout << indent << "declaire:fun:" << fp_string_view_to_std(decl.name.view(module.buffer)));
-			if(params) for(auto param: params->parameters.iterate(module))
+			if(params) for(auto param: params->params.iterate(module))
 				dump(module, param, depth + 1);
 			nowide::cout << indent << "{" << "\n";
 			for(auto e: block.children.iterate(module))

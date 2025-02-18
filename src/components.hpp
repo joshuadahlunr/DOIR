@@ -99,7 +99,7 @@ namespace doir {
 			template <std::derived_from<array_entry> Tparent = array_entry>
 			void set_next(ecs::TrivialModule& module, ecs::entity_t next, std::optional<ecs::entity_t> self_ = {}) {
 				array_entry& next_entry = module.get_or_add_component<Tparent>(next);
-				auto self = self_.value_or(module.get_or_add_component<Tparent>(this->previous).next);
+				auto self = self_.has_value() ? *self_ : module.get_or_add_component<Tparent>(this->previous).next; // NOTE: The else case in this expression will likely fail when the then case should be taken, thus value_or can't be used!
 
 				next_entry.previous = self;
 				this->next = next;

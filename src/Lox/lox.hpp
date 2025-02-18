@@ -4,6 +4,7 @@
 #include "../components.hpp"
 
 #include "fp/dynarray.hpp"
+#include <array>
 
 namespace doir::Lox {
 	extern fp_string comparison_buffer;
@@ -71,18 +72,18 @@ namespace doir::Lox {
 			return iterate_impl<ecs::entity_t, parameters_entry>{*this, module};
 		}};
 		struct parameters { 
-			parameters_entry parameters = {ecs::invalid_entity}; ecs::entity_t parameters_end = ecs::invalid_entity;
+			parameters_entry params = {ecs::invalid_entity}; ecs::entity_t parameters_end = ecs::invalid_entity;
 			// fp::dynarray<ecs::entity_t> parameters;
 			static void swap_entities(struct parameters& params, ecs::TrivialModule& module, ecs::entity_t eA, ecs::entity_t eB) {
-				if(params.parameters.next == eA) params.parameters.next = eB;
-				else if(params.parameters.next == eB) params.parameters.next = eA;
+				if(params.params.next == eA) params.params.next = eB;
+				else if(params.params.next == eB) params.params.next = eA;
 				if(params.parameters_end == eA) params.parameters_end = eB;
 				else if(params.parameters_end == eB) params.parameters_end = eA;
 			}
 
-			void add_parameter(TrivialModule& module, ecs::entity_t param) {
+			void add_parameter(ecs::TrivialModule& module, ecs::entity_t param) {
 				if(parameters_end == ecs::invalid_entity)
-					parameters.set_next<parameters_entry>(module, param, ecs::invalid_entity);
+					params.set_next<parameters_entry>(module, param, ecs::invalid_entity);
 				else
 					module.get_component<parameters_entry>(parameters_end).set_next<parameters_entry>(module, param, parameters_end);
 				parameters_end = param;

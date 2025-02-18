@@ -88,7 +88,7 @@ namespace doir::JSON {
 				if(i++ > 0) fp_string_concatenate_inplace(out, ",");
 				auto& name = get_key(module.get_component<comp::object_entry_hash>(*mem)).name;
 				fp_string_view_concatenate_inplace(out, name.view(module.buffer));
-				fp_string_concatenate_inplace(out, ":");
+				fp_string_append(out, ':');
 				auto tmp = dump(module, *mem);
 				fp_string_concatenate_inplace(out, tmp); fp_string_free(tmp);
 			}
