@@ -138,8 +138,11 @@ namespace doir::Lox {
 	std::pair<TrivialModule, ecs::entity_t> parse_view(const fp_string_view view);
 	std::pair<TrivialModule, ecs::entity_t> parse(const fp_string string);
 
-	void dump(TrivialModule& module, ecs::entity_t root, size_t depth = 0);
+	fp_string dump(TrivialModule& module, ecs::entity_t root, size_t depth = 0);
 
 	void sort_parse_into_reverse_post_order_traversal(TrivialModule& module, ecs::entity_t root);
 	size_t calculate_child_count(TrivialModule& module, ecs::entity_t root = 1, bool annotate = false);
+
+	fp_dynarray(std::byte) to_binary(TrivialModule& module, ecs::entity_t root);
+	std::pair<TrivialModule, ecs::entity_t> from_binary(fp_dynarray(std::byte));
 }
