@@ -69,7 +69,7 @@ namespace doir::Calculator {
 	}
 
 	TrivialModule parse_view(const fp_string_view view, TrivialModule* existing /*= nullptr*/) {
-		DOIR_ZONE_SCOPED_AGRO;
+		DOIR_ZONE_SCOPED_AGGRO;
 		set_input(reflex::Input(fp_view_data(char, view), fp_view_size(view)));
 
 		TrivialModule out = existing ? std::move(*existing) : TrivialModule{};
@@ -84,7 +84,7 @@ namespace doir::Calculator {
 	}
 
 	TrivialModule parse(const fp_string string, TrivialModule* existing /*= nullptr*/) {
-		DOIR_ZONE_SCOPED_AGRO;
+		DOIR_ZONE_SCOPED_AGGRO;
 		return parse_view(fp_string_to_view_const(string), existing);
 	}
 

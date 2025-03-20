@@ -4,6 +4,7 @@
 
 #include "ECS/ecs.hpp"
 #include "ECS/adapter.hpp"
+#include "ECS/entity.hpp"
 
 namespace doir {
 	template<typename T>

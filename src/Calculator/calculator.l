@@ -14,7 +14,7 @@ identifier [a-zA-Z_][a-zA-Z0-9_]*
 
 
 {ws} { using namespace doir::Calculator; location += fp_string_length(text()); }
-{integer} { DOIR_ZONE_SCOPED_NAMED_AGRO("Lex Integer");
+{integer} { DOIR_ZONE_SCOPED_NAMED_AGGRO("Lex Integer");
 	size_t len = fp_string_length(text());
 	yylval = module->create_entity();
 	module->add_component<doir::comp::lexeme>(yylval) = {location, len};
@@ -22,7 +22,7 @@ identifier [a-zA-Z_][a-zA-Z0-9_]*
 	location += len;
 	return NUMBER;
 }
-{identifier} { DOIR_ZONE_SCOPED_NAMED_AGRO("Lex Identifier");
+{identifier} { DOIR_ZONE_SCOPED_NAMED_AGGRO("Lex Identifier");
 	size_t len = fp_string_length(text());
 	yylval = module->create_entity();
 	module->add_component<doir::comp::lexeme>(yylval) = {location, len};

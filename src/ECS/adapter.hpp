@@ -155,7 +155,7 @@ namespace doir::ecs {
 			static constexpr float store_hash = is_costly_to_compare_v<key_type>;
 
 			size_t current_size() const {
-				DOIR_ZONE_SCOPED_AGRO;
+				DOIR_ZONE_SCOPED_AGGRO;
 				size_t size = 0;
 				for(auto& e: Base::span())
 					if(e.is_occupied())
@@ -170,17 +170,17 @@ namespace doir::ecs {
 			// }
 
 			inline float load_factor() const {
-				DOIR_ZONE_SCOPED_AGRO;
+				DOIR_ZONE_SCOPED_AGGRO;
 				return float(current_size()) / Base::size();
 			}
 
 			inline size_t hash(const key_type& key) const {
-				DOIR_ZONE_SCOPED_AGRO;
+				DOIR_ZONE_SCOPED_AGGRO;
 				return Hash{}(key) % std::max<size_t>(Base::size(), 1);
 			}
 
 			std::optional<size_t> find_position(const key_type& key) const {
-				DOIR_ZONE_SCOPED_AGRO;
+				DOIR_ZONE_SCOPED_AGGRO;
 				size_t hash = this->hash(key);
 				auto data = Base::data();
 				auto size = Base::size();
@@ -194,7 +194,7 @@ namespace doir::ecs {
 			}
 
 			std::optional<size_t> find_empty_spot(size_t start) const {
-				DOIR_ZONE_SCOPED_AGRO;
+				DOIR_ZONE_SCOPED_AGGRO;
 				auto data = Base::data();
 				auto size = Base::size();
 				for(size_t i = 0; i < NeighborhoodSize; ++i) {
@@ -206,7 +206,7 @@ namespace doir::ecs {
 			}
 
 			std::optional<size_t> find_nearest_neighbor(size_t start) const {
-				DOIR_ZONE_SCOPED_AGRO;
+				DOIR_ZONE_SCOPED_AGGRO;
 				auto data = Base::data();
 				auto size = Base::size();
 				for(size_t j = 0; j < NeighborhoodSize; ++j) {
@@ -218,7 +218,7 @@ namespace doir::ecs {
 			}
 
 			inline bool is_in_neighborhood(size_t start, size_t needle) const {
-				DOIR_ZONE_SCOPED_AGRO;
+				DOIR_ZONE_SCOPED_AGGRO;
 				if(NeighborhoodSize > Base::size()) return true;
 				size_t end = (start + NeighborhoodSize) % Base::size();
 				if(start <= end)
@@ -251,7 +251,7 @@ namespace doir::ecs {
 			// }
 
 			inline bool double_size_and_rehash(TrivialModule& module, size_t retries = 0) {
-				DOIR_ZONE_SCOPED_AGRO;
+				DOIR_ZONE_SCOPED_AGGRO;
 				size_t size = Base::size();
 				Base::allocate(size);
 				auto data = Base::data();
@@ -266,7 +266,7 @@ namespace doir::ecs {
 			}
 
 			bool rehash(TrivialModule& module, size_t retries, bool resized = false) {
-				DOIR_ZONE_SCOPED_AGRO;
+				DOIR_ZONE_SCOPED_AGGRO;
 				// Clear the neighborhood information
 				auto data = Base::data();
 				size_t size = Base::size(), half = size / 2;
@@ -322,7 +322,7 @@ namespace doir::ecs {
 			using component_type = component_t;
 
 			inline bool rehash(TrivialModule& module) {
-				DOIR_ZONE_SCOPED_AGRO;
+				DOIR_ZONE_SCOPED_AGGRO;
 				return rehash(module, 0);
 			}
 
@@ -338,7 +338,7 @@ namespace doir::ecs {
 			// }
 
 			inline std::optional<entity_t> find(const key_type& key) const {
-				DOIR_ZONE_SCOPED_AGRO;
+				DOIR_ZONE_SCOPED_AGGRO;
 				if(Base::size() == 0) return {};
 				if(auto index = find_position(key); index)
 					return Base::data()[*index].entity;
@@ -373,7 +373,7 @@ namespace doir::ecs {
 
 		template<typename Tkey, typename Tvalue = void>
 		inline void mark_occupied(component_wrapper<Tkey, Tvalue>& comp) {
-			DOIR_ZONE_SCOPED_AGRO;
+			DOIR_ZONE_SCOPED_AGGRO;
 			comp->set_occupied(true);
 		}
 		// template<typename Tkey, typename Tvalue = void>
@@ -383,12 +383,12 @@ namespace doir::ecs {
 
 		template<typename Tkey, typename Tvalue = void>
 		inline Tkey& get_key(component_wrapper<Tkey, Tvalue>& comp) {
-			DOIR_ZONE_SCOPED_AGRO;
+			DOIR_ZONE_SCOPED_AGGRO;
 			return comp->key;
 		}
 		template<typename Tkey, typename Tvalue = void>
 		inline const Tkey& get_key(const component_wrapper<Tkey, Tvalue>& comp) {
-			DOIR_ZONE_SCOPED_AGRO;
+			DOIR_ZONE_SCOPED_AGGRO;
 			return comp->key;
 		}
 		// template<typename Tkey, typename Tvalue = void>
@@ -398,7 +398,7 @@ namespace doir::ecs {
 
 		template<typename Tkey, typename Tvalue = void>
 		inline Tkey& get_key_and_mark_occupied(component_wrapper<Tkey, Tvalue>& comp) {
-			DOIR_ZONE_SCOPED_AGRO;
+			DOIR_ZONE_SCOPED_AGGRO;
 			mark_occupied<Tkey, Tvalue>(comp);
 			return get_key<Tkey, Tvalue>(comp);
 		}
@@ -411,13 +411,13 @@ namespace doir::ecs {
 		template<typename Tkey, typename Tvalue = void>
 			requires((!std::is_same_v<Tvalue, void>))
 		inline Tvalue& get_value(component_wrapper<Tkey, Tvalue>& comp) {
-			DOIR_ZONE_SCOPED_AGRO;
+			DOIR_ZONE_SCOPED_AGGRO;
 			return comp.value.value;
 		}
 		template<typename Tkey, typename Tvalue = void>
 			requires((!std::is_same_v<Tvalue, void>))
 		inline const Tvalue& get_value(const component_wrapper<Tkey, Tvalue>& comp) {
-			DOIR_ZONE_SCOPED_AGRO;
+			DOIR_ZONE_SCOPED_AGGRO;
 			return comp.value.value;
 		}
 		// template<typename Tkey, typename Tvalue = void>

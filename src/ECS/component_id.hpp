@@ -20,7 +20,7 @@ namespace doir::ecs {
 
 	fp_hashmap(ForwardPair)& doir_ecs_get_forward_map() noexcept
 #ifdef DOIR_IMPLEMENTATION
-	{ DOIR_ZONE_SCOPED_AGRO;
+	{ DOIR_ZONE_SCOPED_AGGRO;
 		static fp_hashmap(ForwardPair) map = [] {
 			fp_hashmap(ForwardPair) map = nullptr;
 			fp_hash_map_create_empty_table(ForwardPair, map, true);
@@ -54,7 +54,7 @@ namespace doir::ecs {
 
 	fp_hashmap(ReversePair)& doir_ecs_get_reverse_map() noexcept
 #ifdef DOIR_IMPLEMENTATION
-	{ DOIR_ZONE_SCOPED_AGRO;
+	{ DOIR_ZONE_SCOPED_AGGRO;
 		static fp_hashmap(ReversePair) map = [] {
 			fp_hashmap(ReversePair) map = nullptr;
 			fp_hash_map_create_empty_table(ReversePair, map, false);
@@ -83,7 +83,7 @@ namespace doir::ecs {
 	extern "C" {
 		size_t doir_ecs_get_next_component_id() noexcept
 #ifdef DOIR_IMPLEMENTATION
-		{ DOIR_ZONE_SCOPED_AGRO;
+		{ DOIR_ZONE_SCOPED_AGGRO;
 			static size_t id = 0;
 			return id++;
 		}
@@ -94,7 +94,7 @@ namespace doir::ecs {
 #ifndef DOIR_DISABLE_STRING_COMPONENT_LOOKUP
 		size_t doir_ecs_component_id_from_name_view(const fp_string_view view, bool create_if_not_found = true) noexcept
 #ifdef DOIR_IMPLEMENTATION
-		{ DOIR_ZONE_SCOPED_AGRO;
+		{ DOIR_ZONE_SCOPED_AGGRO;
 			bool free = false;
 			fp_string name = fp_string_view_make_dynamic(view); // TODO: Is there a way to skip the allocation here?
 			ForwardPair lookup{name, 0};
@@ -120,13 +120,13 @@ namespace doir::ecs {
 		;
 #endif
 		inline size_t doir_ecs_component_id_from_name(const fp_string str, bool create_if_not_found = true) noexcept {
-			DOIR_ZONE_SCOPED_AGRO;
+			DOIR_ZONE_SCOPED_AGGRO;
 			return doir_ecs_component_id_from_name_view(fp_string_to_view_const(str), create_if_not_found);
 		}
 
 		const fp_string doir_ecs_component_id_name(size_t componentID) noexcept
 #ifdef DOIR_IMPLEMENTATION
-		{ DOIR_ZONE_SCOPED_AGRO;
+		{ DOIR_ZONE_SCOPED_AGGRO;
 			ReversePair lookup{componentID, nullptr};
 			auto res = fp_hash_map_find(ReversePair, doir_ecs_get_reverse_map(), lookup);
 			if(res == nullptr) return nullptr;
@@ -138,7 +138,7 @@ namespace doir::ecs {
 
 		void doir_ecs_component_id_free_maps() noexcept
 #ifdef DOIR_IMPLEMENTATION
-		{ DOIR_ZONE_SCOPED_AGRO;
+		{ DOIR_ZONE_SCOPED_AGGRO;
 			fp_hash_map_free_finalize_and_null(ForwardPair, doir_ecs_get_forward_map());
 			fp_hash_map_free_finalize_and_null(ReversePair, doir_ecs_get_reverse_map());
 		}
@@ -154,7 +154,7 @@ namespace doir::ecs {
 
 	template<typename T>
 	fp_string get_type_name(T reference = {}) {
-		DOIR_ZONE_SCOPED_AGRO;
+		DOIR_ZONE_SCOPED_AGGRO;
 #ifdef __GNUC__
 		int status;
 		char* name = abi::__cxa_demangle(typeid(T).name(), 0, 0, &status);
@@ -173,7 +173,7 @@ namespace doir::ecs {
 
 	template<typename T, size_t Unique = 0>
 	size_t& get_global_component_id_private(T reference = {}) noexcept {
-		DOIR_ZONE_SCOPED_AGRO;
+		DOIR_ZONE_SCOPED_AGGRO;
 		static size_t id = doir_ecs_get_next_component_id();
 		return id;
 	}
@@ -181,7 +181,7 @@ namespace doir::ecs {
 	// Warning: This function is very expensive (~5 microseconds vs ~350 nanoseconds) the first time it is called (for a new type)!
 	template<typename T, size_t Unique = 0>
 	size_t get_global_component_id(T reference = {}) noexcept {
-		DOIR_ZONE_SCOPED_AGRO;
+		DOIR_ZONE_SCOPED_AGGRO;
 		auto id = get_global_component_id_private<T, Unique>();
 #ifndef DOIR_DISABLE_STRING_COMPONENT_LOOKUP
 		static bool once = [id]{

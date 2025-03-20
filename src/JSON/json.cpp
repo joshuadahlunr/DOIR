@@ -48,7 +48,7 @@ namespace doir::JSON {
 	}
 
 	std::pair<TrivialModule, ecs::entity_t> parse_view(const fp_string_view view) {
-		DOIR_ZONE_SCOPED_AGRO;
+		DOIR_ZONE_SCOPED_AGGRO;
 		set_input(reflex::Input(fp_view_data(char, view), fp_view_size(view)));
 		TrivialModule out;
 		module = &out;
@@ -60,7 +60,7 @@ namespace doir::JSON {
 	}
 
 	std::pair<TrivialModule, ecs::entity_t> parse(const fp_string string) {
-		DOIR_ZONE_SCOPED_AGRO;
+		DOIR_ZONE_SCOPED_AGGRO;
 		return parse_view(fp_string_to_view_const(string));
 	}
 

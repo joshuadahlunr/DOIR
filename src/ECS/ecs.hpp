@@ -87,7 +87,7 @@ namespace doir::ecs {
 
 		Storage& operator=(const Storage& o) = delete;
 		inline Storage& operator=(Storage&& o) {
-			DOIR_ZONE_SCOPED_AGRO;
+			DOIR_ZONE_SCOPED_AGGRO;
 			element_size = o.element_size;
 			if(raw) fpda_free_and_null(raw);
 			raw = std::exchange(o.raw, nullptr);
@@ -95,50 +95,50 @@ namespace doir::ecs {
 			return *this;
 		}
 
-		inline ~Storage() noexcept { DOIR_ZONE_SCOPED_AGRO; if(!should_leak && raw) fpda_free_and_null(raw); }
+		inline ~Storage() noexcept { DOIR_ZONE_SCOPED_AGGRO; if(!should_leak && raw) fpda_free_and_null(raw); }
 
 		template<typename T>
 		inline T* data() noexcept {
-			DOIR_ZONE_SCOPED_AGRO;
+			DOIR_ZONE_SCOPED_AGGRO;
 			assert(sizeof(T) == element_size); // Implies element_size != invalid (since no type should ever be that big!)
 			return (T*)raw;
 		}
 		template<typename T>
 		inline const T* data() const noexcept {
-			DOIR_ZONE_SCOPED_AGRO;
+			DOIR_ZONE_SCOPED_AGGRO;
 			assert(sizeof(T) == element_size); // Implies element_size != invalid (since no type should ever be that big!)
 			return (const T*)raw;
 		}
 
-		inline size_t size() const noexcept { DOIR_ZONE_SCOPED_AGRO; return fpda_size(raw) / element_size; }
-		inline bool empty() const noexcept { DOIR_ZONE_SCOPED_AGRO; return size() == 0; }
+		inline size_t size() const noexcept { DOIR_ZONE_SCOPED_AGGRO; return fpda_size(raw) / element_size; }
+		inline bool empty() const noexcept { DOIR_ZONE_SCOPED_AGGRO; return size() == 0; }
 
 		inline void* get(entity_t e) noexcept {
-			DOIR_ZONE_SCOPED_AGRO;
+			DOIR_ZONE_SCOPED_AGGRO;
 			assert(e < size());
 			return raw + e * element_size;
 		}
 		inline const void* get(entity_t e) const noexcept {
-			DOIR_ZONE_SCOPED_AGRO;
+			DOIR_ZONE_SCOPED_AGGRO;
 			assert(e < size());
 			return raw + e * element_size;
 		}
 		template<typename T>
 		inline T& get(entity_t e) noexcept {
-			DOIR_ZONE_SCOPED_AGRO;
+			DOIR_ZONE_SCOPED_AGGRO;
 			assert(e < size());
 			return *(data<T>() + e);
 		}
 		template<typename T>
 		inline const T& get(entity_t e) const noexcept {
-			DOIR_ZONE_SCOPED_AGRO;
+			DOIR_ZONE_SCOPED_AGGRO;
 			assert(e < size());
 			return *(data<T>() + e);
 		}
 
 		template<typename T>
 		void allocate(size_t count = 1) noexcept {
-			DOIR_ZONE_SCOPED_AGRO;
+			DOIR_ZONE_SCOPED_AGGRO;
 			auto originalEnd = size();
 			fpda_grow(raw, element_size * count);
 			auto data = this->data<T>();
@@ -146,20 +146,20 @@ namespace doir::ecs {
 				new(data + originalEnd + i) T();
 		}
 		inline void allocate(size_t count = 1) noexcept {
-			DOIR_ZONE_SCOPED_AGRO;
+			DOIR_ZONE_SCOPED_AGGRO;
 			fpda_grow_and_initialize(raw, element_size * count, 0);
 		}
 
 		template<typename T>
 		inline T& get_or_allocate(entity_t e) noexcept {
-			DOIR_ZONE_SCOPED_AGRO;
+			DOIR_ZONE_SCOPED_AGGRO;
 			size_t size = this->size();
 			if(size <= e)
 				allocate<T>(std::max<int64_t>(int64_t(e) - size + 1, 1));
 			return get<T>(e);
 		}
 		inline void* get_or_allocate(entity_t e) noexcept {
-			DOIR_ZONE_SCOPED_AGRO;
+			DOIR_ZONE_SCOPED_AGGRO;
 			size_t size = this->size();
 			if(size <= e)
 				allocate(std::max<int64_t>(int64_t(e) - size + 1, 1));
@@ -168,7 +168,7 @@ namespace doir::ecs {
 
 		template<typename Tcomponent>
 		void swap(size_t a, std::optional<size_t> _b = {}) {
-			DOIR_ZONE_SCOPED_AGRO;
+			DOIR_ZONE_SCOPED_AGGRO;
 			size_t b = _b.value_or(size() - 1);
 			assert(a < size());
 			assert(b < size());
@@ -178,7 +178,7 @@ namespace doir::ecs {
 			std::swap(*aPtr, *bPtr);
 		}
 		void swap(size_t a, std::optional<size_t> _b = {}) {
-			DOIR_ZONE_SCOPED_AGRO;
+			DOIR_ZONE_SCOPED_AGGRO;
 			size_t b = _b.value_or(size() - 1);
 			assert(a < size());
 			assert(b < size());
@@ -193,7 +193,7 @@ namespace doir::ecs {
 		bool swap(struct TrivialModule& module, size_t component_id, size_t a, std::optional<size_t> _b = {}, bool swap_if_one_elementless = false);
 
 		template<typename Tcomponent, size_t Unique = 0>
-		bool remove(struct TrivialModule& module, entity_t e) { DOIR_ZONE_SCOPED_AGRO; return remove(module, e, get_global_component_id<Tcomponent, Unique>()); }
+		bool remove(struct TrivialModule& module, entity_t e) { DOIR_ZONE_SCOPED_AGGRO; return remove(module, e, get_global_component_id<Tcomponent, Unique>()); }
 		bool remove(struct TrivialModule&, entity_t, size_t component_id);
 
 		template<typename Tcomponent, size_t Unique = 0>
@@ -207,7 +207,7 @@ namespace doir::ecs {
 
 		template<typename Tcomponent, size_t Unique = 0>
 		void sort_by_value(struct TrivialModule& module) {
-			DOIR_ZONE_SCOPED_AGRO;
+			DOIR_ZONE_SCOPED_AGGRO;
 			constexpr static auto comparator = [](Tcomponent* a, Tcomponent* b) {
 				return std::less<Tcomponent>{}(*a, *b);
 			};
@@ -216,14 +216,14 @@ namespace doir::ecs {
 
 		template<typename Tcomponent, size_t Unique = 0>
 		void sort_monotonic(struct TrivialModule& module) {
-			DOIR_ZONE_SCOPED_AGRO;
+			DOIR_ZONE_SCOPED_AGGRO;
 			auto comparator = [](Tcomponent* a, entity_t eA, Tcomponent* b, entity_t eB) {
 				return std::less<entity_t>{}(eA, eB);
 			};
 			sort<Tcomponent, decltype(comparator), true, Unique>(module, comparator);
 		}
 		void sort_monotonic(struct TrivialModule& module, size_t component_id) {
-			DOIR_ZONE_SCOPED_AGRO;
+			DOIR_ZONE_SCOPED_AGGRO;
 			auto comparator = [](void* a, entity_t eA, void* b, entity_t eB) {
 				return std::less<entity_t>{}(eA, eB);
 			};
@@ -237,7 +237,7 @@ namespace doir::ecs {
 		fp_dynarray(entity_t) freelist = nullptr;
 
 		inline void free() {
-			DOIR_ZONE_SCOPED_AGRO;
+			DOIR_ZONE_SCOPED_AGGRO;
 			if(entity_component_indices) {
 				fpda_iterate(entity_component_indices)
 					if(*i) fpda_free_and_null(*i);
@@ -254,7 +254,7 @@ namespace doir::ecs {
 		size_t entity_count() { return fpda_size(entity_component_indices); }
 
 		Storage& get_storage(size_t componentID, size_t element_size = Storage::invalid) noexcept {
-			DOIR_ZONE_SCOPED_AGRO;
+			DOIR_ZONE_SCOPED_AGGRO;
 			if(!storages || fpda_size(storages) <= componentID) {
 				size_t old = fpda_size(storages);
 				fpda_grow_to_size(storages, componentID + 1);
@@ -268,29 +268,29 @@ namespace doir::ecs {
 			return storages[componentID];
 		}
 		inline const Storage& get_storage(size_t componentID, size_t element_size = Storage::invalid) const noexcept {
-			DOIR_ZONE_SCOPED_AGRO;
+			DOIR_ZONE_SCOPED_AGGRO;
 			assert(fpda_size(storages) > componentID);
 			assert(storages[componentID].element_size != Storage::invalid);
 			return storages[componentID];
 		}
 
 		template<typename T, size_t Unique = 0>
-		inline Storage& get_storage() noexcept { DOIR_ZONE_SCOPED_AGRO; return get_storage(get_global_component_id<T, Unique>(), sizeof(T)); }
+		inline Storage& get_storage() noexcept { DOIR_ZONE_SCOPED_AGGRO; return get_storage(get_global_component_id<T, Unique>(), sizeof(T)); }
 		template<typename T, size_t Unique = 0>
-		inline const Storage& get_storage() const noexcept { DOIR_ZONE_SCOPED_AGRO; return get_storage(get_global_component_id<T, Unique>(), sizeof(T)); }
+		inline const Storage& get_storage() const noexcept { DOIR_ZONE_SCOPED_AGGRO; return get_storage(get_global_component_id<T, Unique>(), sizeof(T)); }
 
 		bool release_storage(size_t componentID) noexcept {
-			DOIR_ZONE_SCOPED_AGRO;
+			DOIR_ZONE_SCOPED_AGGRO;
 			if(fpda_size(storages) <= componentID) return false;
 			if(storages[componentID].element_size == Storage::invalid) return false;
 			storages[componentID] = Storage();
 			return true;
 		}
 		template<typename T, size_t Unique = 0>
-		inline bool release_storage() noexcept { DOIR_ZONE_SCOPED_AGRO; return release_storage(get_global_component_id<T, Unique>()); }
+		inline bool release_storage() noexcept { DOIR_ZONE_SCOPED_AGGRO; return release_storage(get_global_component_id<T, Unique>()); }
 
 		entity_t create_entity() noexcept {
-			DOIR_ZONE_SCOPED_AGRO;
+			DOIR_ZONE_SCOPED_AGGRO;
 			if(!freelist || fpda_empty(freelist)) {
 				entity_t e = entity_component_indices ? fpda_size(entity_component_indices) : 0;
 				if(e == 0) fpda_reserve(entity_component_indices, 16);
@@ -307,7 +307,7 @@ namespace doir::ecs {
 		}
 
 		bool release_entity(entity_t e, bool clearMemory = true) noexcept {
-			DOIR_ZONE_SCOPED_AGRO;
+			DOIR_ZONE_SCOPED_AGGRO;
 			if(e >= fpda_size(entity_component_indices)) return false;
 
 			if(clearMemory && storages && !fpda_empty(storages))
@@ -328,15 +328,15 @@ namespace doir::ecs {
 			auto& storage = get_storage(componentID, element_size);\
 			entity_component_indices[e][componentID] = storage.size()
 		void* add_component(entity_t e, size_t componentID, size_t element_size) noexcept {
-			DOIR_ZONE_SCOPED_AGRO;
+			DOIR_ZONE_SCOPED_AGGRO;
 			DOIR_ECS_ADD_COMPONENT_COMMON(componentID, element_size);
 			return storage.get_or_allocate(e);
 		}
 		template<typename T, size_t Unique = 0>
 		T& add_component(entity_t e) noexcept {
-			DOIR_ZONE_SCOPED_AGRO;
+			DOIR_ZONE_SCOPED_AGGRO;
 			size_t componentID = get_global_component_id<T, Unique>();
-			{ DOIR_ZONE_SCOPED_NAMED_AGRO("Rest");
+			{ DOIR_ZONE_SCOPED_NAMED_AGGRO("Rest");
 				DOIR_ECS_ADD_COMPONENT_COMMON(componentID, sizeof(T));
 				auto& res = storage.template get_or_allocate<T>(entity_component_indices[e][componentID]);
 
@@ -348,11 +348,11 @@ namespace doir::ecs {
 		#undef DOIR_ECS_ADD_COMPONENT_COMMON
 
 		bool remove_component(entity_t e, size_t componentID) noexcept {
-			DOIR_ZONE_SCOPED_AGRO;
+			DOIR_ZONE_SCOPED_AGGRO;
 			return get_storage(componentID).remove(*this, e, componentID);
 		}
 		template<typename Tcomponent, size_t Unique = 0>
-		bool remove_component(entity_t e) noexcept { DOIR_ZONE_SCOPED_AGRO; return get_storage<Tcomponent, Unique>().template remove<Tcomponent>(*this, e); }
+		bool remove_component(entity_t e) noexcept { DOIR_ZONE_SCOPED_AGGRO; return get_storage<Tcomponent, Unique>().template remove<Tcomponent>(*this, e); }
 
 		#define DOIR_ECS_GET_COMPONENT_COMMON(componentID)\
 			assert(entity_component_indices);\
@@ -361,25 +361,25 @@ namespace doir::ecs {
 			assert(fpda_size(entity_component_indices[e]) > componentID);\
 			assert(entity_component_indices[e][componentID] != Storage::invalid);
 		void* get_component(entity_t e, size_t componentID) noexcept {
-			DOIR_ZONE_SCOPED_AGRO;
+			DOIR_ZONE_SCOPED_AGGRO;
 			DOIR_ECS_GET_COMPONENT_COMMON(componentID);
 			return get_storage(componentID).get(entity_component_indices[e][componentID]);
 		}
 		const void* get_component(entity_t e, size_t componentID) const noexcept {
-			DOIR_ZONE_SCOPED_AGRO;
+			DOIR_ZONE_SCOPED_AGGRO;
 			DOIR_ECS_GET_COMPONENT_COMMON(componentID);
 			return get_storage(componentID).get(entity_component_indices[e][componentID]);
 		}
 		template<typename T, size_t Unique = 0>
 		T& get_component(entity_t e) noexcept {
-			DOIR_ZONE_SCOPED_AGRO;
+			DOIR_ZONE_SCOPED_AGGRO;
 			size_t componentID = get_global_component_id<T, Unique>();
 			DOIR_ECS_GET_COMPONENT_COMMON(componentID);
 			return get_storage(componentID).template get<T>(entity_component_indices[e][componentID]);
 		}
 		template<typename T, size_t Unique = 0>
 		const T& get_component(entity_t e) const noexcept {
-			DOIR_ZONE_SCOPED_AGRO;
+			DOIR_ZONE_SCOPED_AGGRO;
 			size_t componentID = get_global_component_id<T, Unique>();
 			DOIR_ECS_GET_COMPONENT_COMMON(componentID);
 			return get_storage(componentID).template get<T>(entity_component_indices[e][componentID]);
@@ -387,14 +387,14 @@ namespace doir::ecs {
 		#undef DOIR_ECS_GET_COMPONENT_COMMON
 
 		inline bool has_component(entity_t e, size_t componentID) const noexcept {
-			DOIR_ZONE_SCOPED_AGRO;
+			DOIR_ZONE_SCOPED_AGGRO;
 			return entity_component_indices && fpda_size(entity_component_indices) > e
 				&& entity_component_indices[e] && fpda_size(entity_component_indices[e]) > componentID
 				&& entity_component_indices[e][componentID] != Storage::invalid;
 		}
 		template<typename T, size_t Unique = 0>
 		inline bool has_component(entity_t e) const noexcept {
-			DOIR_ZONE_SCOPED_AGRO;
+			DOIR_ZONE_SCOPED_AGGRO;
 			return has_component(e, get_global_component_id<T, Unique>());
 		}
 
@@ -525,7 +525,7 @@ namespace doir::ecs {
 		Module(Module&& o) { *this = std::move(o); }
 		Module& operator=(const Module& o) = delete;
 		Module& operator=(Module&& o) {
-			DOIR_ZONE_SCOPED_AGRO;
+			DOIR_ZONE_SCOPED_AGGRO;
 			free();
 			entity_component_indices = std::exchange(o.entity_component_indices, nullptr);
 			storages = std::exchange(o.storages, nullptr);
@@ -541,7 +541,7 @@ namespace doir::ecs {
 	namespace detail {
 		// Gets the entity associated with a specific component index
 		inline entity_t get_entity(TrivialModule& module, size_t index, size_t component_id) {
-			DOIR_ZONE_SCOPED_AGRO;
+			DOIR_ZONE_SCOPED_AGGRO;
 			assert(module.entity_component_indices);
 			for(size_t e = 0; e < fpda_size(module.entity_component_indices); ++e)
 				if(fpda_size(module.entity_component_indices[e]) > component_id && module.entity_component_indices[e][component_id] == index)
@@ -550,13 +550,13 @@ namespace doir::ecs {
 		}
 		template<typename Tcomponent, size_t Unique = 0>
 		inline entity_t get_entity(TrivialModule& module, size_t index) {
-			DOIR_ZONE_SCOPED_AGRO;
+			DOIR_ZONE_SCOPED_AGGRO;
 			return get_entity(module, index, get_global_component_id<Tcomponent, Unique>());
 		}
 
 		template<typename Tcomponent, size_t Unique = 0>
 		inline entity_t get_entity(Storage& storage, TrivialModule& module, size_t index, std::optional<size_t> component_id = {}) {
-			DOIR_ZONE_SCOPED_AGRO;
+			DOIR_ZONE_SCOPED_AGGRO;
 			if constexpr(detail::is_with_entity_v<Tcomponent>)
 				return (storage.data<Tcomponent>() + index)->entity;
 			else if constexpr(std::is_same_v<Tcomponent, detail::void_like>)
@@ -568,7 +568,7 @@ namespace doir::ecs {
 
 	template<typename Tcomponent, size_t Unique = 0>
 	inline bool swap_impl(Storage* self, TrivialModule& module, size_t a, std::optional<size_t> _b = {}, bool swap_if_one_elementless = false, std::optional<size_t> _component_id = {}) {
-		DOIR_ZONE_SCOPED_AGRO;
+		DOIR_ZONE_SCOPED_AGGRO;
 		size_t b = _b.value_or(self->size() - 1);
 		size_t component_id = _component_id.value_or(get_global_component_id<Tcomponent, Unique>());
 		entity_t eA = detail::get_entity<Tcomponent, Unique>(*self, module, a, component_id);
@@ -601,17 +601,17 @@ namespace doir::ecs {
 	}
 	template<typename Tcomponent, size_t Unique /*= 0*/>
 	bool Storage::swap(TrivialModule& module, size_t a, std::optional<size_t> b /*= {}*/, bool swap_if_one_elementless /*= false*/) {
-		DOIR_ZONE_SCOPED_AGRO;
+		DOIR_ZONE_SCOPED_AGGRO;
 		return swap_impl<Tcomponent, Unique>(this, module, a, b, swap_if_one_elementless);
 	}
 	inline bool Storage::swap(TrivialModule& module, size_t component_id, size_t a, std::optional<size_t> b /*= {}*/, bool swap_if_one_elementless /*= false*/) {
-		DOIR_ZONE_SCOPED_AGRO;
+		DOIR_ZONE_SCOPED_AGGRO;
 		return swap_impl<detail::void_like, 0>(this, module, a, b, swap_if_one_elementless, component_id);
 	}
 
 
 	inline bool Storage::remove(TrivialModule& module, entity_t e, size_t component_id) {
-		DOIR_ZONE_SCOPED_AGRO;
+		DOIR_ZONE_SCOPED_AGGRO;
 		size_t size = this->size();
 		if(size == 0 || !module.entity_component_indices || e >= fpda_size(module.entity_component_indices)) return false;
 
@@ -636,7 +636,7 @@ namespace doir::ecs {
 
 	template<typename Tcomponent, size_t Unique = 0>
 	inline void reorder_impl(Storage* self, TrivialModule& module, fp_view(size_t) order, std::optional<size_t> _component_id = {}) {
-		DOIR_ZONE_SCOPED_AGRO;
+		DOIR_ZONE_SCOPED_AGGRO;
 		assert(fp_view_size(order) == self->size()); // Require order to have an entry for every element in the array
 		if(self->size() <= 1) return; // Zero or one elements are always sorted
 		size_t component_id = _component_id.value_or(get_global_component_id<Tcomponent, Unique>());
@@ -656,19 +656,19 @@ namespace doir::ecs {
 			}
 	}
 	inline void Storage::reorder(TrivialModule& module, size_t component_id, fp_view(size_t) order) {
-		DOIR_ZONE_SCOPED_AGRO;
+		DOIR_ZONE_SCOPED_AGGRO;
 		reorder_impl<detail::void_like, 0>(this, module, order, component_id);
 	}
 	template<typename Tcomponent, size_t Unique /*= 0*/>
 	inline void Storage::reorder(TrivialModule& module, fp_view(size_t) order) {
-		DOIR_ZONE_SCOPED_AGRO;
+		DOIR_ZONE_SCOPED_AGGRO;
 		reorder_impl<Tcomponent, Unique>(this, module, order);
 	}
 
 
 	template<typename Tcomponent, typename F, bool with_entities /*= false*/, size_t Unique /*= 0*/>
 	void sort_impl(Storage* self, TrivialModule& module, const F& _comparator, std::optional<size_t> _component_id = {}) {
-		DOIR_ZONE_SCOPED_AGRO;
+		DOIR_ZONE_SCOPED_AGGRO;
 		size_t component_id = _component_id.value_or(get_global_component_id<Tcomponent, Unique>());
 		// Create a list of indices
 		size_t size = self->size();
@@ -694,7 +694,7 @@ namespace doir::ecs {
 				return _comparator(a, entities[_a], b, entities[_b]);
 			};
 
-			DOIR_ZONE_SCOPED_NAMED_AGRO("sort");
+			DOIR_ZONE_SCOPED_NAMED_AGGRO("sort");
 			std::sort(order, fp_end(order), comparator);
 		} else {
 			auto comparator = [self, &_comparator](size_t _a, size_t _b) {
@@ -703,7 +703,7 @@ namespace doir::ecs {
 				return _comparator(a, b);
 			};
 
-			DOIR_ZONE_SCOPED_NAMED_AGRO("sort");
+			DOIR_ZONE_SCOPED_NAMED_AGGRO("sort");
 			std::sort(order, fp_end(order), comparator);
 		}
 
@@ -713,12 +713,12 @@ namespace doir::ecs {
 	}
 	template<typename F, bool with_entities>
 	inline void Storage::sort(TrivialModule& module, size_t component_id, const F& comparator) {
-		DOIR_ZONE_SCOPED_AGRO;
+		DOIR_ZONE_SCOPED_AGGRO;
 		sort_impl<detail::void_like, F, with_entities, 0>(this, module, comparator, component_id);
 	}
 	template<typename Tcomponent, typename F, bool with_entities /*= false*/, size_t Unique /*= 0*/>
 	inline void Storage::sort(TrivialModule& module, const F& _comparator) {
-		DOIR_ZONE_SCOPED_AGRO;
+		DOIR_ZONE_SCOPED_AGGRO;
 		if constexpr(with_entities) {
 			auto comparator = [&_comparator](void* a, entity_t aE, void* b, entity_t bE) {
 				return _comparator((Tcomponent*)a, aE, (Tcomponent*)b, bE);
