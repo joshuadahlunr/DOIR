@@ -11,7 +11,7 @@ namespace doir::Lox {
 
 	inline namespace components {
 		struct null {};
-		struct variable { ecs::entity_t ref = doir::ecs::invalid_entity; };
+		struct variable { ecs::Entity ref = doir::ecs::invalid_entity; };
 		struct string {};
 		struct literal {};
 
@@ -19,7 +19,7 @@ namespace doir::Lox {
 			return iterate_impl<ecs::entity_t, block_children_entry>{*this, module};
 		}};
 		struct block {
-			ecs::entity_t parent; block_children_entry children = {ecs::invalid_entity}; ecs::entity_t children_end = ecs::invalid_entity;
+			ecs::Entity parent; block_children_entry children = {ecs::invalid_entity}; ecs::Entity children_end = ecs::invalid_entity;
 			static void swap_entities(block& b, ecs::TrivialModule& module, ecs::entity_t eA, ecs::entity_t eB) {
 				if(b.parent == eA) b.parent = eB;
 				else if(b.parent == eB) b.parent = eA;
@@ -33,7 +33,7 @@ namespace doir::Lox {
 			void add_child(TrivialModule& module, ecs::entity_t child) {
 				if(children_end == ecs::invalid_entity)
 					children.set_next<block_children_entry>(module, child, ecs::invalid_entity);
-				else 
+				else
 					module.get_component<block_children_entry>(children_end).set_next<block_children_entry>(module, child, children_end);
 				children_end = child;
 			}
@@ -41,7 +41,7 @@ namespace doir::Lox {
 			void pop_back_child(TrivialModule& module) {
 				auto& back = module.get_component<block_children_entry>(children_end);
 				auto& second_back = module.get_component<block_children_entry>(back.previous);
-				
+
 				second_back.next = ecs::invalid_entity;
 				children_end = back.previous;
 			}
@@ -54,25 +54,25 @@ namespace doir::Lox {
 		// using call = block; // TODO: How bad of an idea is it for calls to reuse block's storage?
 		struct trailing_call {};
 
-		struct declaire {
+		struct declare {
 			doir::lexeme name;
-			ecs::entity_t parent; // Parent block
-			bool operator==(const declaire& o) const {
+			ecs::Entity parent; // Parent block
+			bool operator==(const declare& o) const {
 				return parent == o.parent && fp_string_view_equal(name.view(comparison_buffer), o.name.view(comparison_buffer));
 			}
-			static void swap_entities(declaire& decl, ecs::TrivialModule& module, ecs::entity_t eA, ecs::entity_t eB) {
+			static void swap_entities(declare& decl, ecs::TrivialModule& module, ecs::entity_t eA, ecs::entity_t eB) {
 				if(decl.parent == eA) decl.parent = eB;
 				else if(decl.parent == eB) decl.parent = eA;
 			}
 		};
-		struct variable_declaire : public declaire {};
-		struct function_declaire : public declaire {};
-		struct parameter_declaire : public declaire {};
+		struct variable_declare : public declare {};
+		struct function_declare : public declare {};
+		struct parameter_declare : public declare {};
 		struct parameters_entry: public array_entry { auto iterate(ecs::TrivialModule& module) {
-			return iterate_impl<ecs::entity_t, parameters_entry>{*this, module};
+			return iterate_impl<ecs::Entity, parameters_entry>{*this, module};
 		}};
-		struct parameters { 
-			parameters_entry params = {ecs::invalid_entity}; ecs::entity_t parameters_end = ecs::invalid_entity;
+		struct parameters {
+			parameters_entry params = {ecs::invalid_entity}; ecs::Entity parameters_end = ecs::invalid_entity;
 			// fp::dynarray<ecs::entity_t> parameters;
 			static void swap_entities(struct parameters& params, ecs::TrivialModule& module, ecs::entity_t eA, ecs::entity_t eB) {
 				if(params.params.next == eA) params.params.next = eB;
@@ -85,7 +85,7 @@ namespace doir::Lox {
 				if(parameters_end == ecs::invalid_entity)
 					params.set_next<parameters_entry>(module, param, ecs::invalid_entity);
 				else
-					module.get_component<parameters_entry>(parameters_end).set_next<parameters_entry>(module, param, parameters_end);
+					parameters_end.get_component<parameters_entry>().set_next<parameters_entry>(module, param, parameters_end);
 				parameters_end = param;
 			}
 		};

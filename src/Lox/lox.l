@@ -28,28 +28,28 @@ IDENTIFIER \p{UnicodeIdentifierStart}\p{UnicodeIdentifierPart}*
 
 "true" {
 	size_t len = fp_string_length(text());
-	yylval = module->create_entity();
-	module->add_component<doir::comp::lexeme>(yylval) = {location, len};
-	module->add_component<literal>(yylval);
-	module->add_component<bool>(yylval) = true;
+	yylval = ecs::Entity::create(*module);
+	yylval.add_component<doir::comp::lexeme>() = {location, len};
+	yylval.add_component<literal>();
+	yylval.add_component<bool>() = true;
 	location += len;
 	return True;
 }
 "false" {
 	size_t len = fp_string_length(text());
-	yylval = module->create_entity();
-	module->add_component<doir::comp::lexeme>(yylval) = {location, len};
-	module->add_component<literal>(yylval);
-	module->add_component<bool>(yylval) = false;
+	yylval = ecs::Entity::create(*module);
+	yylval.add_component<doir::comp::lexeme>() = {location, len};
+	yylval.add_component<literal>();
+	yylval.add_component<bool>() = false;
 	location += len;
 	return False;
 }
 "null"|"nil" {
 	size_t len = fp_string_length(text());
-	yylval = module->create_entity();
-	module->add_component<doir::comp::lexeme>(yylval) = {location, len};
-	module->add_component<literal>(yylval);
-	module->add_component<null>(yylval);
+	yylval = ecs::Entity::create(*module);
+	yylval.add_component<doir::comp::lexeme>() = {location, len};
+	yylval.add_component<literal>();
+	yylval.add_component<null>();
 	location += len;
 	return Null;
 }
@@ -143,26 +143,26 @@ IDENTIFIER \p{UnicodeIdentifierStart}\p{UnicodeIdentifierPart}*
 {DBL_QUOTE}{DBL_QUOTE} |
 {DBL_QUOTE}{CHARS}{DBL_QUOTE} {
 	size_t len = fp_string_length(text());
-	yylval = module->create_entity();
-	module->add_component<doir::comp::lexeme>(yylval) = {location, len};
-	module->add_component<literal>(yylval);
-	module->add_component<string>(yylval);
+	yylval = ecs::Entity::create(*module);
+	yylval.add_component<doir::comp::lexeme>() = {location, len};
+	yylval.add_component<literal>();
+	yylval.add_component<string>();
 	location += len;
 	return STRING;
 }
 {NUMBER} {
 	size_t len = fp_string_length(text());
-	yylval = module->create_entity();
-	module->add_component<doir::comp::lexeme>(yylval) = {location, len};
-	module->add_component<literal>(yylval);
-	module->add_component<double>(yylval) = strtod(text(), nullptr);
+	yylval = ecs::Entity::create(*module);
+	yylval.add_component<doir::comp::lexeme>() = {location, len};
+	yylval.add_component<literal>();
+	yylval.add_component<double>() = strtod(text(), nullptr);
 	location += len;
 	return NUMBER;
 }
 {IDENTIFIER} {
 	size_t len = fp_string_length(text());
-	yylval = module->create_entity();
-	module->add_component<doir::comp::lexeme>(yylval) = {location, len};
+	yylval = ecs::Entity::create(*module);
+	yylval.add_component<doir::comp::lexeme>() = {location, len};
 	location += len;
 	return IDENTIFIER;
 }

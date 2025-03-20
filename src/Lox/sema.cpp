@@ -12,7 +12,7 @@
 namespace doir::Lox {
 
 	size_t calculate_child_count(TrivialModule& module, ecs::entity_t root /* = 1 */, bool annotate /* = true */) {
-		DOIR_ZONE_SCOPED_AGRO;
+		DOIR_ZONE_SCOPED_AGGRO;
 		// using namespace lox::components;
 		size_t immediate = 0, inChildren = 0;
 
@@ -27,7 +27,7 @@ namespace doir::Lox {
 				++immediate;
 				inChildren += calculate_child_count(module, child, annotate);
 			}
-		} else if(module.has_component<Module::HashtableComponent<function_declaire>>(root)){
+		} else if(module.has_component<Module::HashtableComponent<function_declare>>(root)){
 			auto& block = module.get_component<struct block>(root);
 			for(auto child: block.children.iterate(module)) {
 				++immediate;
@@ -69,7 +69,7 @@ namespace doir::Lox {
 			if(op.b) recurse(module, op.b, order, missing);
 			if(op.a && !module.has_component<assign>(root))
 				recurse(module, op.a, order, missing);
-		} else if(module.has_component<Module::HashtableComponent<function_declaire>>(root)) {
+		} else if(module.has_component<Module::HashtableComponent<function_declare>>(root)) {
 			auto& block = module.get_component<struct block>(root);
 			for(auto child: block.children.iterate(module))
 				recurse(module, child, order, missing);
@@ -91,7 +91,7 @@ namespace doir::Lox {
 	}
 
 	void sort_parse_into_reverse_post_order_traversal(TrivialModule& module, ecs::entity_t root) {
-		DOIR_ZONE_SCOPED_AGRO;
+		DOIR_ZONE_SCOPED_AGGRO;
 		size_t size = module.entity_count();
 		std::vector<ecs::entity_t> order; order.reserve(size);
 		std::unordered_set<ecs::entity_t> missing = std::move([size] {
@@ -103,12 +103,12 @@ namespace doir::Lox {
 		// TODO: Do we want to sort functions based on some dependence graph?
 
 		{
-			DOIR_ZONE_SCOPED_NAMED_AGRO("sort_parse_into_reverse_post_order_traversal::impl");
+			DOIR_ZONE_SCOPED_NAMED_AGGRO("sort_parse_into_reverse_post_order_traversal::impl");
 			sort_parse_into_post_order_traversal_impl(module, root, order, missing);
 		}
 
 		{
-			DOIR_ZONE_SCOPED_NAMED_AGRO("sort_parse_into_reverse_post_order_traversal::order_fixup");
+			DOIR_ZONE_SCOPED_NAMED_AGGRO("sort_parse_into_reverse_post_order_traversal::order_fixup");
 			order.push_back(0); // The error token should always be token 0 (so put it last right before we reverse)
 			std::reverse(order.begin(), order.end());
 
@@ -116,11 +116,11 @@ namespace doir::Lox {
 			order.insert(order.cend(), missing.begin(), missing.end());
 		}
 		{
-			DOIR_ZONE_SCOPED_NAMED_AGRO("sort_parse_into_reverse_post_order_traversal::reorder");
+			DOIR_ZONE_SCOPED_NAMED_AGGRO("sort_parse_into_reverse_post_order_traversal::reorder");
 			module.reorder_entities<
-				Module::HashtableComponent<parameter_declaire>,
-				Module::HashtableComponent<variable_declaire>,
-				Module::HashtableComponent<function_declaire>,
+				Module::HashtableComponent<parameter_declare>,
+				Module::HashtableComponent<variable_declare>,
+				Module::HashtableComponent<function_declare>,
 				operation,
 				block,
 				call,
@@ -131,7 +131,7 @@ namespace doir::Lox {
 			>((fp_view(size_t))fp_void_view_literal(order.data(), order.size()));
 		}
 		{
-			DOIR_ZONE_SCOPED_NAMED_AGRO("sort_parse_into_reverse_post_order_traversal::make_monotonic");
+			DOIR_ZONE_SCOPED_NAMED_AGGRO("sort_parse_into_reverse_post_order_traversal::make_monotonic");
 			module.make_all_monotonic();
 		}
 	};

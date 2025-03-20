@@ -8,11 +8,11 @@ namespace doir::Lox {
 
 	size_t location = 0;
 	TrivialModule* module;
-	fp_dynarray(ecs::entity_t) blocks = nullptr;
-	fp_dynarray(ecs::entity_t) objects = nullptr;
+	fp::dynarray<ecs::Entity> blocks = nullptr;
+	fp::dynarray<ecs::Entity> objects = nullptr;
 
 	block& current_block() {
-		return module->get_component<block>(*fpda_back(blocks));
+		return blocks.back().get_component<block>();
 	}
 
 	#include "gen/parser.h"
@@ -36,25 +36,26 @@ namespace doir::Lox {
 	}
 
 	std::pair<TrivialModule, ecs::entity_t> parse_view(const fp_string_view view) {
-		DOIR_ZONE_SCOPED_AGRO;
+		DOIR_ZONE_SCOPED_AGGRO;
 		set_input(reflex::Input(fp_view_data(char, view), fp_view_size(view)));
 		TrivialModule out;
+		doir::ecs::Entity::set_current_module(out);
 		module = &out;
 
 		// yydebug = 1;
 		location = 0;
 		fp_string_view_concatenate_inplace(out.buffer, view);
-		if(objects) fpda_free_and_null(objects);
-		if(blocks) fpda_free_and_null(blocks);
-		fpda_push_back(blocks, module->create_entity());
-		module->add_component<block>(*fpda_back(blocks)) = {0};
+		if(objects) objects.free_and_null();
+		if(blocks) blocks.free_and_null();
+		blocks.push_back(ecs::Entity::create(*module));
+		blocks.back().add_component<block>() = {0};
 
 		yyparse();
-		return {out, fpda_empty(blocks) ? 0 : *fpda_back(blocks)};
+		return {out, blocks.empty() ? ecs::Entity{0} : blocks.back()};
 	}
 
 	std::pair<TrivialModule, ecs::entity_t> parse(const fp_string string) {
-		DOIR_ZONE_SCOPED_AGRO;
+		DOIR_ZONE_SCOPED_AGGRO;
 		return parse_view(fp_string_to_view_const(string));
 	}
 }

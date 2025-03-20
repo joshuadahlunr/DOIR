@@ -1,4 +1,5 @@
 #include "ECS/ecs.hpp"
+#include "ECS/entity.hpp"
 
 #include <fp/string.h>
 #include <ranges>
@@ -85,7 +86,7 @@ namespace doir {
 		};
 
 		struct entity_reference {
-			ecs::entity_t entity = doir::ecs::invalid_entity;
+			ecs::Entity entity = doir::ecs::invalid_entity;
 			struct lexeme lexeme;
 		};
 
@@ -94,10 +95,10 @@ namespace doir {
 		};
 
 		struct array_entry {
-			ecs::entity_t next, previous;
+			ecs::Entity next, previous;
 
 			template <std::derived_from<array_entry> Tparent = array_entry>
-			void set_next(ecs::TrivialModule& module, ecs::entity_t next, std::optional<ecs::entity_t> self_ = {}) {
+			void set_next(ecs::TrivialModule& module, ecs::Entity next, std::optional<ecs::Entity> self_ = {}) {
 				array_entry& next_entry = module.get_or_add_component<Tparent>(next);
 				auto self = self_.has_value() ? *self_ : module.get_or_add_component<Tparent>(this->previous).next; // NOTE: The else case in this expression will likely fail when the then case should be taken, thus value_or can't be used!
 
@@ -105,7 +106,7 @@ namespace doir {
 				this->next = next;
 			}
 
-			static void swap_entities(array_entry& e, ecs::TrivialModule& module, ecs::entity_t eA, ecs::entity_t eB) {
+			static void swap_entities(array_entry& e, ecs::TrivialModule& module, ecs::Entity eA, ecs::Entity eB) {
 				if(e.next == eA) e.next = eB;
 				else if(e.next == eB) e.next = eA;
 				if(e.previous == eA) e.previous = eB;

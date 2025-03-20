@@ -23,3 +23,4 @@
 #define DOIR_IMPLEMENTATION
 #define FP_IMPLEMENTATION
 #include "../src/ECS/ecs.hpp"
+#include "../src/ECS/entity.hpp"

@@ -1,6 +1,6 @@
+#include <format>
 #include "lox.hpp"
 
-#include <format>
 #include <fp/string.hpp>
 
 namespace doir::Lox {
@@ -26,7 +26,7 @@ namespace doir::Lox {
 		} else if(module.has_component<variable>(root)) {
 			auto ref = module.get_component<variable>(root).ref;
 			auto lexeme = module.get_component<doir::comp::lexeme>(root).view(module.buffer);
-			end(res << indent << "var:" << lexeme << " -> " << ref);
+			end(res << indent << "var:" << lexeme << " -> " << ref.entity);
 		} else if(module.has_component<not_>(root)) {
 			auto& op = module.get_component<operation>(root);
 			end(res << indent << "! [not]");
@@ -119,14 +119,14 @@ namespace doir::Lox {
 				res << indent << "if:else:" << "\n";
 				res << dump(module, op.c, depth + 1);
 			}
-		} else if(module.has_component<Module::HashtableComponent<variable_declaire>>(root)) {
-			auto& var = get_key(module.get_component<Module::HashtableComponent<variable_declaire>>(root));
+		} else if(module.has_component<Module::HashtableComponent<variable_declare>>(root)) {
+			auto& var = get_key(module.get_component<Module::HashtableComponent<variable_declare>>(root));
 			end(res << indent << "declare:var:" << var.name.view(module.buffer));
-		} else if(module.has_component<Module::HashtableComponent<parameter_declaire>>(root)) {
-			auto& param = get_key(module.get_component<Module::HashtableComponent<parameter_declaire>>(root));
+		} else if(module.has_component<Module::HashtableComponent<parameter_declare>>(root)) {
+			auto& param = get_key(module.get_component<Module::HashtableComponent<parameter_declare>>(root));
 			end(res << indent << "declare:param:" << param.name.view(module.buffer));
-		} else if(module.has_component<Module::HashtableComponent<function_declaire>>(root)) {
-			auto& decl = get_key(module.get_component<Module::HashtableComponent<function_declaire>>(root));
+		} else if(module.has_component<Module::HashtableComponent<function_declare>>(root)) {
+			auto& decl = get_key(module.get_component<Module::HashtableComponent<function_declare>>(root));
 			auto* params = module.has_component<parameters>(root) ? &module.get_component<parameters>(root) : nullptr;
 			auto& block = module.get_component<struct block>(root);
 			end(res << indent << "declare:fun:" << decl.name.view(module.buffer));
