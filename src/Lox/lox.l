@@ -32,6 +32,7 @@ IDENTIFIER \p{UnicodeIdentifierStart}\p{UnicodeIdentifierPart}*
 	yylval.add_component<doir::comp::lexeme>() = {location, len};
 	yylval.add_component<literal>();
 	yylval.add_component<bool>() = true;
+	yylval.add_component<interpreter::skippable>();
 	location += len;
 	return True;
 }
@@ -41,6 +42,7 @@ IDENTIFIER \p{UnicodeIdentifierStart}\p{UnicodeIdentifierPart}*
 	yylval.add_component<doir::comp::lexeme>() = {location, len};
 	yylval.add_component<literal>();
 	yylval.add_component<bool>() = false;
+	yylval.add_component<interpreter::skippable>();
 	location += len;
 	return False;
 }
@@ -50,6 +52,7 @@ IDENTIFIER \p{UnicodeIdentifierStart}\p{UnicodeIdentifierPart}*
 	yylval.add_component<doir::comp::lexeme>() = {location, len};
 	yylval.add_component<literal>();
 	yylval.add_component<null>();
+	yylval.add_component<interpreter::skippable>();
 	location += len;
 	return Null;
 }
@@ -147,6 +150,7 @@ IDENTIFIER \p{UnicodeIdentifierStart}\p{UnicodeIdentifierPart}*
 	yylval.add_component<doir::comp::lexeme>() = {location, len};
 	yylval.add_component<literal>();
 	yylval.add_component<string>();
+	yylval.add_component<interpreter::skippable>();
 	location += len;
 	return STRING;
 }
@@ -156,6 +160,7 @@ IDENTIFIER \p{UnicodeIdentifierStart}\p{UnicodeIdentifierPart}*
 	yylval.add_component<doir::comp::lexeme>() = {location, len};
 	yylval.add_component<literal>();
 	yylval.add_component<double>() = strtod(text(), nullptr);
+	yylval.add_component<interpreter::skippable>();
 	location += len;
 	return NUMBER;
 }

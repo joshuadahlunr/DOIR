@@ -4,8 +4,6 @@
 #include <nowide/iostream.hpp>
 
 namespace doir::Lox {
-	fp_string comparison_buffer = nullptr;
-
 	size_t location = 0;
 	TrivialModule* module;
 	fp::dynarray<ecs::Entity> blocks = nullptr;
@@ -13,6 +11,34 @@ namespace doir::Lox {
 
 	block& current_block() {
 		return blocks.back().get_component<block>();
+	}
+
+	void add_body_marker(ecs::Entity block_, std::optional<ecs::entity_t> target_ = {}) {
+		ecs::Entity target = target_.value_or(block_);
+		auto& block = block_.get_component<struct block>();
+		
+		ecs::Entity marker = ecs::Entity::create(*module);
+		marker.add_component<doir::lexeme>() = block_.get_component<doir::lexeme>();
+		marker.add_component<body_marker>().skipTo = target;
+		block.push_front_child(*module, marker);
+	}
+
+	doir::comp::lexeme& append_lexeme_to_buffer(TrivialModule& module, ecs::Entity e, const char* string) {
+		auto& lexeme = e.get_or_add_component<doir::comp::lexeme>();
+		lexeme.start = fp::string{module.buffer}.size();
+		module.buffer = fp::string{module.buffer} += "clock";
+		lexeme.length = fp::string{module.buffer}.size() - lexeme.start;
+		return lexeme;
+	}
+
+	void add_builtin_functions() {
+		auto clock = ecs::Entity::create(*module);
+		auto& lexeme = append_lexeme_to_buffer(*module, clock, "clock");
+		auto& decl = get_key_and_mark_occupied(clock.add_component<Module::HashtableComponent<function_declare>>())
+			= {declare{.name = lexeme, .parent = blocks.back()}};
+		clock.add_component<interpreter::skippable>();
+		clock.add_component<block>();
+		current_block().push_back_child(*module, clock);
 	}
 
 	#include "gen/parser.h"
@@ -51,6 +77,7 @@ namespace doir::Lox {
 		blocks.back().add_component<block>() = {0};
 
 		yyparse();
+		add_builtin_functions();
 		return {out, blocks.empty() ? ecs::Entity{0} : blocks.back()};
 	}
 

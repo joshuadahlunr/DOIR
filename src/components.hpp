@@ -1,8 +1,11 @@
 #include "ECS/ecs.hpp"
 #include "ECS/entity.hpp"
+#include "module.hpp"
 
-#include <fp/string.h>
+#include <cassert>
+#include <concepts>
 #include <ranges>
+#include <fp/string.hpp>
 
 #ifdef __cplusplus
 	#include <algorithm>
@@ -55,10 +58,10 @@ namespace doir {
 			size_t start, length;
 
 #ifdef __cplusplus
-			inline fp_string_view view(fp_string buffer) const {
+			inline fp::string_view view(fp_string buffer) const {
 				return {buffer + start, length};
 			}
-			inline fp_string_view view(fp_string_view view) const {
+			inline fp::string_view view(fp_string_view view) const {
 				assert(start + length < fp_view_size(view));
 				return {fp_view_data(char, view) + start, length};
 			}
@@ -86,19 +89,34 @@ namespace doir {
 		};
 
 		struct entity_reference {
-			ecs::Entity entity = doir::ecs::invalid_entity;
+			ecs::Entity entity = ecs::invalid_entity;
 			struct lexeme lexeme;
+
+			ecs::Entity resolve(TrivialModule& module) {
+				assert(looked_up());
+				auto chain = entity;
+				while(chain.has_component<entity_reference>(module)) {
+					auto ref = chain.get_component<entity_reference>(module);
+					if(!ref.looked_up()) return ecs::invalid_entity;
+					chain = ref.entity;
+				}
+				return chain;
+			}
+			bool looked_up() { return entity != ecs::invalid_entity; }
+			bool resolved_looked_up(TrivialModule& module) { return resolve(module) != ecs::invalid_entity; }
 		};
 
 		struct children {
 			size_t immediate, total;
+
+			ecs::entity_t reverse_iteration_start(ecs::entity_t us) { return us + total + 1; }
 		};
 
 		struct array_entry {
-			ecs::Entity next, previous;
+			ecs::Entity next = ecs::invalid_entity, previous = ecs::invalid_entity;
 
 			template <std::derived_from<array_entry> Tparent = array_entry>
-			void set_next(ecs::TrivialModule& module, ecs::Entity next, std::optional<ecs::Entity> self_ = {}) {
+			void set_next(ecs::TrivialModule& module, ecs::entity_t next, std::optional<ecs::Entity> self_ = {}) {
 				array_entry& next_entry = module.get_or_add_component<Tparent>(next);
 				auto self = self_.has_value() ? *self_ : module.get_or_add_component<Tparent>(this->previous).next; // NOTE: The else case in this expression will likely fail when the then case should be taken, thus value_or can't be used!
 
@@ -106,7 +124,7 @@ namespace doir {
 				this->next = next;
 			}
 
-			static void swap_entities(array_entry& e, ecs::TrivialModule& module, ecs::Entity eA, ecs::Entity eB) {
+			static void swap_entities(array_entry& e, ecs::TrivialModule& module, ecs::entity_t eA, ecs::entity_t eB) {
 				if(e.next == eA) e.next = eB;
 				else if(e.next == eB) e.next = eA;
 				if(e.previous == eA) e.previous = eB;
@@ -123,7 +141,7 @@ namespace doir {
 				using pointer = value_type*;
 				using reference = value_type&;
 
-				ecs::entity_t current, previous;
+				ecs::entity_t current, previous = ecs::invalid_entity;
 				ecs::TrivialModule* module;
 
 				reference operator*() const requires(lookup_on_dereference) { assert(current && module); return module->get_component<T>(current); }
@@ -133,22 +151,22 @@ namespace doir {
 				value_type operator->() const requires(!lookup_on_dereference) { assert(current); return current; }
 
 				// Prefix increment
-				iterator& operator++() { assert(current && module); previous = current; current = module->get_component<Tparent>(current).next; return *this; }  
+				iterator& operator++() { assert(current && module); previous = current; current = module->get_component<Tparent>(current).next; return *this; }
 				// Postfix increment
 				iterator operator++(int) { iterator tmp = *this; ++(*this); return tmp; }
-				
+
 				// Prefix decrement
-				iterator& operator--() { 
-					assert(module); 
-					if(previous) current = previous;  
+				iterator& operator--() {
+					assert(module);
+					if(previous) current = previous;
 					else if(current) current = module->get_component<Tparent>(current).previous;
 					else assert(false);
-					
+
 					if(current) previous = module->get_component<Tparent>(current).previous;
 					else previous = ecs::invalid_entity;
 
-					return *this; 
-				}  
+					return *this;
+				}
 				// Postfix decrement
 				iterator operator--(int) { iterator tmp = *this; --(*this); return tmp; }
 
@@ -172,6 +190,56 @@ namespace doir {
 			}
 		};
 
+		template<std::derived_from<array_entry> T>
+		struct array {
+			T children = {ecs::invalid_entity}; ecs::Entity children_end = ecs::invalid_entity;
+
+			ecs::Entity front() { return children.next; }
+			ecs::Entity back() { return children_end; }
+
+			template<typename Tret = ecs::Entity>
+			T::template iterate_impl<Tret, T> iterate(ecs::TrivialModule& module) {
+				return {children, module};
+			}
+
+			void push_back(TrivialModule& module, ecs::entity_t child) {
+				if(children_end == ecs::invalid_entity)
+					children.template set_next<T>(module, child, ecs::invalid_entity);
+				else
+					module.get_component<T>(children_end).template set_next<T>(module, child, children_end);
+				children_end = child;
+			}
+
+			void push_front(TrivialModule& module, ecs::entity_t child) {
+				auto old = children.next;
+				children.template set_next<T>(module, child, ecs::invalid_entity);
+				module.get_component<T>(child).set_next(module, old);
+			}
+
+			void pop_back(TrivialModule& module) {
+				auto& back = module.get_component<T>(children_end);
+				auto& second_back = module.get_component<T>(back.previous);
+
+				second_back.next = ecs::invalid_entity;
+				children_end = back.previous;
+			}
+
+			size_t size(TrivialModule& module) {
+				size_t count = 0;
+				for(auto _: children.iterate(module))
+					++count;
+				return count;
+			}
+
+			ecs::Entity access(TrivialModule& module, size_t i) {
+				size_t count = 0;
+				for(auto e: children.iterate(module))
+					if(count == i)
+						return e;
+					else ++count;
+				return ecs::invalid_entity;
+			}
+		};
 	}
 	namespace comp = component;
 }

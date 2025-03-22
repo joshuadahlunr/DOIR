@@ -24,9 +24,9 @@ namespace doir::Lox {
 				end(res << indent << module.get_component<double>(root));
 			else end(res << indent << "null");
 		} else if(module.has_component<variable>(root)) {
-			auto ref = module.get_component<variable>(root).ref;
-			auto lexeme = module.get_component<doir::comp::lexeme>(root).view(module.buffer);
-			end(res << indent << "var:" << lexeme << " -> " << ref.entity);
+			auto& ref = module.get_component<entity_reference>(root);
+			auto target = ref.looked_up() ? fp::builder::string{} << ref.entity : "???";
+			end(res << indent << "var:" << ref.lexeme.view(module.buffer) << " -> " << target);
 		} else if(module.has_component<not_>(root)) {
 			auto& op = module.get_component<operation>(root);
 			end(res << indent << "! [not]");
@@ -138,7 +138,9 @@ namespace doir::Lox {
 			res << indent << "}" << "\n";
 		} else if(module.has_component<assign>(root)){
 			auto& op = module.get_component<operation>(root);
-			end(res << indent << "assign:" << op.a << " =");
+			end(res << indent << "assign:");
+			res << dump(module, op.a, depth + 1);
+			res << indent << "=" << "\n";
 			res << dump(module, op.b, depth + 1);
 		} else if(module.has_component<call>(root)){
 			auto& call = module.get_component<struct call>(root);
@@ -153,6 +155,9 @@ namespace doir::Lox {
 			for(auto e: block.children.iterate(module))
 				res << dump(module, e, depth + 1);
 			res << indent << "}" << "\n";
+		} else if(module.has_component<body_marker>(root)) {
+			auto& marker = module.get_component<body_marker>(root);
+			end(res << indent << "skip while iterating -> " << marker.skipTo);
 		} else
 			end(res << "<Unknown Component>");
 		return res.release();

@@ -31,14 +31,20 @@ varDecl: VAR IDENTIFIER varDeclTail {
 	$$ = $2;
 	auto& lexeme2 = $$.get_component<doir::comp::lexeme>();
 	get_key_and_mark_occupied($$.add_component<Module::HashtableComponent<variable_declare>>()) = {lexeme2, blocks.back()};
-	current_block().add_child(*module, $$);
+	$$.add_component<interpreter::skippable>();
+	current_block().push_back_child(*module, $$);
 
 	if($3) {
+		auto lookup = ecs::Entity::create(*module);
+		lookup.add_component<doir::comp::lexeme>() = lexeme2;
+		lookup.add_component<variable>();
+		lookup.add_component<doir::entity_reference>().lexeme = lexeme2;
+
 		auto assignment = ecs::Entity::create(*module);
 		assignment.add_component<doir::comp::lexeme>() = lexeme2 + $3.get_component<doir::comp::lexeme>();
 		assignment.add_component<assign>();
-		assignment.add_component<operation>() = {$2, $3};
-		current_block().add_child(*module, assignment);
+		assignment.add_component<operation>() = {lookup, $3};
+		current_block().push_back_child(*module, assignment);
 	}
 };
 varDeclTail: '=' expression ';' { $$ = $2; } | ';' { $$ = 0; };
@@ -51,7 +57,7 @@ statement: exprStmt
 | whileStmt
 | block;
 
-exprStmt: expression ';' { $$ = $1; current_block().add_child(*module, $$); };
+exprStmt: expression ';' { $$ = $1; current_block().push_back_child(*module, $$); };
 
 forStmt: FOR '(' forStmtContentFirst forStmtContent forStmtContentLast ')' statement {
 	current_block().pop_back_child(*module);
@@ -63,15 +69,16 @@ forStmt: FOR '(' forStmtContentFirst forStmtContent forStmtContentLast ')' state
 	// if($$ != $$) $$.add_component<doir::comp::lexeme>() = lexeme;
 	$$.add_component<while_>();
 	$$.add_component<operation>() = {$4, $7};
-	current_block().add_child(*module, $$);
+	current_block().push_back_child(*module, $$);
 	if($5) {
 		auto innerBlock = ecs::Entity::create(*module);
 		$$.get_component<operation>().b = innerBlock;
 		innerBlock.add_component<doir::comp::lexeme>() = $5.get_component<doir::comp::lexeme>() + $7.get_component<doir::comp::lexeme>();
 		auto& block = innerBlock.add_component<struct block>();
-		block.add_child(*module, $7);
-		block.add_child(*module, $5);
-	}
+		block.push_back_child(*module, $7);
+		block.push_back_child(*module, $5);
+		add_body_marker(innerBlock, $$);
+	} else add_body_marker($$);
 };
 forStmtContentFirst: varDecl { $$ = $1; } | exprStmt { $$ = $1; } | ';' { $$ = 0; };
 forStmtContent: exprStmt { $$ = $1; current_block().pop_back_child(*module); } | ';' { $$ = 0; };
@@ -83,7 +90,8 @@ ifStmt: IF '(' expression ')' statement { current_block().pop_back_child(*module
 	if($7) lexeme = lexeme + $7.get_component<doir::comp::lexeme>();
 	$$.add_component<if_>();
 	$$.add_component<operation>() = {$3, $5, $7};
-	current_block().add_child(*module, $$);
+	current_block().push_back_child(*module, $$);
+	add_body_marker($$);
 };
 ifStmtTail: ELSE statement { $$ = $2; current_block().pop_back_child(*module); } | { $$ = 0; };
 
@@ -92,45 +100,58 @@ printStmt: PRINT expression ';' {
 	$$.add_component<doir::comp::lexeme>() = $2.get_component<doir::comp::lexeme>();
 	$$.add_component<print>();
 	$$.add_component<operation>() = {$2};
-	current_block().add_child(*module, $$);
+	current_block().push_back_child(*module, $$);
 };
 returnStmt: RETURN expression ';' {
 	$$ = ecs::Entity::create(*module);
 	$$.add_component<doir::comp::lexeme>() = $2.get_component<doir::comp::lexeme>();
 	$$.add_component<return_>();
 	$$.add_component<operation>() = {$2};
-	current_block().add_child(*module, $$);
+	current_block().push_back_child(*module, $$);
 } | RETURN ';' {
 	$$ = ecs::Entity::create(*module);
 	$$.add_component<doir::comp::lexeme>() = $2.get_component<doir::comp::lexeme>();
 	$$.add_component<return_>();
-	current_block().add_child(*module, $$);
+	current_block().push_back_child(*module, $$);
 };
 whileStmt: WHILE '(' expression ')' statement {
 	current_block().pop_back_child(*module);
+	auto& lexeme5 = $5.get_component<doir::comp::lexeme>();
 	$$ = ecs::Entity::create(*module);
-	$$.add_component<doir::comp::lexeme>() = $3.get_component<doir::comp::lexeme>() + $5.get_component<doir::comp::lexeme>();
+	$$.add_component<doir::comp::lexeme>() = $3.get_component<doir::comp::lexeme>() + lexeme5;
 	$$.add_component<while_>();
+	if($5.has_component<block>())
+		add_body_marker($5);
+	else {
+		auto blockE = ecs::Entity::create(*module);
+		blockE.add_component<doir::comp::lexeme>() = lexeme5;
+		auto& block = blockE.add_component<struct block>();
+		add_body_marker(blockE);
+		block.push_back_child(*module, $5);
+		$5 = blockE;
+	}
 	$$.add_component<operation>() = {$3, $5};
-	current_block().add_child(*module, $$);
+	current_block().push_back_child(*module, $$);
 };
 block: '{' {
 	auto dbg = $$ = ecs::Entity::create(*module);
 	$$.add_component<doir::comp::lexeme>() = {location, 1};
 	$$.add_component<block>();
+	$$.add_component<interpreter::skippable>();
 	blocks.push_back($$);
 } declarationList '}' { $$ = blocks.pop_back(); }
 | '{' '}' {
 	auto dbg = $$ = ecs::Entity::create(*module);
 	$$.add_component<doir::comp::lexeme>() = {location - 1, 1};
 	$$.add_component<block>();
+	$$.add_component<interpreter::skippable>();
 };
 declarationList: declaration | declaration declarationList;
 
 expression: assignment { $$ = $1; };
 
 assignment: call '.' { yyerror("Classes not supported!"); YYERROR; } IDENTIFIER '=' assignment
-| IDENTIFIER '=' assignment {
+| identifier '=' assignment {
 	$$ = ecs::Entity::create(*module);
 	$$.add_component<doir::comp::lexeme>() = $1.get_component<doir::comp::lexeme>() + $3.get_component<doir::comp::lexeme>();
 	$$.add_component<assign>();
@@ -399,7 +420,7 @@ callTail: '(' ')' callTail {
 	$$ = ecs::Entity::create(*module);
 	auto& call = $$.add_component<struct call>() = {block{.parent = 0}};
 	while(objects.size() > end_size)
-		call.add_child(*module, objects.pop_back());
+		call.push_back_child(*module, objects.pop_back());
 	// call.finalize_list(*module);
 	$$.add_component<doir::comp::lexeme>() = call.children.next.get_component<doir::comp::lexeme>() 
 		+ call.children_end.get_component<doir::comp::lexeme>();
@@ -420,11 +441,15 @@ primary: True { $$ = $1; }
 | THIS { yyerror("Classes (this) not supported!"); YYERROR; }
 | NUMBER { $$ = $1; }
 | STRING { $$ = $1; }
-| IDENTIFIER {
-	$1.add_component<variable>();
-	$$ = $1;
-} | '(' expression ')' { $$ = $2; }
+| identifier { $$ = $1; } 
+| '(' expression ')' { $$ = $2; }
 | SUPER { yyerror("Classes (super) not supported!"); YYERROR; } '.' IDENTIFIER;
+
+identifier: IDENTIFIER {
+	$$ = $1;
+	$$.add_component<variable>();
+	$$.add_component<doir::entity_reference>().lexeme = $$.get_component<doir::lexeme>();
+};
 
 function: IDENTIFIER '(' ')' block {
 	auto dbg = $$ = $4;
@@ -432,7 +457,9 @@ function: IDENTIFIER '(' ')' block {
 		= {declare{.name = $1.get_component<doir::comp::lexeme>(), .parent = blocks.back()}};
 	auto& lexeme = $$.get_component<doir::comp::lexeme>();
 	lexeme = decl.name + lexeme;
-	current_block().add_child(*module, $$);
+	$$.add_component<interpreter::skippable>();
+	current_block().push_back_child(*module, $$);
+	add_body_marker($$);
 } | IDENTIFIER '(' {module->add_component<parameters>($1); objects.push_back($1);} parameters ')' block {
 	auto dbg = $$ = $6;
 	auto& decl = get_key_and_mark_occupied($$.add_component<Module::HashtableComponent<function_declare>>())
@@ -442,13 +469,16 @@ function: IDENTIFIER '(' ')' block {
 	auto& oldParams = $1.get_component<parameters>();
 	$$.add_component<parameters>() = oldParams;
 	oldParams.params = {ecs::invalid_entity}; oldParams.parameters_end = ecs::invalid_entity;
-	current_block().add_child(*module, $$);
+	$$.add_component<interpreter::skippable>();
+	current_block().push_back_child(*module, $$);
+	add_body_marker($$);
 };
 parameters: IDENTIFIER {
 	auto func = objects.back();
 	get_key_and_mark_occupied($1.add_component<Module::HashtableComponent<parameter_declare>>())
 		= {declare{.name = $1.get_component<doir::comp::lexeme>(), .parent = func}};
 	auto& params = func.get_component<parameters>();
+	$$.add_component<interpreter::skippable>();
 	params.add_parameter(*module, $1);
 } parametersTail;
 parametersTail: ',' IDENTIFIER {
@@ -457,6 +487,7 @@ parametersTail: ',' IDENTIFIER {
 		= {declare{.name = $2.get_component<doir::comp::lexeme>(), .parent = func}};
 	auto& params = func.get_component<parameters>();
 	params.add_parameter(*module, $2);
+	$$.add_component<interpreter::skippable>();
 } parametersTail | { $$ = 0; };
 
 arguments: expression argumentsTail { objects.push_back($1); };

@@ -14,6 +14,9 @@ namespace doir::ecs {
 		static void set_current_module(TrivialModule& module) noexcept {
 			current_module = &module;
 		}
+		static const TrivialModule* get_current_module() noexcept {
+			return current_module;
+		}
 
 		entity_t entity = invalid_entity;
 		operator entity_t() const { return entity; }
