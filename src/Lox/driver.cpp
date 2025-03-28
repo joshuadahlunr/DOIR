@@ -23,7 +23,9 @@ int main() {
 		// valid = valid & doir::Lox::verify_call_arrities(module);
 		if(!valid) continue;
 		
-		nowide::cout << doir::Lox::dump(module, root) << std::endl;
+		doir::Lox::build_3ac(module);
+		nowide::cout << doir::Lox::dump_3ac(module) << std::endl;
+		nowide::cout << doir::Lox::dump(module) << std::endl;
 		doir::Lox::interpret(module);
 	}
 }

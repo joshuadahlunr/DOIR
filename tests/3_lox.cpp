@@ -10,7 +10,53 @@ TEST_SUITE("calculator") {
 			DOIR_ZONE_SCOPED_NAMED("doir::Lox::HelloWorld");
 			auto [module, root] = doir::Lox::parse("print \"Hello World\";");
 			CHECK(root == 1);
+			doir::TrivialModule::set_current_module(module);
+			doir::Lox::calculate_child_count(module, root, true);
 			doir::Lox::sort_parse_into_reverse_post_order_traversal(module, root);
+			doir::Lox::lookup_references(module);
+
+			auto valid = doir::Lox::verify_references(module);
+			valid = valid & doir::Lox::verify_redeclarations(module);
+			// valid = valid & doir::Lox::verify_call_arrities(module);
+			CHECK(valid);
+#ifdef DOIR_ENABLE_BENCHMARKING
+		});
+#endif
+		DOIR_FRAME_MARK;
+	}
+
+	TEST_CASE("doir::Lox::3AC") {
+		#ifdef DOIR_ENABLE_BENCHMARKING
+				ankerl::nanobench::Bench().run("doir::Lox::3AC", []{
+		#endif
+					DOIR_ZONE_SCOPED_NAMED("doir::Lox::3AC");
+					// From: https://github.com/munificent/craftinginterpreters/blob/master/test/benchmark/equality.lox
+					auto [module, root] = doir::Lox::parse(R"(
+var x = 5; var y = 6; var z = 7;
+print x + y * z / (z - y);
+					)");
+					CHECK(root == 1);
+					doir::TrivialModule::set_current_module(module);
+					doir::Lox::calculate_child_count(module, root, true);
+					doir::Lox::sort_parse_into_reverse_post_order_traversal(module, root);
+					doir::Lox::lookup_references(module);
+
+					auto valid = doir::Lox::verify_references(module);
+					valid = valid & doir::Lox::verify_redeclarations(module);
+					// valid = valid & doir::Lox::verify_call_arrities(module);
+					CHECK(valid);
+					
+					doir::Lox::build_3ac(module);
+					CHECK(fp::raii::string{doir::Lox::dump_3ac(module)} ==
+R"(23 ← 5 immediate
+19 ← 6 immediate
+15 ← 7 immediate
+10 ← 15 - 19
+7 ← 19 * 15
+6 ← 7 / 10
+4 ← 23 + 6
+)");
+			
 #ifdef DOIR_ENABLE_BENCHMARKING
 		});
 #endif
@@ -52,7 +98,15 @@ while (i < 10000000) {
 }
 			)");
 			CHECK(root == 1);
+			doir::TrivialModule::set_current_module(module);
+			doir::Lox::calculate_child_count(module, root, true);
 			doir::Lox::sort_parse_into_reverse_post_order_traversal(module, root);
+			doir::Lox::lookup_references(module);
+
+			auto valid = doir::Lox::verify_references(module);
+			valid = valid & doir::Lox::verify_redeclarations(module);
+			// valid = valid & doir::Lox::verify_call_arrities(module);
+			CHECK(valid);
 #ifdef DOIR_ENABLE_BENCHMARKING
 		});
 #endif
@@ -94,12 +148,21 @@ while (i < 10000000) {
 }
 			)");
 			CHECK(root == 1);
+			doir::TrivialModule::set_current_module(module);
+			doir::Lox::calculate_child_count(module, root, true);
 			doir::Lox::sort_parse_into_reverse_post_order_traversal(module, root);
+			doir::Lox::lookup_references(module);
 
+			auto valid = doir::Lox::verify_references(module);
+			valid = valid & doir::Lox::verify_redeclarations(module);
+			// valid = valid & doir::Lox::verify_call_arrities(module);
+			CHECK(valid);
+
+			doir::Lox::build_3ac(module);
 			auto binary = doir::Lox::to_binary(module, root);
 			{
 				auto [serialized_module, serialized_root] = doir::Lox::from_binary(binary);
-				CHECK(fp_string_equal(doir::Lox::dump(serialized_module, serialized_root), doir::Lox::dump(module, root)));
+				CHECK(fp::raii::string{doir::Lox::dump(serialized_module, serialized_root)} == fp::raii::string{doir::Lox::dump(module, root)});
 			}
 #ifdef DOIR_ENABLE_BENCHMARKING
 		});

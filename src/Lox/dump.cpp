@@ -4,25 +4,39 @@
 #include <fp/string.hpp>
 
 namespace doir::Lox {
-	fp_string dump(TrivialModule& module, ecs::entity_t root, size_t depth /* = 0 */) {
+	fp_string dump_literal(TrivialModule& module, ecs::entity_t root) {
+		assert(module.has_component<literal>(root));
+		fp::builder::string res = nullptr;
+		if(module.has_component<bool>(root))
+			res << (module.get_component<bool>(root) ? "true" : "false");
+		else if(module.has_component<string>(root)) {
+			auto lexeme = module.get_component<doir::comp::lexeme>(root).view(module.buffer);
+			res << lexeme;
+		} else if(module.has_component<double>(root))
+			res << module.get_component<double>(root);
+		else res << "null";
+		return res.release();
+	}
+
+	fp_string dump(TrivialModule& module, ecs::entity_t root /* = 1*/, size_t depth /* = 0 */) {
 		fp::raii::string indent = fp::raii::string{"\t"}.replicate(depth);
 		// std::string indent(depth, '\t');
 		auto end = [&](fp::builder::string& s) {
 			if(module.has_component<doir::comp::children>(root)) {
-				auto children = module.get_component<doir::comp::children>(root);
-				s << " (" << root << " ↓" << children.total << ")" << "\n";
-			} else s << " (" << root << ")" << "\n";
+				auto& children = module.get_component<doir::comp::children>(root);
+				s << " (" << root << " ↓" << children.total << ")";
+			} else s << " (" << root << ")";
+
+			if(module.has_component<addresses>(root)) {
+				auto& addresses = module.get_component<struct addresses>(root);
+				s << " [" << addresses.res << ", " << addresses.a << ", " << addresses.b << "]";
+			}
+			s << "\n";
 		};
 		fp::builder::string res = nullptr;
 		if(module.has_component<literal>(root)) {
-			if(module.has_component<bool>(root))
-				end(res << indent << (module.get_component<bool>(root) ? "true" : "false"));
-			else if(module.has_component<string>(root)) {
-				auto lexeme = module.get_component<doir::comp::lexeme>(root).view(module.buffer);
-				end(res << indent << lexeme);
-			} else if(module.has_component<double>(root))
-				end(res << indent << module.get_component<double>(root));
-			else end(res << indent << "null");
+			fp::raii::string lit = dump_literal(module, root);
+			end(res << indent << lit);
 		} else if(module.has_component<variable>(root)) {
 			auto& ref = module.get_component<entity_reference>(root);
 			auto target = ref.looked_up() ? fp::builder::string{} << ref.entity : "???";

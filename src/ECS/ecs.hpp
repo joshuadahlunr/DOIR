@@ -1,6 +1,7 @@
 #pragma once
 
 #include "component_id.hpp"
+#include "fp/pointer.h"
 
 #include <fp/dynarray.h>
 
@@ -279,15 +280,19 @@ namespace doir::ecs {
 		template<typename T, size_t Unique = 0>
 		inline const Storage& get_storage() const noexcept { DOIR_ZONE_SCOPED_AGGRO; return get_storage(get_global_component_id<T, Unique>(), sizeof(T)); }
 
-		bool release_storage(size_t componentID) noexcept {
+		bool release_storage(size_t componentID, bool update_entities = true) noexcept {
 			DOIR_ZONE_SCOPED_AGGRO;
 			if(fpda_size(storages) <= componentID) return false;
 			if(storages[componentID].element_size == Storage::invalid) return false;
 			storages[componentID] = Storage();
+
+			if(update_entities) fp_iterate_named(entity_component_indices, e)
+				if(fpda_size(*e) > componentID)
+					(*e)[componentID] = Storage::invalid;
 			return true;
 		}
 		template<typename T, size_t Unique = 0>
-		inline bool release_storage() noexcept { DOIR_ZONE_SCOPED_AGGRO; return release_storage(get_global_component_id<T, Unique>()); }
+		inline bool release_storage(bool update_entities = true) noexcept { DOIR_ZONE_SCOPED_AGGRO; return release_storage(get_global_component_id<T, Unique>(), update_entities); }
 
 		entity_t create_entity() noexcept {
 			DOIR_ZONE_SCOPED_AGGRO;

@@ -5,6 +5,7 @@
 #include <cassert>
 #include <concepts>
 #include <ranges>
+#define FP_OSTREAM_SUPPORT
 #include <fp/string.hpp>
 
 #ifdef __cplusplus

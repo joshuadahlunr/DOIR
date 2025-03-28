@@ -62,7 +62,7 @@ namespace doir::Lox {
 			if(byte_size > 0) memcpy(out.raw + offset, storage.raw, byte_size); offset += byte_size;
 		}
 
-		return out;
+		return out.data();
 	}
 
 	std::pair<TrivialModule, ecs::entity_t> from_binary(fp_dynarray(std::byte) binary) {
@@ -77,7 +77,7 @@ namespace doir::Lox {
 
 		// Load entity count
 		size_t entity_count = *(uint64_t*)(binary + offset); assert_with_side_effects((offset += sizeof(uint64_t)) <= binary_size);
-		module.entity_component_indices = fp::dynarray<size_t*>{module.entity_component_indices}.resize(entity_count).fill(nullptr);
+		module.entity_component_indices = fp::dynarray<size_t*>{module.entity_component_indices}.resize(entity_count).fill(nullptr).data();
 		// Load entity component count and indicies
 		auto entities = (fp::pointer<fp::dynarray<size_t>>&)module.entity_component_indices;
 		for(auto& entity: entities) {
@@ -92,14 +92,14 @@ namespace doir::Lox {
 
 		// Load storage count
 		size_t storage_count = *(uint64_t*)(binary + offset); assert_with_side_effects((offset += sizeof(uint64_t)) <= binary_size);
-		module.storages = fp::dynarray<ecs::Storage>{module.storages}.resize(storage_count);
+		module.storages = fp::dynarray<ecs::Storage>{module.storages}.resize(storage_count).data();
 		// Load each storage's size, element_size, and data
 		auto storages = fp::pointer<ecs::Storage>{module.storages};
 		for(auto& storage: storages) {
 			storage.element_size = *(uint64_t*)(binary + offset); assert_with_side_effects((offset += sizeof(uint64_t)) <= binary_size);
 			size_t byte_size = *(uint64_t*)(binary + offset); assert_with_side_effects((offset += sizeof(uint64_t)) <= binary_size);
 			if(storage.element_size != ecs::Storage::invalid) {
-				storage.raw = fp::dynarray<uint8_t>{}.grow_to_size(byte_size);
+				storage.raw = fp::dynarray<uint8_t>{}.grow_to_size(byte_size).data();
 				memcpy(storage.raw, binary + offset, byte_size); assert_with_side_effects((offset += byte_size) <= binary_size);
 			}
 		}

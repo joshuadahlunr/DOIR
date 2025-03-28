@@ -170,13 +170,25 @@ namespace doir::Lox {
 		struct return_ {};
 		struct while_ {};
 		struct if_ {};
+
+		struct addresses { 
+			ecs::Entity res, a, b; 
+			static void swap_entities(addresses& tac, ecs::TrivialModule& module, ecs::entity_t eA, ecs::entity_t eB) {
+				if(tac.res == eA) tac.res = eB;
+				else if(tac.res == eB) tac.res = eA;
+				if(tac.a == eA) tac.a = eB;
+				else if(tac.a == eB) tac.a = eA;
+				if(tac.b == eA) tac.b = eB;
+				else if(tac.b == eB) tac.b = eA;
+			}
+		};
 	}
 	namespace comp = component;
 
 	std::pair<TrivialModule, ecs::entity_t> parse_view(const fp_string_view view);
 	std::pair<TrivialModule, ecs::entity_t> parse(const fp_string string);
 
-	fp_string dump(TrivialModule& module, ecs::entity_t root, size_t depth = 0);
+	fp_string dump(TrivialModule& module, ecs::entity_t root = 1, size_t depth = 0);
 
 	void sort_parse_into_reverse_post_order_traversal(TrivialModule& module, ecs::entity_t root);
 	size_t calculate_child_count(TrivialModule& module, ecs::entity_t root = 1, bool annotate = false);
@@ -185,6 +197,9 @@ namespace doir::Lox {
 	bool verify_references(TrivialModule& module);
 	bool verify_redeclarations(TrivialModule& module);
 	bool verify_call_arrities(TrivialModule& module);
+	
+	void build_3ac(TrivialModule& module);
+	fp_string dump_3ac(TrivialModule& module);
 
 	bool interpret(TrivialModule& module);
 

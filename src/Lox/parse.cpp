@@ -26,7 +26,7 @@ namespace doir::Lox {
 	doir::comp::lexeme& append_lexeme_to_buffer(TrivialModule& module, ecs::Entity e, const char* string) {
 		auto& lexeme = e.get_or_add_component<doir::comp::lexeme>();
 		lexeme.start = fp::string{module.buffer}.size();
-		module.buffer = fp::string{module.buffer} += "clock";
+		module.buffer = (fp::string{module.buffer} += "clock").data();
 		lexeme.length = fp::string{module.buffer}.size() - lexeme.start;
 		return lexeme;
 	}

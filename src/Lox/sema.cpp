@@ -201,6 +201,7 @@ namespace doir::Lox {
 			auto& ref = e.get_component<doir::entity_reference>(module);
 			if(ref.looked_up()) continue;
 
+			// Try to find a matching function
 			auto block = current_block(module, e);
 			auto res = blockwise_find<function_declare>(module, {ref.lexeme, block}, hasFunctions);
 			size_t distance = 0;
@@ -213,10 +214,11 @@ namespace doir::Lox {
 			}
 			if(res) ref.entity = *res;
 			else distance = std::numeric_limits<size_t>::max();
-			size_t min_distance = std::exchange(distance, 0);
+			size_t function_distance = std::exchange(distance, 0);
 
+			// Then try to find a matching variable in a closer block
 			block = current_block(module, e);
-			res = blockwise_find<variable_declare>(module, {ref.lexeme, block}, hasFunctions);
+			res = blockwise_find<variable_declare>(module, {ref.lexeme, block}, hasVariables);
 			while(!res || *res < e) { // Variable declared after... so we need to search in a higher block!
 				auto next = current_block(module, block);
 				if(next == block) break;
@@ -224,7 +226,7 @@ namespace doir::Lox {
 				++distance;
 				res = blockwise_find<variable_declare>(module, {ref.lexeme, block}, hasVariables);
 			}
-			if(res && distance < min_distance)
+			if(res && distance < function_distance)
 				ref.entity = *res;
 		}
 	}
