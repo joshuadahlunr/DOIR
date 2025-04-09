@@ -11,7 +11,7 @@
 namespace doir {
 	template<typename T>
 	struct ModuleCRTP {
-		fp_string buffer = nullptr;
+		fp::string buffer = nullptr;
 
 		T& underlying() { return *static_cast<T*>(this); }
 
@@ -33,9 +33,9 @@ namespace doir {
 		using HashtableComponent = ecs::hashtable::component_wrapper<Th, void>;
 
 		static void set_current_module(T& module) { ecs::Entity::set_current_module(module); }
-		static fp_string get_current_buffer() { 
+		static fp_string get_current_buffer() {
 			auto dbg = (T*)ecs::Entity::get_current_module();
-			return dbg->buffer; 
+			return dbg->buffer;
 		}
 	};
 

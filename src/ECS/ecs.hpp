@@ -466,13 +466,13 @@ namespace doir::ecs {
 					std::swap(swaps[swaps[i]], swaps[i]);\
 				}
 		void reorder_entities(fp_view(size_t) order) {
-            DOIR_ECS_REORDER_ENTITIES_COMMON(order, swap_entities(swaps[i], i));
-        }
+			DOIR_ECS_REORDER_ENTITIES_COMMON(order, swap_entities(swaps[i], i));
+		}
 		template<typename... Tcomponents2notify>
 		void reorder_entities(fp_view(size_t) order) {
-            DOIR_ECS_REORDER_ENTITIES_COMMON(order, swap_entities<Tcomponents2notify...>(swaps[i], i));
+			DOIR_ECS_REORDER_ENTITIES_COMMON(order, swap_entities<Tcomponents2notify...>(swaps[i], i));
 			// auto& _order = order;
-			
+
 			// assert(fp_view_size(_order) == entity_count()); /* Require order to have an entry for every element in the array */
 			// auto swaps = fp_alloca(size_t, size);
 			// /* Transpose the order (it now stores what needs to be swapped with what) */
@@ -484,7 +484,7 @@ namespace doir::ecs {
 			// 		swap_entities<Tcomponents2notify...>(swaps[i], i);
 			// 		std::swap(swaps[swaps[i]], swaps[i]);
 			// 	}
-        }
+		}
 
 	protected:
 		template<typename Tcomponent>

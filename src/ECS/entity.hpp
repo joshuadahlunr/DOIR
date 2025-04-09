@@ -1,4 +1,4 @@
-#pragma once 
+#pragma once
 
 #include "ecs.hpp"
 #include <compare>
@@ -9,7 +9,7 @@ namespace doir::ecs {
 	struct Entity {
 	protected:
 		thread_local static TrivialModule* current_module;
-	
+
 	public:
 		static void set_current_module(TrivialModule& module) noexcept {
 			current_module = &module;
@@ -23,10 +23,10 @@ namespace doir::ecs {
 
 		Entity() : entity(invalid_entity) {}
 		Entity(entity_t e) : entity(e) {}
-		Entity(const Entity&) = default; 
-		Entity(Entity&&) = default; 
-		Entity& operator=(const Entity&) = default; 
-		Entity& operator=(Entity&&) = default; 
+		Entity(const Entity&) = default;
+		Entity(Entity&&) = default;
+		Entity& operator=(const Entity&) = default;
+		Entity& operator=(Entity&&) = default;
 		friend std::strong_ordering operator<=>(Entity a, Entity b) { return a.entity <=> b.entity; };
 		// bool operator==(Entity o) const { return entity == o.entity; }
 
@@ -61,7 +61,7 @@ namespace doir::ecs {
 
 		template<typename T, size_t Unique = 0>
 		inline T& add_component(TrivialModule& module) noexcept {
-			return module.add_component<T, Unique>(entity);	
+			return module.add_component<T, Unique>(entity);
 		}
 		template<typename T, size_t Unique = 0>
 		inline T& add_component() noexcept {
@@ -70,21 +70,21 @@ namespace doir::ecs {
 		}
 
 		inline bool remove_component(TrivialModule& module, size_t componentID) noexcept {
-			return module.remove_component(entity, componentID);	
+			return module.remove_component(entity, componentID);
 		}
 		inline bool remove_component(size_t componentID) noexcept {
 			assert(current_module != nullptr);
-			return remove_component(*current_module, componentID);	
+			return remove_component(*current_module, componentID);
 		}
 
 		template<typename T, size_t Unique = 0>
 		inline bool remove_component(TrivialModule& module) noexcept {
-			return module.remove_component<T, Unique>(entity);	
+			return module.remove_component<T, Unique>(entity);
 		}
 		template<typename T, size_t Unique = 0>
 		inline bool remove_component() noexcept {
 			assert(current_module != nullptr);
-			return remove_component<T, Unique>(*current_module);	
+			return remove_component<T, Unique>(*current_module);
 		}
 
 		inline void* get_component(TrivialModule& module, size_t componentID) noexcept {
@@ -127,7 +127,7 @@ namespace doir::ecs {
 			return module.has_component(entity, componentID);
 		}
 		inline bool has_component(size_t componentID) const noexcept {
-			assert(current_module != nullptr);	
+			assert(current_module != nullptr);
 			return has_component(*current_module, componentID);
 		}
 

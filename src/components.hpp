@@ -1,14 +1,12 @@
-#include "ECS/ecs.hpp"
-#include "ECS/entity.hpp"
-#include "module.hpp"
+#pragma once
 
-#include <cassert>
-#include <concepts>
-#include <ranges>
-#define FP_OSTREAM_SUPPORT
+#include "module.hpp"
 #include <fp/string.hpp>
 
 #ifdef __cplusplus
+	#include <cassert>
+	#include <concepts>
+	#include <ranges>
 	#include <algorithm>
 #endif
 
@@ -29,6 +27,14 @@ namespace doir {
 					} else ++out.column;
 				return out;
 			}
+
+			fp_string to_string() {
+				fp::string_view filename = {this->filename};
+				fp::builder::string out{nullptr};
+				out << (filename.raw().data == nullptr ? filename : fp::string_view::from_cstr(""))
+					<< ":" << line << ":" << column << "-" << column + 1;
+				return out.release();
+			}
 #endif
 		};
 		struct source_range {
@@ -38,7 +44,7 @@ namespace doir {
 
 #ifdef __cplusplus
 			static source_range calculate(fp_string_view view, size_t start, size_t end, fp_string_view filename = fp_string_view_null) {
-				assert(start < end);
+				assert(start <= end);
 				source_range out{.filename = filename};
 				for(size_t i = 0; i < end; ++i) {
 					if(fp_view_data(char, view)[i] == '\n') {
@@ -52,6 +58,17 @@ namespace doir {
 				}
 				return out;
 			}
+
+			fp_string to_string() {
+				fp::string_view filename = {this->filename};
+				fp::builder::string out{nullptr};
+				out << (filename.raw().data != nullptr ? filename : fp::string_view::from_cstr(""));
+				if(start_line == end_line)
+					out << ":" << start_line;
+				else out << ":" << start_line << "-" << end_line;
+				out << ":" << start_column << "-" << end_column;
+				return out.release();
+			}
 #endif
 		};
 
@@ -59,25 +76,29 @@ namespace doir {
 			size_t start, length;
 
 #ifdef __cplusplus
+			static lexeme from_view(TrivialModule& module, fp_string_view view) {
+				return {size_t(fp_view_data(char, view) - module.buffer.data()), fp_view_size(view)};
+			}
+
 			inline fp::string_view view(fp_string buffer) const {
 				return {buffer + start, length};
 			}
 			inline fp::string_view view(fp_string_view view) const {
-				assert(start + length < fp_view_size(view));
+				assert(start + length <= fp_view_size(view));
 				return {fp_view_data(char, view) + start, length};
 			}
 
 			inline source_location start_location(fp_string_view view, fp_string_view filename = fp_string_view_null) const {
-				assert(start + length < fp_view_size(view));
+				assert(start + length <= fp_view_size(view));
 				return source_location::calculate(view, start, filename);
 			}
 			inline source_location end_location(fp_string_view view, fp_string_view filename = fp_string_view_null) const {
-				assert(start + length < fp_view_size(view));
+				assert(start + length <= fp_view_size(view));
 				return source_location::calculate(view, start + length, filename);
 			}
 			inline struct source_range source_range(fp_string_view view, fp_string_view filename = fp_string_view_null) const {
-				assert(start + length < fp_view_size(view));
-				return source_range::calculate(view, start, start + length);
+				assert(start + length <= fp_view_size(view));
+				return source_range::calculate(view, start, start + length, filename);
 			}
 
 			inline lexeme merge(const lexeme o) const {

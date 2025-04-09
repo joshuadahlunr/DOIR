@@ -1,4 +1,5 @@
-#include <fp/string.h>
+#define FP_OSTREAM_SUPPORT
+#include <fp/string.hpp>
 
 namespace fnv {
 	constexpr uint64_t FNV_OFFSET_BASIS = 14695981039346656037u;
