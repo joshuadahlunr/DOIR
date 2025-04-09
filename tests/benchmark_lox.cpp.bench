@@ -1,0 +1,108 @@
+#define ANKERL_NANOBENCH_IMPLEMENT
+#define DOIR_IMPLEMENTATION
+#define FP_IMPLEMENTATION
+#include <nanobench.h>
+
+#include "../src/Lox/lox.hpp"
+
+int main() {
+	{
+		std::ofstream fout("3ac.ex.lox");
+		fout << R"(
+var x = 5; var y = 6; var z = 7;
+print x + y * z / (z - y);
+		)";
+		assert(fout.good());
+	}
+
+	ankerl::nanobench::Bench().minEpochIterations(1000).run("doir::Lox::3ACex", []{
+		std::ifstream fin("3ac.ex.lox");
+		assert(fin.good());
+		fin.seekg(0, std::ios::end);
+		auto s = fp::raii::string{nullptr}.resize(fin.tellg());
+		fin.seekg(0, std::ios::beg);
+		fin.read(s.data(), s.size());
+
+		auto [module, root] = doir::Lox::parse(s.raw);
+		assert(root == 1);
+		doir::TrivialModule::set_current_module(module);
+		doir::Lox::calculate_child_count(module, root, true);
+		doir::Lox::sort_parse_into_reverse_post_order_traversal(module, root);
+		doir::Lox::lookup_references(module);
+
+		auto valid = doir::Lox::verify_references(module);
+		valid = valid & doir::Lox::verify_redeclarations(module);
+		assert(valid);
+		
+		ankerl::nanobench::doNotOptimizeAway(doir::Lox::interpret(module));
+	});
+
+	ankerl::nanobench::Bench().minEpochIterations(100000).run("CLox::3ACex", []{
+		ankerl::nanobench::doNotOptimizeAway(system("./clox 3ac.ex.lox"));
+	});
+
+	ankerl::nanobench::Bench().minEpochIterations(1000).run("JLox::3ACex", []{
+		ankerl::nanobench::doNotOptimizeAway(system("java -jar jlox.jar 3ac.ex.lox"));
+	});
+
+	{
+		std::ofstream fout("equality.lox");
+		// From: https://github.com/munificent/craftinginterpreters/blob/master/test/benchmark/equality.lox
+		fout << R"(
+var i = 0;
+
+var loopStart = clock();
+
+while (i < 10000000) {
+	i = i + 1;
+
+	1; 1; 1; 2; 1; nil; 1; "str"; 1; true;
+	nil; nil; nil; 1; nil; "str"; nil; true;
+	true; true; true; 1; true; false; true; "str"; true; nil;
+	"str"; "str"; "str"; "stru"; "str"; 1; "str"; nil; "str"; true;
+}
+
+i = 0;
+i = 0;
+while (i < 10000000) {
+	i = i + 1;
+
+	1 == 1; 1 == 2; 1 == nil; 1 == "str"; 1 == true;
+	nil == nil; nil == 1; nil == "str"; nil == true;
+	true == true; true == 1; true == false; true == "str"; true == nil;
+	"str" == "str"; "str" == "stru"; "str" == 1; "str" == nil; "str" == true;
+}
+		)";
+		assert(fout.good());
+	}
+
+	ankerl::nanobench::Bench().minEpochIterations(10).run("doir::Lox::Equality", []{
+		std::ifstream fin("equality.lox");
+		assert(fin.good());
+		fin.seekg(0, std::ios::end);
+		auto s = fp::raii::string{nullptr}.resize(fin.tellg());
+		fin.seekg(0, std::ios::beg);
+		fin.read(s.data(), s.size());
+
+		auto [module, root] = doir::Lox::parse(s.raw);
+		assert(root == 1);
+		doir::TrivialModule::set_current_module(module);
+		doir::Lox::calculate_child_count(module, root, true);
+		doir::Lox::sort_parse_into_reverse_post_order_traversal(module, root);
+		doir::Lox::lookup_references(module);
+
+		auto valid = doir::Lox::verify_references(module);
+		valid = valid & doir::Lox::verify_redeclarations(module);
+		assert(valid);
+
+		ankerl::nanobench::doNotOptimizeAway(doir::Lox::interpret(module));
+	});
+
+	ankerl::nanobench::Bench().minEpochIterations(10).run("CLox::Equality", []{
+		ankerl::nanobench::doNotOptimizeAway(system("./clox equality.lox"));
+	});
+
+	ankerl::nanobench::Bench().minEpochIterations(10).run("JLox::Equality", []{
+		ankerl::nanobench::doNotOptimizeAway(system("java -jar jlox.jar equality.lox"));
+	});
+}
