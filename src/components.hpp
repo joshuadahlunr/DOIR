@@ -193,7 +193,7 @@ namespace doir {
 
 		template<std::derived_from<list_entry> T>
 		struct list {
-			T children = {ecs::invalid_entity}; ecs::Entity children_end = ecs::invalid_entity;
+			T children = {}; ecs::Entity children_end = ecs::invalid_entity;
 
 			ecs::Entity front() { return children.next; }
 			ecs::Entity back() { return children_end; }

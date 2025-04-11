@@ -93,38 +93,12 @@ namespace doir::Lox {
 		struct parameters_entry: public list_entry { auto iterate(ecs::TrivialModule& module) {
 			return iterate_impl<ecs::entity_t, parameters_entry>{*this, module};
 		}};
-		struct parameters {
-			parameters_entry params = {ecs::invalid_entity}; ecs::Entity parameters_end = ecs::invalid_entity;
-			// fp::dynarray<ecs::entity_t> parameters;
+		struct parameters : doir::list<parameters_entry> {
 			static void swap_entities(struct parameters& params, ecs::TrivialModule& module, ecs::entity_t eA, ecs::entity_t eB) {
-				if(params.params.next == eA) params.params.next = eB;
-				else if(params.params.next == eB) params.params.next = eA;
-				if(params.parameters_end == eA) params.parameters_end = eB;
-				else if(params.parameters_end == eB) params.parameters_end = eA;
-			}
-
-			void add_parameter(ecs::TrivialModule& module, ecs::entity_t param) {
-				if(parameters_end == ecs::invalid_entity)
-					params.set_next<parameters_entry>(module, param, ecs::invalid_entity);
-				else
-					parameters_end.get_component<parameters_entry>().set_next<parameters_entry>(module, param, parameters_end);
-				parameters_end = param;
-			}
-
-			size_t size(TrivialModule& module) {
-				size_t count = 0;
-				for(auto _: params.iterate(module))
-					++count;
-				return count;
-			}
-
-			ecs::Entity access(TrivialModule& module, size_t i) {
-				size_t count = 0;
-				for(auto e: params.iterate(module))
-					if(count == i)
-						return e;
-					else ++count;
-				return ecs::invalid_entity;
+				if(params.children.next == eA) params.children.next = eB;
+				else if(params.children.next == eB) params.children.next = eA;
+				if(params.children_end == eA) params.children_end = eB;
+				else if(params.children_end == eB) params.children_end = eA;
 			}
 		};
 		struct body_marker {

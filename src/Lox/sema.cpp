@@ -37,7 +37,7 @@ namespace doir::Lox {
 			}
 			if(module.has_component<parameters>(root)) {
 				auto& params = module.get_component<parameters>(root);
-				for(auto param: params.params.iterate(module).range() | std::views::reverse) {
+				for(auto param: params.iterate(module).range() | std::views::reverse) {
 					++immediate;
 					inChildren += calculate_child_count(module, param, annotate);
 				}
@@ -77,7 +77,7 @@ namespace doir::Lox {
 			for(auto child: block.children.iterate(module))
 				recurse(module, child, order, missing);
 			if(module.has_component<parameters>(root))
-				for(auto param: module.get_component<parameters>(root).params.iterate(module).range() | std::views::reverse)
+				for(auto param: module.get_component<parameters>(root).iterate(module).range() | std::views::reverse)
 					recurse(module, param, order, missing);
 		} else if(module.has_component<block>(root)) {
 			auto& block = module.get_component<struct block>(root);
@@ -152,9 +152,10 @@ namespace doir::Lox {
 	}
 	ecs::Entity current_function(TrivialModule& module, ecs::entity_t root) {
 		DOIR_ZONE_SCOPED_AGGRO;
+		if(module.has_component<Module::HashtableComponent<function_declare>>(root)) return root;
 		ecs::entity_t target = root;
 		do {
-			while((root - 1) > 0 && !module.has_component<block>(--root));
+			while((root - 1) > 0 && !module.has_component<Module::HashtableComponent<function_declare>>(--root));
 		} while(root > 0 && root + module.get_component<doir::children>(root).total < target); // If target's offset is larger than the number of children in the block... it can't be root's child
 		return root;
 	}
@@ -169,7 +170,7 @@ namespace doir::Lox {
 
 			if(auto f = current_function(module, key.parent); f) {
 				if(module.has_component<parameters>(f))
-					for(ecs::Entity param: module.get_component<parameters>(f).params.iterate(module).range())
+					for(ecs::Entity param: module.get_component<parameters>(f).iterate(module))
 						if(param.template get_component<doir::lexeme>().view(module.buffer) == key.name.view(module.buffer))
 							return param;
 			}
@@ -205,7 +206,7 @@ namespace doir::Lox {
 			auto block = current_block(module, e);
 			auto res = blockwise_find<function_declare>(module, {ref.lexeme, block}, hasFunctions);
 			size_t distance = 0;
-			while(!res || *res < e) { // Function declared after... so we need to search in a higher block!
+			while(!res) {
 				auto next = current_block(module, block);
 				if(next == block) break;
 				else block = next;

@@ -468,7 +468,7 @@ function: IDENTIFIER '(' ')' block {
 	lexeme = decl.name + lexeme;
 	auto& oldParams = $1.get_component<parameters>();
 	$$.add_component<parameters>() = oldParams;
-	oldParams.params = {ecs::invalid_entity}; oldParams.parameters_end = ecs::invalid_entity;
+	oldParams = {ecs::invalid_entity, ecs::invalid_entity};
 	$$.add_component<interpreter::skippable>();
 	current_block().push_back_child(*module, $$);
 	add_body_marker($$);
@@ -479,14 +479,14 @@ parameters: IDENTIFIER {
 		= {declare{.name = $1.get_component<doir::comp::lexeme>(), .parent = func}};
 	auto& params = func.get_component<parameters>();
 	$$.add_component<interpreter::skippable>();
-	params.add_parameter(*module, $1);
+	params.push_back(*module, $1);
 } parametersTail;
 parametersTail: ',' IDENTIFIER {
 	auto func = objects.back();
 	get_key_and_mark_occupied($2.add_component<Module::HashtableComponent<parameter_declare>>())
 		= {declare{.name = $2.get_component<doir::comp::lexeme>(), .parent = func}};
 	auto& params = func.get_component<parameters>();
-	params.add_parameter(*module, $2);
+	params.push_back(*module, $2);
 	$$.add_component<interpreter::skippable>();
 } parametersTail | { $$ = 0; };
 
