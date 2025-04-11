@@ -16,7 +16,7 @@ namespace doir::Lox {
 		struct string {};
 		struct literal {};
 
-		struct block_children_entry: public array_entry { auto iterate(ecs::TrivialModule& module) {
+		struct block_children_entry: public list_entry { auto iterate(ecs::TrivialModule& module) {
 			return iterate_impl<ecs::entity_t, block_children_entry>{*this, module};
 		}};
 		struct block {
@@ -90,7 +90,7 @@ namespace doir::Lox {
 		struct variable_declare : public declare {};
 		struct function_declare : public declare { size_t recursion = 0; };
 		struct parameter_declare : public declare {};
-		struct parameters_entry: public array_entry { auto iterate(ecs::TrivialModule& module) {
+		struct parameters_entry: public list_entry { auto iterate(ecs::TrivialModule& module) {
 			return iterate_impl<ecs::entity_t, parameters_entry>{*this, module};
 		}};
 		struct parameters {

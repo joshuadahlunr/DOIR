@@ -113,19 +113,19 @@ namespace doir {
 			ecs::entity_t reverse_iteration_start(ecs::entity_t us) { return us + total + 1; }
 		};
 
-		struct array_entry {
+		struct list_entry {
 			ecs::Entity next = ecs::invalid_entity, previous = ecs::invalid_entity;
 
-			template <std::derived_from<array_entry> Tparent = array_entry>
+			template <std::derived_from<list_entry> Tparent = list_entry>
 			void set_next(ecs::TrivialModule& module, ecs::entity_t next, std::optional<ecs::Entity> self_ = {}) {
-				array_entry& next_entry = module.get_or_add_component<Tparent>(next);
+				list_entry& next_entry = module.get_or_add_component<Tparent>(next);
 				auto self = self_.has_value() ? *self_ : module.get_or_add_component<Tparent>(this->previous).next; // NOTE: The else case in this expression will likely fail when the then case should be taken, thus value_or can't be used!
 
 				next_entry.previous = self;
 				this->next = next;
 			}
 
-			static void swap_entities(array_entry& e, ecs::TrivialModule& module, ecs::entity_t eA, ecs::entity_t eB) {
+			static void swap_entities(list_entry& e, ecs::TrivialModule& module, ecs::entity_t eA, ecs::entity_t eB) {
 				if(e.next == eA) e.next = eB;
 				else if(e.next == eB) e.next = eA;
 				if(e.previous == eA) e.previous = eB;
@@ -133,9 +133,9 @@ namespace doir {
 			}
 
 			struct sentinel {};
-			template<typename T, std::derived_from<array_entry> Tparent = array_entry>
+			template<typename T, std::derived_from<list_entry> Tparent = list_entry>
 			struct iterator {
-				constexpr static bool lookup_on_dereference = !std::is_same_v<T, ecs::entity_t>;
+				constexpr static bool lookup_on_dereference = !std::is_same_v<T, ecs::entity_t> && !std::is_same_v<T, ecs::Entity>;
 				using iterator_category = std::bidirectional_iterator_tag;
 				using difference_type = std::ptrdiff_t;
 				using value_type = T;
@@ -177,7 +177,7 @@ namespace doir {
 				friend bool operator== (const iterator& a, const sentinel& b) { return a.current == ecs::invalid_entity; };
 			};
 
-			template<typename T, std::derived_from<array_entry> Tparent = array_entry>
+			template<typename T, std::derived_from<list_entry> Tparent = list_entry>
 			struct iterate_impl {
 				Tparent& parent;
 				ecs::TrivialModule& module;
@@ -185,14 +185,14 @@ namespace doir {
 				sentinel end() { return {}; }
 				std::ranges::subrange<iterator<T, Tparent>, sentinel, std::ranges::subrange_kind::unsized> range() { return {begin(), end()}; }
 			};
-			template<typename T, std::derived_from<array_entry> Tparent = array_entry>
+			template<typename T, std::derived_from<list_entry> Tparent = list_entry>
 			iterate_impl<T, Tparent> iterate(ecs::TrivialModule& module) {
 				return {*this, module};
 			}
 		};
 
-		template<std::derived_from<array_entry> T>
-		struct array {
+		template<std::derived_from<list_entry> T>
+		struct list {
 			T children = {ecs::invalid_entity}; ecs::Entity children_end = ecs::invalid_entity;
 
 			ecs::Entity front() { return children.next; }
@@ -203,26 +203,33 @@ namespace doir {
 				return {children, module};
 			}
 
-			void push_back(TrivialModule& module, ecs::entity_t child) {
+			list& push_back(TrivialModule& module, ecs::entity_t child) {
 				if(children_end == ecs::invalid_entity)
 					children.template set_next<T>(module, child, ecs::invalid_entity);
 				else
 					module.get_component<T>(children_end).template set_next<T>(module, child, children_end);
 				children_end = child;
+				return *this;
 			}
 
-			void push_front(TrivialModule& module, ecs::entity_t child) {
+			list& push_front(TrivialModule& module, ecs::entity_t child) {
+				// If there are no children let push_back mark this child as the end
+				if(children_end == ecs::invalid_entity)
+					return push_back(module, child);
+
 				auto old = children.next;
 				children.template set_next<T>(module, child, ecs::invalid_entity);
 				module.get_component<T>(child).set_next(module, old);
+				return *this;
 			}
 
-			void pop_back(TrivialModule& module) {
+			list& pop_back(TrivialModule& module) {
 				auto& back = module.get_component<T>(children_end);
 				auto& second_back = module.get_component<T>(back.previous);
 
 				second_back.next = ecs::invalid_entity;
 				children_end = back.previous;
+				return *this;
 			}
 
 			size_t size(TrivialModule& module) {

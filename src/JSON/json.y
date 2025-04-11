@@ -38,9 +38,9 @@ THE SOFTWARE. */
 
 %%
 
-START: ARRAY { objects.push($1); }
-	| OBJECT { objects.push($1); }
-	| VALUE { objects.push($1); };
+START: ARRAY { objects.push_back($1); }
+	| OBJECT { objects.push_back($1); }
+	| VALUE { objects.push_back($1); };
 OBJECT: '{' '}' {
 	$$ = module->create_entity();
 	module->add_component<doir::comp::lexeme>($$) = {location - 1, 2};
@@ -49,19 +49,19 @@ OBJECT: '{' '}' {
 	$$ = module->create_entity();
 	module->add_component<doir::comp::lexeme>($$) = {location - 1, 2};
 	module->add_component<comp::object>($$);
-	objects.push($$);
+	objects.push_back($$);
 } MEMBERS '}' {
-	$$ = objects.top();
+	$$ = objects.back();
 	auto& lexeme = module->get_component<doir::comp::lexeme>($$);
 	lexeme.length = location - lexeme.start;
-	objects.pop();
+	objects.pop_back();
 };
 MEMBERS: PAIR | PAIR ',' MEMBERS;
 PAIR: VALUE_STRING ':' VALUE {
-	auto obj = objects.top();
-	auto& members = module->get_component<comp::object>(obj).members;
+	auto obj = objects.back();
+	auto& object = module->get_component<comp::object>(obj);
 	get_key_and_mark_occupied(module->add_component<comp::object_entry_hash>($3)) = {obj, module->get_component<doir::comp::lexeme>($1)};
-	fpda_push_back(members, $3);
+	object.push_back(*module, $3);
 	// $$ = $1;
 };
 ARRAY: '[' {
@@ -72,36 +72,36 @@ ARRAY: '[' {
 	$$ = module->create_entity();
 	module->add_component<doir::comp::lexeme>($$) = {location - 1, 2};
 	module->add_component<comp::array>($$);
-	objects.push($$);
+	objects.push_back($$);
 } ELEMENTS ']' {
-	$$ = objects.top();
+	$$ = objects.pop_back();
 	auto& lexeme = module->get_component<doir::comp::lexeme>($$);
 	lexeme.length = location - lexeme.start;
-	auto& members = module->get_component<comp::array>($$).members;
-	std::reverse(members, members + fpda_size(members));
-	objects.pop();
+	// auto& members = module->get_component<comp::array>($$).members;
+	// std::reverse(members, members + fpda_size(members));
+	// objects.pop_back();
 };
 ELEMENTS: VALUE {
-	auto array = objects.top();
-	auto& members = module->get_component<comp::array>(array).members;
+	auto arr = objects.back();
+	auto& array = module->get_component<comp::array>(arr);
 	// get_key_and_mark_occupied(module->add_component<comp::array_entry_hash>($1)) = {array, fpda_size(members)};
-	fpda_push_back(members, $1);
+	array.push_front(*module, $1);
 	// $$ = $1;
 } | VALUE ',' ELEMENTS {
-	auto array = objects.top();
-	auto& members = module->get_component<comp::array>(array).members;
+	auto arr = objects.back();
+	auto& array = module->get_component<comp::array>(arr);
 	// get_key_and_mark_occupied(module->add_component<comp::array_entry_hash>($1)) = {array, fpda_size(members)};
-	fpda_push_back(members, $1);
+	array.push_front(*module, $1);
 	// $$ = $1;
 };
-VALUE: VALUE_STRING {$$=$1;}
-	| NUMBER {$$=yylval;}
-	| OBJECT {$$=$1;}
-	| ARRAY {$$=$1;}
-	| Jtrue {$$=yylval;}
-	| Jfalse {$$=yylval;}
-	| Jnull {$$=yylval;};
-VALUE_STRING: STRING {$$=yylval;};
+VALUE: VALUE_STRING { $$=$1; }
+	| NUMBER { $$=yylval; }
+	| OBJECT { $$=$1; }
+	| ARRAY { $$=$1; }
+	| Jtrue { $$=yylval; }
+	| Jfalse { $$=yylval; }
+	| Jnull { $$=yylval; };
+VALUE_STRING: STRING { $$=yylval; };
 
 %%
 

@@ -2,21 +2,25 @@
 
 #include <reflex/input.h>
 #include <nowide/iostream.hpp>
-#include <stack>
-#include <fp/string.h>
 
 #include "../components.hpp"
 
 namespace doir::JSON {
 
 	inline namespace component {
-		struct object { fp_dynarray(ecs::entity_t) members = nullptr; };
-		struct object_entry { ecs::entity_t object; doir::comp::lexeme name; };
+		struct object_entry  { ecs::entity_t object; doir::comp::lexeme name; };
+		struct object_array_entry : public doir::comp::list_entry { auto iterate(ecs::TrivialModule& module) {
+			return iterate_impl<ecs::entity_t, object_array_entry>{*this, module};
+		}};
+		struct object : public doir::comp::list<object_array_entry> {};
 		using object_entry_hash = ecs::hashtable::Storage<object_entry>::component_type;
 
-		struct array { fp_dynarray(ecs::entity_t) members = nullptr; };
-		struct array_entry { ecs::entity_t array; size_t index; };
-		using array_entry_hash = ecs::hashtable::Storage<array_entry>::component_type;
+		// struct array_entry{ ecs::entity_t array; size_t index; };
+		struct array_entry : public doir::comp::list_entry { auto iterate(ecs::TrivialModule& module) {
+				return iterate_impl<ecs::entity_t, array_entry>{*this, module};
+		}};
+		struct array : public doir::comp::list<array_entry> {};
+		// using array_entry_hash = ecs::hashtable::Storage<array_entry>::component_type;
 
 		struct null {};
 		struct string {};
@@ -25,7 +29,7 @@ namespace doir::JSON {
 
 	size_t location = 0;
 	TrivialModule* module;
-	std::stack<ecs::entity_t> objects;
+	fp::dynarray<ecs::entity_t> objects{nullptr};
 
 	#include "gen/parser.h"
 }
@@ -56,7 +60,7 @@ namespace doir::JSON {
 		location = 0;
 		fp_string_view_concatenate_inplace(out.buffer, view);
 		yyparse();
-		return {out, objects.size() ? objects.top() : 0};
+		return {out, objects.size() ? objects.back() : 0};
 	}
 
 	std::pair<TrivialModule, ecs::entity_t> parse(const fp_string string) {
@@ -75,21 +79,21 @@ namespace doir::JSON {
 			return fp_string_view_make_dynamic(module.get_component<doir::comp::lexeme>(root).view(module.buffer));
 		} else if(module.has_component<comp::array>(root)) {
 			auto out = fp_string_make_dynamic("["); size_t i = 0;
-			fp_iterate_named(module.get_component<comp::array>(root).members, mem) {
+			for(auto mem: module.get_component<comp::array>(root).iterate(module)) {
 				if(i++ > 0) fp_string_concatenate_inplace(out, ",");
-				auto tmp = dump(module, *mem);
+				auto tmp = dump(module, mem);
 				fp_string_concatenate_inplace(out, tmp); fp_string_free(tmp);
 			}
 			fp_string_concatenate_inplace(out, "]");
 			return out;
 		} else if(module.has_component<comp::object>(root)) {
 			auto out = fp_string_make_dynamic("{"); size_t i = 0;
-			fp_iterate_named(module.get_component<comp::object>(root).members, mem) {
+			for(auto mem: module.get_component<comp::object>(root).iterate(module)) {
 				if(i++ > 0) fp_string_concatenate_inplace(out, ",");
-				auto& name = get_key(module.get_component<comp::object_entry_hash>(*mem)).name;
+				auto& name = get_key(module.get_component<comp::object_entry_hash>(mem)).name;
 				fp_string_view_concatenate_inplace(out, name.view(module.buffer));
 				fp_string_append(out, ':');
-				auto tmp = dump(module, *mem);
+				auto tmp = dump(module, mem);
 				fp_string_concatenate_inplace(out, tmp); fp_string_free(tmp);
 			}
 			fp_string_concatenate_inplace(out, "}");
