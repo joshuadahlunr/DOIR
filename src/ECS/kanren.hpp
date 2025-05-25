@@ -1,12 +1,13 @@
 #include "ecs.hpp"
 #include "entity.hpp"
 
-#include <list>
-#include <optional>
-#include <utility>
 #include <functional>
 #include <generator>
+#include <list>
+#include <optional>
 #include <unordered_set>
+#include <utility>
+#include <variant>
 
 namespace doir::kanren {
 
@@ -50,7 +51,7 @@ namespace doir::kanren {
 		template<typename F>
 		struct function_traits : function_traits<decltype(&F::operator())> {};
 	}
-	
+
 	struct Variable {
 		size_t id;
 		bool operator==(const Variable& other) const { return id == other.id; }
@@ -74,10 +75,12 @@ namespace doir::kanren {
 		ecs::TrivialModule* module;
 		Substitution sub;
 		size_t counter = 0;
-		
+
 		Variable next_variable() { return Variable::next(*this); }
 	};
-	using Goal = std::function<std::generator<State>(State)>;
+	// using Goal = std::function<std::generator<State>(State)>;
+	template<typename T>
+	concept Goal = std::convertible_to<T, std::function<std::generator<State>(State)>>;
 
 	Variable Variable::next(State& state) {
 		return {state.counter++};
@@ -87,8 +90,8 @@ namespace doir::kanren {
 		std::optional<Term> walk(const Term& u, const Substitution& s) {
 			if (std::holds_alternative<Variable>(u)) {
 				const Variable& var = std::get<Variable>(u);
-				for (const auto& [v, val] : s) 
-					if (var == v) 
+				for (const auto& [v, val] : s)
+					if (var == v)
 						return walk(val, s);
 			}
 			return u;
@@ -130,26 +133,28 @@ namespace doir::kanren {
 			co_return;
 		}
 
-		Goal eq(const Term& u, const Term& v) {
+		Goal auto eq(const Term& u, const Term& v) {
 			return [=](State sc) -> std::generator<State> {
 				auto [m, s, c] = sc;
-				if (auto s_ = unify(u, v, s); s_) 
+				if (auto s_ = unify(u, v, s); s_)
 					co_yield {m, *s_, c};
 			};
 		}
-		inline Goal operator==(const Term& u, const Term& v) { return eq(u, v); }
+		inline Goal auto operator==(const Term& u, const Term& v) { return eq(u, v); }
 
-		Goal next_variable(std::convertible_to<std::function<Goal(Variable)>> auto f) {
+		template<Goal G>
+		Goal auto next_variable(std::convertible_to<std::function<G(Variable)>> auto f) {
 			return [f](State state) -> std::generator<State> {
 				Variable next{state.counter++};
 				co_yield std::ranges::elements_of(f(next)(state));
 			};
 		}
-		inline Goal fresh(std::convertible_to<std::function<Goal(Variable)>> auto f) { return next_variable(f); }
+		template<Goal G>
+		inline Goal auto fresh(std::convertible_to<std::function<G(Variable)>> auto f) { return next_variable(f); }
 
 		template<typename F, size_t arity = detail::function_traits<F>::arity>
-		Goal next_variables(const F& f) {
-			return [f](State state) mutable -> std::generator<State> {
+		Goal auto next_variables(const F& f) {
+			return [f](State state) -> std::generator<State> {
 				Variable next{state.counter++};
 				if constexpr(arity > 1) {
 					auto b = [f, next](auto... args){
@@ -178,40 +183,40 @@ namespace doir::kanren {
 			}
 		}
 
-		Goal disjunction(Goal g1, Goal g2) {
+		Goal auto disjunction(Goal auto g1, Goal auto g2) {
 			return [=](State state) {
 				return mplus(g1(state), g2(state));
 			};
 		}
-		inline Goal operator|(Goal g1, Goal g2) { return disjunction(g1, g2); }
+		inline Goal auto operator|(Goal auto g1, Goal auto g2) { return disjunction(g1, g2); }
 
-		std::generator<State> bind(std::generator<State> g, Goal f) {
-			for (auto s : g) 
+		std::generator<State> bind(std::generator<State> g, Goal auto f) {
+			for (auto s : g)
 				co_yield std::ranges::elements_of(f(s));
 		}
 
-		Goal conjunction(Goal g1, Goal g2) {
+		Goal auto conjunction(Goal auto g1, Goal auto g2) {
 			return [=](State state) {
 				return bind(g1(state), g2);
 			};
 		}
-		inline Goal operator&(Goal g1, Goal g2) { return conjunction(g1, g2); }
+		inline Goal auto operator&(Goal auto g1, Goal auto g2) { return conjunction(g1, g2); }
 
 	} // kanren::micro
 
 	inline namespace alpha {
 		template<typename F>
-		Goal exists(F&& f) { return next_variables<F, detail::function_traits<F>::arity>(f); }
+		Goal auto exists(F&& f) { return next_variables<F, detail::function_traits<F>::arity>(f); }
 	} // kanren::alpha
 
-	Goal condition(bool condition) {
+	Goal auto condition(bool condition) {
 		return [=](State state) -> std::generator<State> {
 			if(condition)
 				co_yield state;
 		};
 	}
-	
-	Goal condition(const Goal& g, bool cond) {
+
+	Goal auto condition(const Goal auto& g, bool cond) {
 		return g & condition(cond);
 	}
 }
@@ -253,7 +258,7 @@ namespace doir::kanren { inline namespace query {
 			co_yield std::ranges::elements_of(unique_substitutions(sub, found));
 	}
 
-	std::generator<std::pair<Variable, Term>> unique_substitutions(Goal& goal, State& state) {
+	std::generator<std::pair<Variable, Term>> unique_substitutions(Goal auto& goal, State& state) {
 		co_yield std::ranges::elements_of(unique_substitutions(goal(state)));
 	}
 }}
