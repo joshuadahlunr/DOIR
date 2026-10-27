@@ -1,0 +1,3 @@
+[submodule "mizu"]
+	path = mizu
+	url = https://github.com/doir-lang/Mizu.git

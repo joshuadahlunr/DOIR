@@ -1,0 +1,68 @@
+{
+	"name": "doir",
+	"description": "A query-driven DOIR compiler for -betterC D, built on libECRS, libdiagnose and Mizu",
+	"license": "MIT",
+	"targetType": "executable",
+	"sourcePaths": [
+		"reference",
+		"source"
+	],
+	"importPaths": [
+		"reference",
+		"source"
+	],
+	"dependencies": {
+		"libecrs": {
+			"repository": "git+https://github.com/doir-lang/libECRS.git",
+			"version": "4f8e3d1874461420bba6983481bc31460bc2ff94"
+		},
+		"libdiagnose": {
+			"repository": "git+https://github.com/doir-lang/libdiagnose.git",
+			"version": "717ca8e2af1fb46ebd62691a8bc870bcfd966e4f"
+		},
+		"mizu": {
+			"path": "mizu"
+		}
+	},
+	"dflags-ldc": [
+		"-betterC",
+		"-checkaction=C"
+	],
+	"dflags-dmd": [
+		"-betterC",
+		"-checkaction=C"
+	],
+	"configurations": [
+		{
+			"name": "doir",
+			"targetType": "executable",
+			"targetPath": "bin",
+			"targetName": "doir",
+			"mainSourceFile": "source/main.d",
+			"sourcePaths": [
+				"reference",
+				"source"
+			]
+		},
+		{
+			"name": "unittest",
+			"targetType": "executable",
+			"mainSourceFile": "tests/runner.d",
+			"sourcePaths": [
+				"reference",
+				"source",
+				"tests"
+			],
+			"excludedSourceFiles": [
+				"source/main.d"
+			],
+			"importPaths": [
+				"reference",
+				"source",
+				"tests"
+			],
+			"targetPath": "bin",
+			"targetName": "doir-tests"
+		}
+	]
+}
