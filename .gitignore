@@ -1,2 +1,8 @@
 bin
 __pycache__
+.dub
+dub.selections.json
+/doir
+*.o
+*.a
+*.lst

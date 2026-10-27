@@ -3,9 +3,15 @@
 
 Each example becomes a unittest in a generated module that imports only the module it documents, as a user would: outside the module's package, unless it documents a `package` definition. `#line` directives point failures back at the example's line in the source.
 
-Usage: tools/doctest.py [-I dir]... [file.d]...   (default sources: reference/*.d and source/**/*.d; -I adds import paths for the modules they import; set DC to use a compiler other than ldc2)
+A module defining `main` is checked but not compiled into the doctest binary, which has its own `main`, and `main` needs no example.
+
+Import paths and libraries for the dub dependencies (libECRS, libdiagnose, Mizu and theirs) come from `dub describe`.
+
+Usage: tools/doctest.py [-I dir]... [file.d]...   (default sources: reference/*.d and source/**/*.d; -I adds further import paths; set DC to use a compiler other than ldc2)
 """
 import glob, os, re, subprocess, sys
+
+entry = re.compile(r'^extern\s*\(C\)\s*int\s+main\s*\(', re.M)
 
 root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 out = os.path.join(root, 'bin', 'doctest')
@@ -76,7 +82,7 @@ def check(path, lines, problems, examples):
 			elif code is not None:
 				code[1].append(text)
 		ditto = any(t.strip().lower().startswith('ditto') for _, t in body)
-		if is_function(decl) and not found and not ditto:
+		if is_function(decl) and not found and not ditto and not entry.match(decl):
 			problems.append(f'{path}:{j + 1}: documented without an example: {decl}')
 		examples += found
 
@@ -94,6 +100,15 @@ def check(path, lines, problems, examples):
 			if not (above.startswith('///') or above.endswith('*/')):
 				problems.append(f'{path}:{k + 1}: undocumented: {s}')
 		depth += line.count('{') - line.count('}')
+
+
+def dub_describe(data):
+	"""Returns the lines `dub describe` prints for `data` (such as import-paths or libs) over the root package's dependencies."""
+	result = subprocess.run(['dub', 'describe', '--compiler=' + compiler, '--data=' + data, '--data-list'], cwd=root,
+		capture_output=True, text=True)
+	if result.returncode != 0:
+		sys.exit(f'doctest: dub describe failed:\n{result.stderr}')
+	return [line for line in result.stdout.split('\n') if line]
 
 
 def main(argv):
@@ -116,6 +131,7 @@ def main(argv):
 	modules = []
 	problems = []
 	generated = []
+	compiled = [p for p in sources if not entry.search(open(p, encoding='utf-8').read())]
 	for path in sources:
 		text = open(path, encoding='utf-8').read()
 		module = re.search(r'^module\s+([\w.]+);', text, re.M).group(1)
@@ -131,7 +147,7 @@ def main(argv):
 			name = (package + '.' if inside else '') + 'doctest_' + module.replace('.', '_')
 			generated.append(name)
 			body = [f'module {name};', f'import {module};']
-			body += [f'static import {m};' for m in modules_in(sources) if m not in (module, package)]
+			body += [f'static import {m};' for m in modules_in(compiled) if m not in (module, package)]
 			for k, (line, code) in enumerate(chosen):
 				# A distinct line per unittest keeps their generated names apart.
 				body.append(f'#line {100000 + 1000 * k} "doctest"')
@@ -151,8 +167,10 @@ def main(argv):
 	for problem in problems:
 		print(problem)
 
-	command = [compiler, '-betterC', '-checkaction=C', '-unittest', '-i'] + ['-I' + inc for inc in includes] + [
-		'-I' + os.path.join(root, 'reference'), '-I' + os.path.join(root, 'source'), '-of=' + exe] + sources + sorted(
+	includes += dub_describe('import-paths')
+	libs = ['-L-l' + lib for lib in dub_describe('libs')]
+	command = [compiler, '-betterC', '-checkaction=C', '-unittest', '-i'] + libs + ['-I' + inc for inc in includes] + [
+		'-I' + os.path.join(root, 'reference'), '-I' + os.path.join(root, 'source'), '-of=' + exe] + compiled + sorted(
 		glob.glob(os.path.join(out, '*.d')))
 	if subprocess.run(command, cwd=root).returncode != 0:
 		return 1
