@@ -1,0 +1,46 @@
+# DOIR+: ergonomic syntax that tools/doirp.py lowers to DOIR. It extends doir.peg and may only add rules: Identifier, Constant, SourceInfo, Terminator, change_language, _ and wsc come from there.
+plus_program <- _ statement* !.
+
+# Declarations: explicit (':'), inferred (':='), or a valueless prototype; any other statement is an expression
+statement <- change_language / declaration / expression_statement
+declaration <- exported? Identifier wsc (inferred / declared) wsc statement_end
+exported <- 'export' !UnicodeIdentifierContinue _
+inferred <- ':=' _ value
+declared <- ':' _ plus_type (wsc '=' _ value)?
+expression_statement <- expr wsc statement_end
+statement_end <- (SourceInfo wsc)? (Terminator / &'}') _
+
+# A declaration's value: a block, a function or function type, a typed or bare constant, or an expression
+value <- plus_block / function_value / typed_constant / bare_constant / expr
+function_value <- function_type wsc ('=>' _ (plus_block / expr) / '=' _ plus_block)?
+typed_constant <- Constant wsc ':' _ plus_type
+bare_constant <- Constant &(wsc (SourceInfo / Terminator / '}'))
+
+# Expressions: a type annotation over pipes (x |> f(y)) over infix calls (a `std.add` b) over regular calls f(x, y)
+expr <- pipe_expr (wsc ':' _ plus_type)?
+pipe_expr <- infix_expr (wsc pipe)*
+pipe <- '|>' _ Identifier (wsc call_suffix)?
+infix_expr <- postfix_expr (wsc infix)*
+infix <- '`' wsc Identifier wsc '`' _ postfix_expr
+postfix_expr <- primary (wsc call_suffix)*
+call_suffix <- '(' _ arguments? ')'
+
+# Arguments: inline functions, constants and blocks (each optionally typed), or expressions
+arguments <- argument _ (',' _ argument _)*
+argument <- inline_function / constant_argument / block_argument / expr
+constant_argument <- Constant (wsc ':' _ plus_type)? &(_ [,)])
+block_argument <- plus_block (wsc ':' _ plus_type)? &(_ [,)])
+inline_function <- function_type wsc ('=>' _ (plus_block / expr) / '=' _ plus_block)
+
+primary <- paren_constant / inline_function / function_type / paren_expr / plus_block / Constant / Identifier
+paren_constant <- '(' _ Constant wsc ':' _ plus_type _ ')'
+paren_expr <- '(' _ expr _ ')'
+
+plus_block <- '{' _ statement* '}'
+
+# Types: function types, constructed type calls, or names
+plus_type <- function_type / type_call / Identifier
+type_call <- Identifier wsc '(' _ arguments? ')'
+function_type <- '(' _ (plus_parameter _ (',' _ plus_parameter _)*)? ')' (wsc '->' _ plus_type)?
+plus_parameter <- Identifier _ ':' _ (deduced / plus_type (wsc '=' _ (Constant / Identifier))?)
+deduced <- 'deduced' !UnicodeIdentifierContinue _ 'type' !UnicodeIdentifierContinue

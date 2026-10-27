@@ -1,0 +1,39 @@
+// Test 1: Infix chaining and pipeline
+a : std.u64 = 10
+b := 20 : std.u64
+c := (a `std.add` b) `std.multiply` (2 : std.u64)
+c |> std.debug_print()
+
+// Test 2: Inline constructed types
+u64_ptr : std.types.pointer(std.u64) = std.stack.allocate(std.u64)
+
+// Test 3: Inline blocks in function arguments (Control Flow without baked keywords)
+cond : std.u1 = 1
+result := std.if(cond, {
+    val : std.u64 = 100
+    val `std.add` (1 : std.u64)
+}, {
+    200 : std.u64
+})
+
+// Test 4: Nested calls
+std.debug_print(std.add(a, b))
+
+// Test 5: While loop with counter in memory (B-Loop)
+counter : std.types.pointer(std.u64) = std.stack.allocate(std.u64)
+std.pointers.store(counter, 0 : std.u64)
+
+std.while({
+    cur := std.pointers.load(counter)
+    cur `std.is_less` (10 : std.u64)
+}, {
+    cur := std.pointers.load(counter)
+    std.debug_print(cur)
+    next := cur `std.add` (1 : std.u64)
+    std.block_result(std.pointers.store(counter, next))
+})
+
+square := (v: std.u64) -> std.u64 => v `std.multiply` v
+square(5 : std.u64) |> std.debug_print()
+
+std.halt()

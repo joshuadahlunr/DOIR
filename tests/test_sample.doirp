@@ -1,0 +1,15 @@
+path : compiler.byte_pointer = "./standard.mizu.doir"
+compiler.paste_file(path)
+
+add_one_t : type = (a: std.u64) -> std.u64
+std.types.never_comptime(add_one_t)
+
+add_one : add_one_t = (a: std.u64) -> std.u64 => {
+    a `std.add` (1 : std.u64)
+}
+
+x := 5 : std.u64
+y := add_one(x)
+std.debug_print(y)
+
+std.halt()

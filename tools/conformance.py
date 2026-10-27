@@ -10,7 +10,7 @@ Each file in `tests/conformance` is named `<Rule-Tag>.<case>.accept.doir` or `<R
 
 A case's build is the files `reference/compiler.doir`, `reference/backends.doir`, `standard.doir` and the case, whose tower the compiler reads from them (`L-Tower`, `L-Scan`); a `// backends: <path>` comment replaces the backends file, relative to the corpus. Files under `support/` are what cases import or build on; they must parse.
 
-`doir_check` parses and checks the few rules its diagnostics name. A reject case for one of those rules must fail naming its tag; for a rule it checks only in part (`PARTIAL`), a case it passes is pending instead. A reject case for any other rule must parse cleanly and is counted as pending: it waits for the compiler, and a syntax error or another rule's diagnostic means the case is broken. Builds `doir_check` into `bin/` when it is missing or older than its sources, unless `--checker` names one.
+`doir_check` parses and checks the few rules its diagnostics name. A reject case for one of those rules must fail naming its tag; for a rule it checks only in part (`PARTIAL`), a case it passes is pending instead. A reject case for any other rule must parse cleanly and is counted as pending: it waits for the compiler, and a syntax error or another rule's diagnostic means the case is broken. Runs `tools/doir_check.py` through `uv`, unless `--checker` names another executable.
 
     python3 tools/conformance.py [--checker path/to/doir_check] [--pending]
 """
@@ -25,22 +25,13 @@ ROOT = pathlib.Path(__file__).resolve().parent.parent
 CORPUS = ROOT / "tests/conformance"
 
 
-def build_checker():
-	exe = ROOT / "bin/doir_check"
-	sources = [ROOT / "tools/doir_check.cpp", ROOT / "tools/peglib.h"]
-	if not exe.exists() or any(s.stat().st_mtime > exe.stat().st_mtime for s in sources):
-		exe.parent.mkdir(exist_ok=True)
-		subprocess.run(["g++", "-O2", "-std=c++17", str(sources[0]), "-o", str(exe)], check=True)
-	return exe
-
-
 # Tags `doir_check` checks only in part: a reject case for one that it passes is pending, not failed.
 PARTIAL = {"B-Tail", "L-Scan", "L-Sema", "L-Bind"}  # B-Tail's return-type match needs types; L-Scan's, L-Sema's and L-Bind's name resolution need the whole build
 
 
 def checked_tags():
 	"""The rule tags `doir_check` reports in full, read from its diagnostic strings."""
-	return set(re.findall(r'"([A-Z][A-Za-z0-9]*-[A-Za-z]+):', (ROOT / "tools/doir_check.cpp").read_text())) - PARTIAL
+	return set(re.findall(r'["\']([A-Z][A-Za-z0-9]*-[A-Za-z]+):', (ROOT / "tools/doir_check.py").read_text())) - PARTIAL
 
 
 def results(output):
@@ -71,13 +62,13 @@ def main():
 	parser.add_argument("--checker")
 	parser.add_argument("--pending", action="store_true", help="list the pending reject cases")
 	args = parser.parse_args()
-	checker = pathlib.Path(args.checker) if args.checker else build_checker()
+	checker = [args.checker] if args.checker else ["uv", "run", "-q", str(ROOT / "tools/doir_check.py")]
 	cases = sorted(CORPUS.glob("*.doir"))
 	support = sorted(CORPUS.glob("support/*.doir"))
 	parsed = {case: case.name.split(".") for case in cases}
 	programs = [str(c) for c in cases if parsed[c][1].startswith("program")]
 	files = [str(c) for c in cases if str(c) not in programs] + [str(s) for s in support]
-	run = subprocess.run([str(checker), "-g", str(ROOT / "doir.peg")] + files + ["-p"] + programs, capture_output=True, text=True)
+	run = subprocess.run(checker + ["-g", str(ROOT / "doir.peg")] + files + ["-p"] + programs, capture_output=True, text=True)
 	reports = results(run.stdout)
 	checked = checked_tags()
 	failures, pending = [], []

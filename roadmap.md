@@ -83,7 +83,7 @@ Legacy behavior reference: [doir-lang/DOIR/tree/D](https://github.com/doir-lang/
 
 ### Phase 2: Parsing into the Entity Store
 - **Goal:** A new, resilient parser, written from scratch for the query architecture, that builds binding entities and their components directly, with a source location on every entity it creates.
-- **Reference:** `doir.peg` is the grammar; `tools/doir_check.cpp` (cpp-peglib over `doir.peg`) is the conformance oracle. `source/doir/parser.d` in `tree/D` is not a base to port: consult it only for which builder calls each declaration form makes and for the edge cases its tests pin down.
+- **Reference:** `doir.peg` is the grammar; `tools/doir_check.py` (pe over `doir.peg`) is the conformance oracle. `source/doir/parser.d` in `tree/D` is not a base to port: consult it only for which builder calls each declaration form makes and for the edge cases its tests pin down.
 - **Deliverables:**
   - A lexer producing a token stream (trivia included) that both the parser and the LSP's highlighting read, so `_`/`wsc` and the newline-as-`Terminator` rule are decided once, in the lexer.
   - A recursive-descent parser over that stream and `reference/builders.d`, rule names matching `doir.peg` so the two can be diffed. Each declaration form becomes builder calls (`pushDeclaration`, `pushConstant`, `pushCall`, and the `Lookup*` components for names resolved later), with names interned by `reference/strings.d`.
@@ -99,9 +99,9 @@ Legacy behavior reference: [doir-lang/DOIR/tree/D](https://github.com/doir-lang/
 
 ### Phase 3: Editor Front-End (LSP)
 - **Goal:** A language server reading the entity store Phase 2 builds while the compiler is still incomplete.
-- **Reference:** Roslyn's IDE-facing semantic model (`dotnet/roslyn`, `src/Features`). `tools/doir_check.cpp` already implements the diagnostics, the namespace walk, and the scope map this phase ports onto components.
+- **Reference:** Roslyn's IDE-facing semantic model (`dotnet/roslyn`, `src/Features`). `tools/doir_check.py` already implements the diagnostics, the namespace walk, and the scope map this phase ports onto components.
 - **Deliverables:**
-  - The `doir_check` rules (`WF-Term`, `WF-Order`, `D-Return`) ported from its peglib AST walk to queries over `Block`, `Parent`, `Name`, and the `Lookup*` components, reporting through libdiagnose at each entity's `SourceLocation`.
+  - The `doir_check` rules (`WF-Term`, `WF-Order`, `D-Return`) ported from its AST walk to queries over `Block`, `Parent`, `Name`, and the `Lookup*` components, reporting through libdiagnose at each entity's `SourceLocation`.
   - Highlighting from the lexer's token stream (keywords, literals, comments, whitespace), not from the store: trivia never becomes entities.
   - A position→entity index over the derived absolute `SourceLocation`s, rebuilt by the same source-order pass as part of the input commit, for hover and go-to.
   - `initialize`, `didOpen`/`didChange`, `publishDiagnostics` wired to those checks and to the parser's recovery diagnostics.
@@ -186,7 +186,7 @@ Legacy behavior reference: [doir-lang/DOIR/tree/D](https://github.com/doir-lang/
 - **Deliverables:**
   - A legality verifier after each lowering for each target (`T-Legal`), extending Phase 5's read barrier: every entity read below the level just lowered for target τ satisfies that level's signature for τ, and nothing whose `Lowered` relation holds τ is still read.
   - A conformance corpus keyed by rule tag, with at least one file each tag alone decides (spec Part II), and both an accepted and a rejected file for every tag a program can violate, run against the parser and the semantic checks. It starts as `tests/conformance`, run by `tools/conformance.py`.
-  - Differential testing against `tools/doir_check.cpp` over that corpus.
+  - Differential testing against `tools/doir_check.py` over that corpus.
 - **Verification:** Every tag in Part II has a corpus entry naming it, and every tag a program can violate has both an accepted and a rejected one. A lowering that leaves an entity readable below its level is caught by the verifier rather than by a crash in emission.
 
 ### Phase 11: Measurement (Chapter 4)
