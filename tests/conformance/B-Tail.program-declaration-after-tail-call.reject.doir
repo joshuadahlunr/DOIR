@@ -1,0 +1,12 @@
+// B-Tail: a tail call is a terminator, so nothing may follow it in its block.
+g : (v: std.u8) -> std.u8 = {
+	_ : _ = std.return(v)
+}
+f : (v: std.u8) -> std.u8 = {
+	r : std.u8 = tail g(v)
+	_ : _ = std.return(r)
+}
+seed : std.u8 = 7
+x : std.u8 = std.comptime_to_runtime(seed)
+r : std.u8 = f(x)
+_ : _ = std.halt()

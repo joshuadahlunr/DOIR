@@ -1,0 +1,2 @@
+// R-Unqual: a lower level's root is seen only through its namespaces, so std's `u8` is std.u8, never bare `u8`.
+x : u8 = 1

@@ -1,0 +1,7 @@
+// L-Bind: `functionArity` is a check the compiler provides, so bind_pass cannot bind the same name.
+forbid_nothing : (e: std.meta.entity) -> std.u8 = {
+	zero : std.u8 = 0
+	_ : _ = std.return(zero)
+}
+name : compiler.byte_pointer = "functionArity"
+_ : (e: std.meta.entity) -> std.u8 = compiler.levels.bind_pass(forbid_nothing, name)

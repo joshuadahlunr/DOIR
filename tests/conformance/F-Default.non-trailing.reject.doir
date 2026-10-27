@@ -1,0 +1,2 @@
+// F-Default: only a trailing run of parameters takes defaults, so `a` cannot have one while `b` does not.
+f : (a: std.u8 = 1, b: std.u8) -> std.u8

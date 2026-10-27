@@ -1,0 +1,3 @@
+// T-Optional: std.numbers.f32 is declared whatever the backend provides, but this backend has no f32, so using it fails here. backends: support/minimal-backend.doir
+half : std.numbers.f32 = 0.5
+_ : _ = std.halt()

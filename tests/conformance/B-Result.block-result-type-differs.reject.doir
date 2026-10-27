@@ -1,0 +1,5 @@
+// B-Result: the block's value is what it yields, a std.pointer_sized, which a std.u8 cannot hold.
+x : std.u8 = {
+	wide : std.pointer_sized = 1
+	_ : _ = std.block_result(wide)
+}

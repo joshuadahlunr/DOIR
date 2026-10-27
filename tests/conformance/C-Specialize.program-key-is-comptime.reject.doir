@@ -1,0 +1,11 @@
+// C-Specialize: `check` is specialized on the comptime `zero`, so its assertion folds and fails while compiling.
+check : (v: std.u8, ok: std.u1) -> std.u8 = {
+	message : std.c_string = "C-Specialize: ok is bound to 0 in this specialization, so this assertion fails while compiling"
+	_ : void = std.diagnostics.assert(ok, message)
+	_ : _ = std.return(v)
+}
+seed : std.u8 = 7
+x : std.u8 = std.comptime_to_runtime(seed)
+zero : std.u1 = 0
+r : std.u8 = check(x, zero)
+_ : _ = std.halt()

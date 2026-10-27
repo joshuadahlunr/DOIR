@@ -1,0 +1,10 @@
+// TF-Overload: a set is a name, not a function, so it has no address; `address` takes a member.
+pick_u8 : (v: std.u8) -> std.u8 = {
+	one : std.u8 = 1
+	_ : _ = std.return(one)
+}
+pick : std.functions.overload_set = std.functions.create_overload_set()
+_ : std.functions.overload_set = std.functions.add_overload(pick, pick_u8)
+pick_t : type = (v: std.u8) -> std.u8
+pick_pointer_t : type = std.types.function_pointer(pick_t)
+p : pick_pointer_t = std.functions.address(pick)

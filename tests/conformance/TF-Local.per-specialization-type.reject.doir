@@ -1,0 +1,14 @@
+// TF-Local: each specialization of `owned` declares its own `handle`, so marking one does not mark the other.
+owned : (T: type) -> type = {
+	handle : type = {
+		value : T
+	}
+	_ : _ = std.return(handle)
+}
+bytes : type = owned(std.u8)
+words : type = owned(std.pointer_sized)
+marker : type = {}
+_ : marker = std.attributes.mark(bytes, marker)
+has : std.u1 = std.attributes.has(words, marker)
+message : std.c_string = "TF-Local: words has its own handle, so this assertion fails"
+_ : void = std.diagnostics.assert(has, message)

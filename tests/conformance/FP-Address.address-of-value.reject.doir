@@ -1,0 +1,5 @@
+// FP-Address: only a function has an address; `count` is a std.u8 value.
+count : std.u8 = 1
+unary_t : type = (v: std.u8) -> std.u8
+unary_pointer : type = std.types.function_pointer(unary_t)
+p : unary_pointer = std.functions.address(count)

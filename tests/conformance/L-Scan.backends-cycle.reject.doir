@@ -1,0 +1,11 @@
+// L-Scan: std lowers onto mizu and mizu onto std, a cycle the scan reports naming both levels.
+mizu_backend : namespace = {
+	path : compiler.byte_pointer = "../../reference/machine.doir"
+	_ : compiler.pointer_sized = compiler.paste_file(path)
+}
+export targets : namespace = {
+	export mizu : compiler.level = compiler.levels.make(mizu_backend)
+	_ : compiler.level = compiler.levels.lower_to(mizu, compiler.levels.builtin, mizu_backend.machine.schedule)
+	_ : compiler.level = compiler.levels.lower_to(std.level, mizu, mizu_backend.machine.schedule)
+	_ : compiler.level = compiler.levels.lower_to(mizu, std.level, mizu_backend.machine.schedule)
+}

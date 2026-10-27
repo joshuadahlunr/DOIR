@@ -1,0 +1,9 @@
+// AT-Set: an attribute holds values of its own type; `width` is a std.u8, not an `alignment`.
+alignment : type = {
+	bits : std.pointer_sized
+}
+record : type = {
+	a : std.u8
+}
+width : std.u8 = 8
+_ : alignment = std.attributes.set(record, alignment, width)

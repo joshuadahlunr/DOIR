@@ -1,0 +1,7 @@
+// L-Bind: a library binds a function with bind_pass at level scope, so a check on a level above it may name it.
+forbid_nothing : (e: std.meta.entity) -> std.u8 = {
+	zero : std.u8 = 0
+	_ : _ = std.return(zero)
+}
+name : compiler.byte_pointer = "forbidNothing"
+_ : (e: std.meta.entity) -> std.u8 = compiler.levels.bind_pass(forbid_nothing, name)

@@ -1,0 +1,3 @@
+// WF-Arg: a call argument names a binding; a literal has to be bound to a name first.
+f : (a: std.u8) -> std.u8
+r : std.u8 = f(1)

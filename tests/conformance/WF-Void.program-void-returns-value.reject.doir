@@ -1,0 +1,8 @@
+// WF-Void: a function returning void ends with std.return(std.nothing), not with a value.
+f : (v: std.u8) -> void = {
+	_ : _ = std.return(v)
+}
+seed : std.u8 = 7
+x : std.u8 = std.comptime_to_runtime(seed)
+_ : void = f(x)
+_ : _ = std.halt()

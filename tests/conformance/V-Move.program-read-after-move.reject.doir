@@ -1,0 +1,10 @@
+// V-Move: std.move ends `v`, so reading it on a later line is an error.
+f : (v: std.u8) -> std.u8 = {
+	moved : std.u8 = std.move(std.u8, v)
+	again : std.u8 = std.copy(std.u8, v)
+	_ : _ = std.return(again)
+}
+seed : std.u8 = 7
+x : std.u8 = std.comptime_to_runtime(seed)
+r : std.u8 = f(x)
+_ : _ = std.halt()

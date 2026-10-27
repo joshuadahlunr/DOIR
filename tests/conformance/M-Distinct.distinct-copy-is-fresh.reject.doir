@@ -1,0 +1,5 @@
+// M-Distinct: std.types.distinct_copy builds a new type with its own discriminator, so it is not equivalent to its argument.
+id : type = std.types.distinct_copy(std.pointer_sized)
+same : std.u1 = std.types.is_same_type(id, std.pointer_sized)
+message : std.c_string = "M-Distinct: id is a distinct type, so this assertion fails"
+_ : void = std.diagnostics.assert(same, message)

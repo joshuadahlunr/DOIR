@@ -1,0 +1,4 @@
+// T-Sig: the only target's backend has no machine.u1, which std's u1 aliases, so std does not sit over it. backends: support/backend-without-u1.doir
+seed : std.u8 = 7
+x : std.u8 = std.comptime_to_runtime(seed)
+_ : _ = std.halt()

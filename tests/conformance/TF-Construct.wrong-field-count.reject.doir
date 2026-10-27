@@ -1,0 +1,7 @@
+// TF-Construct: an aggregate is constructed from one value per field, in order.
+pair : type = {
+	a : std.u8
+	b : std.u8
+}
+one : std.u8 = 1
+p : pair = pair(one)

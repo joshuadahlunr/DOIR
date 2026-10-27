@@ -1,0 +1,16 @@
+// MEM-Escape: `make` folds, so its pointer is into comptime heap memory, which does not exist at runtime.
+make : () -> std.byte_pointer = {
+	sixteen : std.pointer_sized = 16
+	eight : std.pointer_sized = 8
+	p : std.byte_pointer = std.heap.allocate(sixteen, eight)
+	_ : _ = std.return(p)
+}
+f : (v: std.u8) -> std.u8 = {
+	known : std.byte_pointer = make()
+	p : std.byte_pointer = std.comptime_to_runtime(known)
+	_ : _ = std.return(v)
+}
+seed : std.u8 = 7
+x : std.u8 = std.comptime_to_runtime(seed)
+r : std.u8 = f(x)
+_ : _ = std.halt()

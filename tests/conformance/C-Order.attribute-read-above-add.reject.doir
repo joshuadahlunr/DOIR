@@ -1,0 +1,9 @@
+// C-Order: comptime effects run in line order, so `before` is read before the attribute is added.
+record : type = {
+	a : std.u8
+}
+marker : type = {}
+before : std.u1 = std.attributes.has(record, marker)
+_ : marker = std.attributes.mark(record, marker)
+message : std.c_string = "C-Order: the attribute is added below this read, so this assertion fails"
+_ : void = std.diagnostics.assert(before, message)

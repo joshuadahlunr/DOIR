@@ -1,0 +1,18 @@
+// Backends for two-target cases: two Mizu targets, `a` the host and `b` not, with std lowered onto each. Mizu declares no bridges.
+a_backend : namespace = {
+	path : compiler.byte_pointer = "../../../reference/machine.doir"
+	_ : compiler.pointer_sized = compiler.paste_file(path)
+}
+b_backend : namespace = {
+	path : compiler.byte_pointer = "../../../reference/machine.doir"
+	_ : compiler.pointer_sized = compiler.paste_file(path)
+}
+export targets : namespace = {
+	export a : compiler.level = compiler.levels.make(a_backend)
+	export b : compiler.level = compiler.levels.make(b_backend)
+	_ : compiler.level = compiler.levels.lower_to(a, compiler.levels.builtin, a_backend.machine.schedule)
+	_ : compiler.level = compiler.levels.lower_to(std.level, a, a_backend.machine.schedule)
+	_ : compiler.level = compiler.levels.lower_to(b, compiler.levels.builtin, b_backend.machine.schedule)
+	_ : compiler.level = compiler.levels.lower_to(std.level, b, b_backend.machine.schedule)
+	_ : compiler.level = compiler.levels.set_host(a)
+}

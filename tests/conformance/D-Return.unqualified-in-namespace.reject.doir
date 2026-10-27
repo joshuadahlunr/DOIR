@@ -1,0 +1,9 @@
+// D-Return: an unqualified callee resolves through the enclosing namespaces (R-Unqual).
+lib : namespace = {
+	make : (T: type) -> _
+	f : () -> void = {
+		t : type = std.u8
+		_ : _ = make(t)
+		_ : _ = std.return(std.nothing)
+	}
+}

@@ -1,0 +1,3 @@
+// T-Live: a declaration is restricted to targets by a modifier call, not by syntax.
+s : std.u8 = 1
+_ : _ = std.targets.compile_for(s, targets.mizu)

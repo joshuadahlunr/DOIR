@@ -1,0 +1,4 @@
+// Q-Cycle: a field of type self makes the layout of `node` depend on itself.
+node : type = {
+	next : std.types.self
+}

@@ -1,0 +1,15 @@
+// FP-Call: an indirect call specializes on nothing, so it cannot pass an always-comptime argument such as a type.
+sized_t : type = (T: type) -> std.pointer_sized
+sized_pointer : type = std.types.function_pointer(sized_t)
+f : (p: sized_pointer) -> std.pointer_sized = {
+	r : std.pointer_sized = p(std.u8)
+	_ : _ = std.return(r)
+}
+bits : sized_t = {
+	r : std.pointer_sized = std.types.size_bits(T)
+	_ : _ = std.return(r)
+}
+address : sized_pointer = std.functions.address(bits)
+runtime : sized_pointer = std.comptime_to_runtime(address)
+r : std.pointer_sized = f(runtime)
+_ : _ = std.halt()

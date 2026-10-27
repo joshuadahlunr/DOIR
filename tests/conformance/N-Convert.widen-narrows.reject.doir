@@ -1,0 +1,3 @@
+// N-Convert: widen cannot narrow; narrowing std.pointer_sized to std.u8 is truncate.
+wide : std.pointer_sized = 300
+narrow : std.u8 = std.numbers.widen(wide)

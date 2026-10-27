@@ -1,0 +1,7 @@
+// RF-Entity: `from_entity` of a type's `entity_of` gives back the same type.
+e : std.meta.entity = std.meta.entity_of(std.u8)
+back : type = std.meta.from_entity(e)
+same : std.u1 = std.types.is_same_type(back, std.u8)
+different : std.u1 = std.logical_not(same)
+message : std.c_string = "RF-Entity: the round trip returns std.u8, so this assertion fails"
+_ : void = std.diagnostics.assert(different, message)

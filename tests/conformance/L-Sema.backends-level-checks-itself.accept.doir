@@ -1,0 +1,13 @@
+// L-Sema: a backend defines its semantic analysis with check and its lowering with lower_to, both over its own target.
+mizu_backend : namespace = {
+	path : compiler.byte_pointer = "../../reference/machine.doir"
+	_ : compiler.pointer_sized = compiler.paste_file(path)
+}
+export targets : namespace = {
+	export mizu : compiler.level = compiler.levels.make(mizu_backend)
+	arity : compiler.byte_pointer = "functionArity"
+	_ : compiler.level = compiler.levels.check(mizu, arity)
+	_ : compiler.level = compiler.levels.lower_to(mizu, compiler.levels.builtin, mizu_backend.machine.schedule)
+	_ : compiler.level = compiler.levels.lower_to(std.level, mizu, mizu_backend.machine.schedule)
+	_ : compiler.level = compiler.levels.set_host(mizu)
+}

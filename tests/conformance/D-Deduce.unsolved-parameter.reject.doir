@@ -1,0 +1,6 @@
+// D-Deduce: nothing at the call site or its destination mentions T, so T is never solved.
+pick : (T: deduced type) -> std.u8 = {
+	zero : std.u8 = 0
+	_ : _ = std.return(zero)
+}
+r : std.u8 = pick()

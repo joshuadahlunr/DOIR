@@ -1,0 +1,7 @@
+// RF-Fields: `pair` has fields 0 and 1, so there is no field 2.
+pair : type = {
+	a : std.u8
+	b : std.u8
+}
+two : std.pointer_sized = 2
+f : std.meta.entity = std.types.field(pair, two)

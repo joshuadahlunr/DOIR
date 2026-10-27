@@ -1,0 +1,8 @@
+// D-Return: the callee is found inside a namespace, and control flow is not exempt (B-If).
+flow : namespace = {
+	export if : (condition: std.u1, then: block, else: block) -> _
+}
+c : std.u1 = 1
+a : block = { _ : _ = std.block_result(std.nothing) ; }
+b : block = { _ : _ = std.block_result(std.nothing) ; }
+_ : _ = flow.if(c, a, b)

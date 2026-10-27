@@ -1,0 +1,8 @@
+// C-Call: a never_comptime function type is never folded, and a library root line must fold (L-Entry).
+unary_t : type = (v: std.u8) -> std.u8
+_ : type = std.types.never_comptime(unary_t)
+f : unary_t = {
+	_ : _ = std.return(v)
+}
+one : std.u8 = 1
+r : std.u8 = f(one)

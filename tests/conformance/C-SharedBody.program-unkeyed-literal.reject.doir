@@ -1,0 +1,15 @@
+// C-SharedBody: `text` is never a specialization key, so its comptime argument is a runtime operand and must be converted to runtime.
+message_t : type = std.types.distinct_copy(std.c_string)
+_ : type = std.types.share_body_across_values(message_t)
+log : (v: std.u8, text: message_t) -> std.u8 = {
+	_ : _ = std.return(v)
+}
+f : (v: std.u8) -> std.u8 = {
+	hello : message_t = "hello"
+	r : std.u8 = log(v, hello)
+	_ : _ = std.return(r)
+}
+seed : std.u8 = 7
+x : std.u8 = std.comptime_to_runtime(seed)
+r : std.u8 = f(x)
+_ : _ = std.halt()

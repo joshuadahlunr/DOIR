@@ -1,0 +1,2 @@
+// TF-Name: a type position names a binding; bind the former's result to a name first.
+p : std.types.pointer(std.u8) = std.pointers.null()

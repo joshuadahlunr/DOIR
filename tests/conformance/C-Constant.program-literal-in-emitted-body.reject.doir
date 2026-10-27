@@ -1,0 +1,11 @@
+// C-Constant: `zero` is a literal, so it is comptime even in an emitted body, and the assertion fails while compiling.
+f : (v: std.u8) -> std.u8 = {
+	zero : std.u1 = 0
+	message : std.c_string = "C-Constant: a literal is known at compile time, so this assertion fails while compiling"
+	_ : void = std.diagnostics.assert(zero, message)
+	_ : _ = std.return(v)
+}
+seed : std.u8 = 7
+x : std.u8 = std.comptime_to_runtime(seed)
+r : std.u8 = f(x)
+_ : _ = std.halt()

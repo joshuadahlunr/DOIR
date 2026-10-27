@@ -1,0 +1,2 @@
+// V-Literal: an integer literal fits an n-bit type only below 2^n; 256 does not fit std.u8.
+x : std.u8 = 256

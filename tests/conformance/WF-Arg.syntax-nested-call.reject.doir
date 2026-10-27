@@ -1,0 +1,4 @@
+// WF-Arg: a call argument names a binding; a nested call has to be bound to a name first.
+f : (a: std.u8) -> std.u8
+one : std.u8 = 1
+r : std.u8 = f(f(one))

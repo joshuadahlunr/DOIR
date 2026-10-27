@@ -1,0 +1,18 @@
+// B-If: both branches yield the destination's type, and `wide` yields a std.pointer_sized.
+f : (c: std.u1, v: std.u8) -> std.u8 = {
+	narrow : block = {
+		_ : _ = std.block_result(v)
+	}
+	wide : block = {
+		n : std.pointer_sized = std.numbers.widen(v)
+		_ : _ = std.block_result(n)
+	}
+	r : std.u8 = std.if(c, narrow, wide)
+	_ : _ = std.return(r)
+}
+bit : std.u1 = 1
+c : std.u1 = std.comptime_to_runtime(bit)
+seed : std.u8 = 7
+x : std.u8 = std.comptime_to_runtime(seed)
+r : std.u8 = f(c, x)
+_ : _ = std.halt()

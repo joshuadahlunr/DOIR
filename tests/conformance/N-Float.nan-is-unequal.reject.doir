@@ -1,0 +1,6 @@
+// N-Float: 0.0 / 0.0 is NaN, and NaN is not equal to itself.
+zero : std.numbers.f64 = 0.0
+nan : std.numbers.f64 = std.divide(zero, zero)
+equal : std.u1 = std.is_equal(nan, nan)
+message : std.c_string = "N-Float: NaN compares unequal to itself, so this assertion fails"
+_ : void = std.diagnostics.assert(equal, message)

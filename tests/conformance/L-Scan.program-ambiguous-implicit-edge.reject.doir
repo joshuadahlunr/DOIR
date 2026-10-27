@@ -1,0 +1,3 @@
+// L-Scan: the program writes no edge and names `machine`, which both backends answer, so its implicit edge is ambiguous. backends: support/two-targets.doir
+x : machine.u8 = 1
+_ : _ = std.halt()

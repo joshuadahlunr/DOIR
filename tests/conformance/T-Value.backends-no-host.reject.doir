@@ -1,0 +1,17 @@
+// T-Value: with two targets, set_host has to name one of them.
+first_backend : namespace = {
+	path : compiler.byte_pointer = "../../reference/machine.doir"
+	_ : compiler.pointer_sized = compiler.paste_file(path)
+}
+second_backend : namespace = {
+	path : compiler.byte_pointer = "../../reference/machine.doir"
+	_ : compiler.pointer_sized = compiler.paste_file(path)
+}
+export targets : namespace = {
+	export first : compiler.level = compiler.levels.make(first_backend)
+	export second : compiler.level = compiler.levels.make(second_backend)
+	_ : compiler.level = compiler.levels.lower_to(first, compiler.levels.builtin, first_backend.machine.schedule)
+	_ : compiler.level = compiler.levels.lower_to(std.level, first, first_backend.machine.schedule)
+	_ : compiler.level = compiler.levels.lower_to(second, compiler.levels.builtin, second_backend.machine.schedule)
+	_ : compiler.level = compiler.levels.lower_to(std.level, second, second_backend.machine.schedule)
+}

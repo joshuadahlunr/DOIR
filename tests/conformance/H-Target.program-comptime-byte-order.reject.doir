@@ -1,0 +1,15 @@
+// H-Target: comptime memory uses the target's byte order; Mizu is little-endian, so the first byte of 1 is 1.
+first_byte : () -> std.u8 = {
+	cell : std.pointer_sized_pointer = std.stack.allocate(std.pointer_sized)
+	one : std.pointer_sized = 1
+	_ : std.pointer_sized = std.pointers.store(cell, one)
+	bytes : std.byte_pointer = std.reinterpret_bits(cell)
+	b : std.u8 = std.pointers.load(bytes)
+	_ : _ = std.return(b)
+}
+got : std.u8 = first_byte()
+zero : std.u8 = 0
+is_zero : std.u1 = std.is_equal(got, zero)
+message : std.c_string = "H-Target: the target is little-endian, so the first byte is 1 and this assertion fails"
+_ : void = std.diagnostics.assert(is_zero, message)
+_ : _ = std.halt()

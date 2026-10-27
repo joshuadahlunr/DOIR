@@ -1,0 +1,17 @@
+// M-Idempotent: applying `packed` twice is applying it once, so `twice` and `once` have one size.
+twice : type = {
+	a : std.u8
+	b : std.pointer_sized
+}
+once : type = {
+	a : std.u8
+	b : std.pointer_sized
+}
+_ : type = std.types.packed(twice)
+_ : type = std.types.packed(twice)
+_ : type = std.types.packed(once)
+twice_bits : std.pointer_sized = std.types.size_bits(twice)
+once_bits : std.pointer_sized = std.types.size_bits(once)
+differ : std.u1 = std.is_not_equal(twice_bits, once_bits)
+message : std.c_string = "M-Idempotent: a repeated modifier has no further effect, so this assertion fails"
+_ : void = std.diagnostics.assert(differ, message)

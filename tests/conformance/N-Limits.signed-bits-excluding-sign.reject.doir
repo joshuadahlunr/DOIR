@@ -1,0 +1,6 @@
+// N-Limits: bits_excluding_sign excludes a signed type's sign bit, so std.pointer_difference has 63.
+d : std.pointer_sized = std.numbers.bits_excluding_sign(std.pointer_difference)
+sixty_four : std.pointer_sized = 64
+same : std.u1 = std.is_equal(d, sixty_four)
+message : std.c_string = "N-Limits: a signed type's value bits exclude the sign bit, so this assertion fails"
+_ : void = std.diagnostics.assert(same, message)

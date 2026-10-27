@@ -1,0 +1,17 @@
+// RF-FieldPtr: the field must belong to the object's type; `other.a` is not a field of `record`.
+record : type = {
+	a : std.u8
+}
+other : type = {
+	a : std.u8
+}
+record_pointer : type = std.types.pointer(record)
+byte_pointer : type = std.types.pointer(std.u8)
+f : (o: record_pointer) -> byte_pointer = {
+	field : std.meta.entity = std.meta.entity_of(other.a)
+	p : byte_pointer = std.types.field_pointer(o, field)
+	_ : _ = std.return(p)
+}
+cell : record_pointer = std.static.allocate(record)
+r : byte_pointer = f(cell)
+_ : _ = std.halt()

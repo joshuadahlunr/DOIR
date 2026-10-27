@@ -1,0 +1,4 @@
+// I-Export: an importer sees only exported names, and `hidden` is not exported.
+path : std.c_string = "support/private.doir"
+_ : std.pointer_sized = std.import(path)
+copy : std.u8 = std.copy(std.u8, hidden)

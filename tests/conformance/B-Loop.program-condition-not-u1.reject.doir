@@ -1,0 +1,15 @@
+// B-Loop: a loop condition yields a std.u1, and this one yields a std.u8.
+f : (v: std.u8) -> std.u8 = {
+	condition : block = {
+		_ : _ = std.block_result(v)
+	}
+	body : block = {
+		_ : _ = std.block_result(std.nothing)
+	}
+	_ : void = std.while(condition, body)
+	_ : _ = std.return(v)
+}
+seed : std.u8 = 7
+x : std.u8 = std.comptime_to_runtime(seed)
+r : std.u8 = f(x)
+_ : _ = std.halt()

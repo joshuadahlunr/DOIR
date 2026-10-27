@@ -1,0 +1,10 @@
+// L-Bind: a bind_pass inside a block binding would exist only if the block runs, so its name cannot be found without running it.
+forbid_nothing : (e: std.meta.entity) -> std.u8 = {
+	zero : std.u8 = 0
+	_ : _ = std.return(zero)
+}
+name : compiler.byte_pointer = "forbidNothing"
+setup : block = {
+	_ : (e: std.meta.entity) -> std.u8 = compiler.levels.bind_pass(forbid_nothing, name)
+	_ : _ = std.block_result(std.nothing)
+}

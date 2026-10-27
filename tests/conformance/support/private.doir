@@ -1,0 +1,10 @@
+// Imported by the I-Export, I-ExportPath and I-Import cases, and pasted by the I-Paste cases.
+hidden : std.u8 = 1
+export shown : std.u8 = 2
+export record : type = {
+	a : std.u8
+}
+outer : namespace = {
+	export reachable : std.u8 = 3
+	unreachable : std.u8 = 4
+}

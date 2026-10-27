@@ -1,0 +1,3 @@
+// M-Ctor: a type constructor takes a type; `count` is a std.u8 value.
+count : std.u8 = 1
+p : type = std.types.pointer(count)

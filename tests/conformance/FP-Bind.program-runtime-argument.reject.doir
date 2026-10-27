@@ -1,0 +1,16 @@
+// FP-Bind: bind_arguments binds parameters to comptime arguments, and `v` is runtime.
+add_t : type = (a: std.u8, b: std.u8) -> std.u8
+add : add_t = {
+	r : std.u8 = std.add(a, b)
+	_ : _ = std.return(r)
+}
+add_one_t : type = (b: std.u8) -> std.u8
+f : (v: std.u8) -> std.u8 = {
+	bound : add_one_t = std.functions.bind_arguments(add, v)
+	r : std.u8 = bound(v)
+	_ : _ = std.return(r)
+}
+seed : std.u8 = 7
+x : std.u8 = std.comptime_to_runtime(seed)
+r : std.u8 = f(x)
+_ : _ = std.halt()

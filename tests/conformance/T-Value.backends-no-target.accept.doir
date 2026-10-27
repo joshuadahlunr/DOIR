@@ -1,0 +1,5 @@
+// T-Value: nothing lowers onto builtin, so the build has no target and gets the default one: the host's native backend, or Mizu if the host cannot be determined.
+mizu_backend : namespace = {
+	path : compiler.byte_pointer = "../../reference/machine.doir"
+	_ : compiler.pointer_sized = compiler.paste_file(path)
+}

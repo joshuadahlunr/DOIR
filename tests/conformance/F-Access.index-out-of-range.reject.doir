@@ -1,0 +1,9 @@
+// F-Access: `third` is called with two elements, so index 2 does not exist.
+third : (rest: pack) -> std.u8 = {
+	two : std.pointer_sized = 2
+	r : std.u8 = std.packs.get(rest, two)
+	_ : _ = std.return(r)
+}
+a : std.u8 = 1
+b : std.u8 = 2
+r : std.u8 = third(a, b)

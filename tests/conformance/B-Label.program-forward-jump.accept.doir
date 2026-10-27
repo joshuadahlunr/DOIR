@@ -1,0 +1,11 @@
+// B-Label: a label is named by its declaration, and a forward jump may name it before the line that places it.
+f : (v: std.u8) -> std.u8 = {
+	_ : _ = std.jump_to(after)
+	skipped : std.u8 = std.add(v, v)
+	after : std.label = std.place_label()
+	_ : _ = std.return(v)
+}
+seed : std.u8 = 7
+x : std.u8 = std.comptime_to_runtime(seed)
+r : std.u8 = f(x)
+_ : _ = std.halt()

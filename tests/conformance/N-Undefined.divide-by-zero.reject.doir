@@ -1,0 +1,4 @@
+// N-Undefined: division by zero has no result, so folding it is a compile error.
+one : std.u8 = 1
+zero : std.u8 = 0
+r : std.u8 = std.divide(one, zero)

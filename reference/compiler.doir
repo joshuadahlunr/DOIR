@@ -1,0 +1,125 @@
+// Level 0 (`compiler`) prototypes, transcribed from the legacy builtin block (`buildBuiltinBlock`, waterfall `source/doir/interface_.d:1951`). A declaration with a type and no body is a builtin the compiler implements itself (H-Boot); the legacy block gave some an empty body `{}` its passes folded away, which WF-Term does not allow, so here they are prototypes too. The flags in the comments are what the builtin block attached to each entity. What a backend stacked on top of this has to provide - the primitive types, the `compiler_impl` hooks, the register classes, the schedule - is `reference/machine.doir`.
+
+// Root of the builtin block: the outermost scope of every lookup (R-Unqual). `type`, `block` and `deduced_type` carry Comptime | AlwaysComptime and a reserved discriminator (M-Distinct); without it they would be the same type as every empty aggregate (S-Struct).
+type : type = {}
+block : type = {}
+void : type = {}
+// `deduced type`, spelled `deduced_type` here because a declaration names one identifier.
+deduced_type : type = {}
+// A variadic parameter's type (F-Pack): Comptime | AlwaysComptime, and a reserved discriminator.
+pack : type = {}
+// Markers valid only as the declared type of an alias or a namespace (A-Res, R-Merge).
+alias : type = {}
+namespace : type = {}
+_ : type = {}	// the placeholder `_` in type position: one shared entity, replaced per use site by its own type variable
+
+compiler : namespace = {
+	// Primitive type constructors. `pointer_sized` and `byte` are the only two the builtin block itself builds; everything else is a layout the machine level asks for.
+	base_type_t : type = (size_bits: pointer_sized, align_bits: pointer_sized) -> type	// Comptime
+	base_type : base_type_t
+	comptime_base_type : base_type_t	// as base_type, but AlwaysComptime with a fresh discriminator
+	// As base_type, carrying Signed or Float and its reserved discriminator (S-Numeric), so signed, unsigned and float types of one layout are three types. Needed before level 1 runs: a backend declares its integer and float types with them (H-Boot).
+	signed_base_type : base_type_t
+	float_base_type : base_type_t
+
+	%64 : pointer_sized = 64
+	pointer_sized : type = base_type(%64, %64)
+
+	%8 : pointer_sized = 8
+	byte : type = base_type(%8, %8)
+	byte_pointer : type = pointer(byte)
+
+	// The entity handle (E-Remap): host-word layout, a reserved discriminator, and AlwaysComptime, so an id never reaches runtime or memory (MEM-Escape). `std.meta.entity` aliases it; it is here because `compiler_impl` needs it (L-Mono).
+	entity : type = comptime_base_type(%64, %64)
+
+	// Call introspection primitives for compiler_impl hooks (L-Mono, T-Bridge).
+	argument_count_t : type = (call: entity) -> pointer_sized	// Comptime
+	argument_count : argument_count_t
+	argument_t : type = (call: entity, i: pointer_sized) -> entity	// Comptime
+	argument : argument_t
+
+	// Pastes a file's declarations in place, as if written there (I-Paste); not an import.
+	paste_file_t : type = (path: byte_pointer) -> pointer_sized	// Comptime
+	paste_file : paste_file_t
+
+	// Emission.
+	emit_t : type = (b: byte) -> byte	// Comptime
+	emit : emit_t
+	emit_bytes_t : type = (bytes: byte_pointer) -> byte	// Comptime
+	emit_bytes : emit_bytes_t
+
+	// Levels (T-Value): the nodes of the tower, joined by `lower_to` edges whose passes lower one onto another (L-Lower). AlwaysComptime like `entity`, since a level value holds an entity id (MEM-Escape). Floor names (H-Boot): a build without std builds its tower with these too. The scan reads `make`, `this_file` and `lower_to` before ascent, so they are written only at level scope (L-Scan).
+	level : type = comptime_base_type(%64, %64)
+	levels : namespace = {
+		make_t : type = (implementation: namespace) -> level	// Comptime
+		make : make_t
+		this_file_t : type = () -> level	// Comptime
+		this_file : this_file_t
+		// Lowers `from` onto `to` by the passes, a string naming them, and returns `from`.
+		lower_to_t : type = (from: level, to: level, passes: byte_pointer) -> level	// Comptime
+		lower_to : lower_to_t
+		// Adds the check `name`, a query over each of `t`'s own entities, to its semantic analysis (L-Sema), and returns `t`: a level's analysis, as `lower_to` is its lowering.
+		check_t : type = (t: level, name: byte_pointer) -> level	// Comptime
+		check : check_t
+		// Binds `name` to the function `f` as a check or pass, as the compiler binds its own, and returns `f` (L-Bind).
+		bind_pass_t : type = (T: deduced type, f: T, name: byte_pointer) -> T	// Comptime
+		bind_pass : bind_pass_t
+		// The builtin block as a level: a level that lowers onto it with passes is a target.
+		builtin : level
+		// Marks the target that runs the program's root as a script (L-Entry).
+		set_host_t : type = (t: level) -> level	// Comptime
+		set_host : set_host_t
+	}
+
+	// The two layout operations the encoders need. `truncate_to_byte` is the one narrowing conversion: arithmetic is pointer_sized end to end and `emit` writes a byte.
+	shift_right_t : type = (value: pointer_sized, arg: pointer_sized) -> pointer_sized	// Comptime
+	shift_right : shift_right_t
+	truncate_to_byte_t : type = (value: pointer_sized) -> byte	// Comptime
+	truncate_to_byte : truncate_to_byte_t
+
+	// What a body hands back. The marker says only the type; `return` says which register, by giving the value the block's own register. Both are needed: an emitted instruction has already written its result into the return register, so a body wants the marker and nothing else, while a body that computes over several instructions or has two exit points cannot name the register it means.
+	return_t : type = (T: type) -> T	// Comptime
+	indicate_return : return_t
+
+	return_value_t : type = (T: deduced type, value: T) -> T
+	return : return_value_t
+	block_result : return_value_t
+
+	// Constructors and modifiers both return a type rather than a value of their argument (M-Ctor, M-Flag).
+	pointer_t : type = (T: type) -> type	// Comptime
+	pointer : pointer_t
+
+	modifier_t : type = (T: type) -> type	// Comptime
+	always_inline : modifier_t
+	share_body_across_values : modifier_t
+	// Whether a call may be folded is a property of its callee, so the flag has to be reachable on a type from the level that declares it.
+	never_comptime : modifier_t
+
+	assembler : namespace = {
+		register : type = comptime_base_type(%64, %64)	// reuses the 64 above
+
+		// NOTE: the legacy builtin block builds this from the (64, 64) pair, not from a real (type, value) pair. Kept as written (C-Valid, `doir.spec.md` Part III); Part I §7 gives the intended `(T: type, value: T)`.
+		register_for_t : type = (T: pointer_sized, value: pointer_sized) -> register	// Comptime
+		register_for : register_for_t
+
+		return_register_t : type = (_: type) -> register	// Comptime
+		return_register : return_register_t
+
+		// Returns the register it pinned. The legacy SharedBody on these function types has no effect under C-SharedBody, which reads the flag on parameter types; every call folds anyway.
+		pin_register_t : type = (T: type, value: T, register: register) -> register	// SharedBody
+		pin_register : pin_register_t
+
+		// Two assignments, one register. Unsafe because the live ranges are merged without checking whether that loses a value the program still wanted.
+		share_register_t : type = (T: type, a: T, b: T) -> T	// SharedBody
+		share_register : share_register_t
+
+		// The machine's register classes, declared by the backend. Repeated calls add ranges rather than replace them.
+		register_range_t : type = (first: register, last: register) -> register	// Comptime | SharedBody
+		caller_saved_registers : register_range_t
+		callee_saved_registers : register_range_t
+		argument_registers : register_range_t
+
+		begin_register_allocation_t : type = () -> register
+		begin_register_allocation : begin_register_allocation_t
+	}
+}

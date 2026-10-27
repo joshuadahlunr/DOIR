@@ -1,0 +1,12 @@
+// DG-Contract: `halve`'s precondition is an assertion at the top of its body, and this folded call breaks it.
+halve : (n: std.u8) -> std.u8 = {
+	zero : std.u8 = 0
+	nonzero : std.u1 = std.is_not_equal(n, zero)
+	message : std.c_string = "DG-Contract: halve requires a nonzero argument, so this assertion fails while compiling"
+	_ : void = std.diagnostics.assert(nonzero, message)
+	two : std.u8 = 2
+	r : std.u8 = std.divide(n, two)
+	_ : _ = std.return(r)
+}
+zero : std.u8 = 0
+r : std.u8 = halve(zero)

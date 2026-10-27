@@ -1,0 +1,14 @@
+// R-Order: f names g, declared below it; lookup ignores line order, so f returns 7.
+f : () -> std.u8 = {
+	r : std.u8 = g()
+	_ : _ = std.return(r)
+}
+g : () -> std.u8 = {
+	seven : std.u8 = 7
+	_ : _ = std.return(seven)
+}
+got : std.u8 = f()
+eight : std.u8 = 8
+same : std.u1 = std.is_equal(got, eight)
+message : std.c_string = "R-Order: f resolves g declared below it and returns 7, so this assertion fails"
+_ : void = std.diagnostics.assert(same, message)

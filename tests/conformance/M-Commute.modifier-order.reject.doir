@@ -1,0 +1,18 @@
+// M-Commute: flag modifiers commute, so making a type packed then a union lays out like the reverse.
+first : type = {
+	a : std.u8
+	b : std.pointer_sized
+}
+second : type = {
+	a : std.u8
+	b : std.pointer_sized
+}
+_ : type = std.types.packed(first)
+_ : type = std.types.union(first)
+_ : type = std.types.union(second)
+_ : type = std.types.packed(second)
+first_bits : std.pointer_sized = std.types.size_bits(first)
+second_bits : std.pointer_sized = std.types.size_bits(second)
+differ : std.u1 = std.is_not_equal(first_bits, second_bits)
+message : std.c_string = "M-Commute: modifier order does not matter, so this assertion fails"
+_ : void = std.diagnostics.assert(differ, message)

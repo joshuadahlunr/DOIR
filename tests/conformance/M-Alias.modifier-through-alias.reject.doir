@@ -1,0 +1,11 @@
+// M-Alias: making the alias packed makes the type it names packed.
+record : type = {
+	a : std.u8
+	b : std.pointer_sized
+}
+view : alias = record
+_ : type = std.types.packed(view)
+packed : std.u1 = std.types.is_packed(record)
+not_packed : std.u1 = std.logical_not(packed)
+message : std.c_string = "M-Alias: making view packed made record packed, so this assertion fails"
+_ : void = std.diagnostics.assert(not_packed, message)

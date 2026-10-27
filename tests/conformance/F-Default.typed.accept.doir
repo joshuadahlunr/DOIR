@@ -1,0 +1,2 @@
+// F-Default: a typed parameter may carry a default constant.
+f : (n: std.u8 = 0) -> std.u8

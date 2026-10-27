@@ -1,0 +1,2 @@
+// WF-Term: the program root ends with a terminator (L-Entry).
+x : std.u8 = 1

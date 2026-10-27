@@ -1,0 +1,8 @@
+// N-Operand: arithmetic takes base types; an aggregate is added field by field.
+pair : type = {
+	a : std.u8
+	b : std.u8
+}
+one : std.u8 = 1
+p : pair = pair(one, one)
+sum : pair = std.add(p, p)

@@ -1,0 +1,7 @@
+// R-Merge: the two `settings` blocks merge into one, which then declares `depth` twice (WF-Unique).
+settings : namespace = {
+	depth : std.u8 = 1
+}
+settings : namespace = {
+	depth : std.u8 = 2
+}

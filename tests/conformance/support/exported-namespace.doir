@@ -1,0 +1,4 @@
+// Imported by the I-ExportNS case: `member` is exported only because its namespace is.
+export shared : namespace = {
+	member : std.u8 = 1
+}

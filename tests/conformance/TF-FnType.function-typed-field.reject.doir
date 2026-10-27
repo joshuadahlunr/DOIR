@@ -1,0 +1,4 @@
+// TF-FnType: only functions have function types; a field holding a function is a function pointer.
+handler : type = {
+	callback : (v: std.u8) -> std.u8
+}

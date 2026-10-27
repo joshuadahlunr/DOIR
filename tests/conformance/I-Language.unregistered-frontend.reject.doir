@@ -1,0 +1,3 @@
+// I-Language: the grammar keeps `language` blocks, but this compiler registers no frontend, so one is an error.
+x : std.u8 = 1
+language "chocopy" { def f(): pass }

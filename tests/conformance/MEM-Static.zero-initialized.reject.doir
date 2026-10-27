@@ -1,0 +1,11 @@
+// MEM-Static: a static slot starts zeroed, so the folded load reads 0.
+read_slot : () -> std.u8 = {
+	slot : std.byte_pointer = std.static.allocate(std.u8)
+	v : std.u8 = std.pointers.load(slot)
+	_ : _ = std.return(v)
+}
+got : std.u8 = read_slot()
+zero : std.u8 = 0
+nonzero : std.u1 = std.is_not_equal(got, zero)
+message : std.c_string = "MEM-Static: the slot is zero-initialized, so this assertion fails"
+_ : void = std.diagnostics.assert(nonzero, message)

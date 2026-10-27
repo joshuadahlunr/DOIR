@@ -1,0 +1,2 @@
+// TF-Self: std.types.self names the type being defined, and none is being defined here.
+p : type = std.types.pointer(std.types.self)

@@ -1,0 +1,7 @@
+// DG-Report: a reported error makes the build fail once this level's comptime finishes.
+x : std.u8 = 1
+e : std.meta.entity = std.meta.entity_of(x)
+where : std.meta.source_location.location = std.meta.source_location.get(e)
+message : std.c_string = "DG-Report: reported from a metaprogram"
+help : std.c_string = ""
+_ : void = std.diagnostics.error(message, help, where)

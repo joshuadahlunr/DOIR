@@ -1,0 +1,11 @@
+// L-Scan: `chosen` holds what set_host returns, not a make call, so the scan cannot tell which level the edge leaves.
+mizu_backend : namespace = {
+	path : compiler.byte_pointer = "../../reference/machine.doir"
+	_ : compiler.pointer_sized = compiler.paste_file(path)
+}
+export targets : namespace = {
+	export mizu : compiler.level = compiler.levels.make(mizu_backend)
+	_ : compiler.level = compiler.levels.lower_to(std.level, mizu, mizu_backend.machine.schedule)
+	chosen : compiler.level = compiler.levels.set_host(mizu)
+	_ : compiler.level = compiler.levels.lower_to(chosen, compiler.levels.builtin, mizu_backend.machine.schedule)
+}

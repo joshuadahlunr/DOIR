@@ -1,0 +1,3 @@
+// A-Res: an alias with no referent is well-formed until it is used; this use is the error.
+missing : alias = does_not_exist
+copy : std.u8 = std.copy(std.u8, missing)

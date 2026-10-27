@@ -1,0 +1,14 @@
+// TF-Overload: both members take a std.u8 with a fixed type, so they tie for the exact tier and the call is ambiguous.
+first : (v: std.u8) -> std.u8 = {
+	one : std.u8 = 1
+	_ : _ = std.return(one)
+}
+second : (v: std.u8) -> std.u8 = {
+	two : std.u8 = 2
+	_ : _ = std.return(two)
+}
+pick : std.functions.overload_set = std.functions.create_overload_set()
+_ : std.functions.overload_set = std.functions.add_overload(pick, first)
+_ : std.functions.overload_set = std.functions.add_overload(pick, second)
+seven : std.u8 = 7
+got : std.u8 = pick(seven)

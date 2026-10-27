@@ -1,0 +1,11 @@
+// RF-Square: applying `packed` through the type's entity makes the type itself packed.
+record : type = {
+	a : std.u8
+	b : std.pointer_sized
+}
+e : std.meta.entity = std.meta.entity_of(record)
+_ : std.meta.entity = std.meta.types.packed(e)
+packed : std.u1 = std.types.is_packed(record)
+not_packed : std.u1 = std.logical_not(packed)
+message : std.c_string = "RF-Square: record is packed, so this assertion fails"
+_ : void = std.diagnostics.assert(not_packed, message)

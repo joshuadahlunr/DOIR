@@ -1,0 +1,4 @@
+// M-Flag: no type is both AlwaysComptime and NeverComptime.
+unary_t : type = (a: std.u8) -> std.u8
+_ : type = std.types.always_comptime(unary_t)
+_ : type = std.types.never_comptime(unary_t)

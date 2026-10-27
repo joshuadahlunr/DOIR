@@ -1,0 +1,86 @@
+// Machine-level (Mizu) test. Needs `mizu.doir` and `standard.mizu.doir`, ported from tree/D (roadmap Phase 5). The latter also supplies `std.u64`, `std.u1`, `std.debug_print` and `std.execute_if`, which are Mizu extensions beyond the `standard.doir` interface.
+path : compiler.byte_pointer = "./standard.mizu.doir"
+_ : compiler.pointer_sized = compiler.paste_file(path)
+_ : compiler.assembler.register = compiler.assembler.begin_register_allocation()
+
+blk : block = {
+	q : std.u64 = 1234
+	q_runtime : std.u64 = std.comptime_to_runtime(q)
+	_ : std.u64 = mizu.load_immediate(std.u64, q_runtime)
+	_ : compiler.assembler.register = compiler.assembler.pin_register(std.u64, q_runtime, mizu.x1)
+	_ : std.u64 = std.debug_print(q)
+	_ : _ = std.block_result(std.false) ;
+}
+true : std.u64 = 1
+ran : std.u64 = std.execute_if(blk, true)
+
+a : std.u64 = 5
+a_runtime : std.u64 = std.comptime_to_runtime(a)
+_ : std.u64 = mizu.load_immediate(std.u64, a_runtime)
+b : std.u64 = 6
+b_runtime : std.u64 = std.comptime_to_runtime(b)
+_ : std.u64 = mizu.load_immediate(std.u64, b_runtime)
+c : std.u64 = std.add(a, b)
+d : std.u64 = 7
+d_runtime : std.u64 = std.comptime_to_runtime(d)
+_ : std.u64 = mizu.load_immediate(std.u64, d_runtime)
+e : std.u64 = std.subtract(c, d)
+_ : std.u64 = std.debug_print(e)
+c_runtime : std.u64 = std.comptime_to_runtime(c)
+_ : compiler.assembler.register = compiler.assembler.pin_register(std.u64, c_runtime, mizu.x3)
+e_runtime : std.u64 = std.comptime_to_runtime(e)
+_ : compiler.assembler.register = compiler.assembler.pin_register(std.u64, e_runtime, mizu.x4)
+
+then_blk : block = {
+	x : std.u64 = 111
+	x_runtime : std.u64 = std.comptime_to_runtime(x)
+	_ : std.u64 = mizu.load_immediate(std.u64, x_runtime)
+	_ : std.u64 = std.debug_print(x)
+	_ : _ = std.block_result(std.nothing) ;
+}
+else_blk : block = {
+	y : std.u64 = 222
+	y_runtime : std.u64 = std.comptime_to_runtime(y)
+	_ : std.u64 = mizu.load_immediate(std.u64, y_runtime)
+	_ : std.u64 = std.debug_print(y)
+	_ : _ = std.block_result(std.nothing) ;
+}
+
+cond : std.u1 = 1
+cond_runtime : std.u1 = std.comptime_to_runtime(cond)
+_ : std.u1 = mizu.load_immediate(std.u1, cond_runtime)
+_ : void = std.if(cond_runtime, then_blk, else_blk) // `if` returns `_`, so the destination names it (D-Return)
+
+// Blocks share nothing across iterations but memory (B-Loop), so the counter lives in a stack cell allocated before the loop (MEM-Stack) and every block reloads it.
+u64_pointer : type = std.types.pointer(std.u64)
+counter : u64_pointer = std.stack.allocate(std.u64)
+n : std.u64 = 3
+n_runtime : std.u64 = std.comptime_to_runtime(n)
+_ : std.u64 = std.pointers.store(counter, n_runtime)
+
+loop_cond : block = {
+	current : std.u64 = std.pointers.load(counter)
+	zero : std.u64 = 0
+	zero_runtime : std.u64 = std.comptime_to_runtime(zero)
+	more : std.u1 = std.is_not_equal(current, zero_runtime)
+	_ : _ = std.block_result(more)
+}
+body : block = {
+	current : std.u64 = std.pointers.load(counter)
+	one : std.u64 = 1
+	one_runtime : std.u64 = std.comptime_to_runtime(one)
+	next : std.u64 = std.subtract(current, one_runtime)
+	_ : std.u64 = std.pointers.store(counter, next)
+	_ : std.u64 = std.debug_print(next)
+	_ : _ = std.block_result(std.nothing)
+}
+_ : void = std.while(loop_cond, body)
+
+_ : _ = std.jump_to(after)
+	skipped : std.u64 = 999
+	skipped_runtime : std.u64 = std.comptime_to_runtime(skipped)
+	_ : std.u64 = mizu.load_immediate(std.u64, skipped_runtime)
+	_ : std.u64 = std.debug_print(skipped)
+after : std.label = std.place_label()
+
+_ : _ = std.halt()

@@ -1,0 +1,5 @@
+// Imported by L-Scan.program-import-makes-level: a file that makes a level, which an imported file may not do.
+extra : namespace = {
+	nothing_here : compiler.pointer_sized = 0
+}
+export extra_target : compiler.level = compiler.levels.make(extra)

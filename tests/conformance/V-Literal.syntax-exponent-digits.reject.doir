@@ -1,0 +1,2 @@
+// V-Literal: an exponent marker is followed by digits.
+x : t = 1e

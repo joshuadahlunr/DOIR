@@ -1,0 +1,4 @@
+// I-ExportPath: `outer` can be named on the path to `reachable`, but its unexported `unreachable` stays hidden.
+path : std.c_string = "support/private.doir"
+_ : std.pointer_sized = std.import(path)
+copy : std.u8 = std.copy(std.u8, outer.unreachable)

@@ -1,0 +1,222 @@
+// A backend's contract, everything `standard.doir` and the spec require a machine to provide, written as the declarations a backend makes: `T-Sig` (Part II §17) calls it sig(std), and a level stacked on a target that omits any of it fails to resolve. Transcribed from the prototype machine (`mizu.doir`, `standard.mizu.doir` in `tree/D`) and restated against the abstract `machine` namespace the spec uses.
+//
+// A declaration with a type and no body is a symbol the backend has to supply (`I-Extern`): a real backend gives each of them a body. The file is a backend's contents: a backends file pastes it into a namespace, makes that namespace a level and lowers it onto `compiler.levels.builtin` (`L-Lower`, `reference/backends.doir`), so its root namespaces are exported. Its signatures name only level-0 and machine entities (`L-Mono`).
+
+// Primitive types (`T-Sig`). Widths are the target's, not the host's: `H-Target` makes comptime layouts use the target's, and `compiler.pointer_sized` is only the host word the widths are written in.
+export machine : namespace = {
+	%1 : compiler.pointer_sized = 1
+	%8 : compiler.pointer_sized = 8
+	%32 : compiler.pointer_sized = 32
+	%64 : compiler.pointer_sized = 64
+
+	// The type of comparisons and logical operations.
+	u1 : type = compiler.base_type(%1, %1)
+	// The type of `std.byte`.
+	u8 : type = compiler.base_type(%8, %8)
+	u32 : type = compiler.base_type(%32, %32)
+	u64 : type = compiler.base_type(%64, %64)
+
+	// Exactly one of u32 and u64 is the target's pointer width; the machine picks it.
+	pointer_sized : alias = u64
+
+	// Signed and as wide as a pointer (S-Numeric): a type of its own, not `pointer_sized`.
+	i64 : type = compiler.signed_base_type(%64, %64)
+	pointer_difference : alias = i64
+
+	// Byte order of every value in memory, comptime memory included (T-Sig, H-Target): 0 little-endian, 1 big-endian.
+	byte_order : compiler.pointer_sized = 0
+
+	// Registers (`REG-Phys`, Part I §7): every allocatable one is a comptime value of the compiler's `register` type. These are Mizu's class bounds; the registers between them are declared alike.
+	x0 : compiler.assembler.register = 0
+	t0 : compiler.assembler.register = 1
+	t19 : compiler.assembler.register = 20
+	ra : compiler.assembler.register = 21
+	a0 : compiler.assembler.register = 22
+	a7 : compiler.assembler.register = 29
+	a8 : compiler.assembler.register = 30
+	a234 : compiler.assembler.register = 256
+
+	// Register classes, as ranges; a repeated call adds a range. `x0` and `ra` are in no class, so the allocatable set is discontiguous.
+	_ : compiler.assembler.register = compiler.assembler.caller_saved_registers(t0, t19)
+	_ : compiler.assembler.register = compiler.assembler.argument_registers(a0, a7)
+	_ : compiler.assembler.register = compiler.assembler.callee_saved_registers(a8, a234)
+
+	// Descent order (`L-Stage`, Part I §7), transcribed from `mizu.doir:2571`; the edges onto and out of the machine run it (`L-Lower`). `foldBaseTypes` precedes `typeCheck` because `S-Struct` compares layouts, and every builtin type is an unfolded `base_type` call until something folds it.
+	schedule : compiler.byte_pointer = """
+		sequential(
+			depthFirst(nameReuse),
+			depthFirst(functionArity),
+			breadthFirst(foldBaseTypes),
+			depthFirst(typeCheck),
+			depthFirst(computeTypeProperties),
+			depthFirst(runSchedule),
+			runRegisteredSchedules,
+			applyGlobally(sequential(
+				sort,
+				depthFirst(pinRegisters),
+				breadthFirst(computeAllocatorInputs),
+				assignTemporaries,
+				depthFirst(pinRegisters)
+			)),
+			breadthFirst(computeCompilerNamespace!false),
+			depthFirst(materializeImmediates),
+			depthFirst(materializeLabels),
+			sorted(monomorphizeFunctions, false),
+			breadthFirst(inlineFunctions),
+			breadthFirst(computeCompilerNamespace!true)
+		)
+	"""
+
+	// Closes the register classes; the return and yield registers are named per type, not per class.
+	_ : compiler.assembler.register = compiler.assembler.begin_register_allocation()
+}
+
+// The calling-convention hooks (`T-Sig`): the five primitives a machine supplies for `std` to emit a function that inlining and folding did not remove. The compiler calls them itself while lowering. Each carries NeverComptime: every argument is known at compile time, so without it the evaluator would run them and emit nothing. `compiler.entity` is the handle `std.meta.entity` aliases, so `L-Mono` holds.
+export compiler_impl : namespace = {
+	// `function` is a declaration handle, not a value: a call site cannot name a label buried in the callee's body (`R-Unqual` walks outward only), so lowering hands over the function itself.
+	frame_t : type = (function: compiler.entity)
+	_ : type = compiler.never_comptime(frame_t)
+	// Frame setup below `function`'s entry label; spills the return address.
+	prologue : frame_t
+	// Teardown below `function`'s exit label; reloads the return address and jumps through it.
+	epilogue : frame_t
+
+	// One move per argument, into the register its position names. Recursive, since each argument lands in a different register: `i` is the slot as much as the index.
+	pass_arguments_t : type = (call: compiler.entity, i: machine.pointer_sized)
+	_ : type = compiler.never_comptime(pass_arguments_t)
+	pass_arguments : pass_arguments_t
+
+	// Passes the call's arguments, leaves the return address in the return-address register for the prologue to spill, and jumps to `function`'s entry label.
+	transfer_t : type = (function: compiler.entity, call: compiler.entity)
+	_ : type = compiler.never_comptime(transfer_t)
+	call : transfer_t
+
+	// Moves `value` into the return register and jumps to the exit label, so one teardown serves every exit point (`WF-Term`).
+	emit_return_t : type = (T: deduced type, value: T, function: compiler.entity)
+	_ : type = compiler.never_comptime(emit_return_t)
+	emit_return : emit_return_t
+
+	// Bridge hooks (`T-Bridge`), needed only in a build with several targets; each side writes its half. Emits `function` as an entry point other targets can call.
+	export_entry : frame_t
+	// One namespace per target this backend calls into, named after the declaration holding the target (`targets.spirv` gives `bridges.spirv`). Its `call : transfer_t` marshals arguments and result, replacing `call` above for a callee live only there; a target with no namespace here cannot be called from this one. Mizu calls no other target, so it declares none.
+	bridges : namespace = {}
+}
+
+// Backend primitives (`T-Sig`, `I-Extern`): the bodyless prototypes of `standard.doir` that are not host hooks, under the same names, so `R-Mangle` gives them the same symbols. Their flags are `std`'s. Host hooks are the compiler's, on every target (`H-Hook`, `reference/host.doir`); the wrappers of `std.types`, `std.functions` and `std.numbers` already have bodies.
+export std : namespace = {
+	// Width changes and conversions (N-Convert, N-FloatConvert); `float_convert` only with a float type (T-Optional).
+	numbers : namespace = {
+		widen : (Tout: deduced type, Tin: deduced type, v: Tin) -> Tout
+		truncate : (Tout: deduced type, Tin: deduced type, v: Tin) -> Tout
+		float_convert : (Tout: deduced type, Tin: deduced type, v: Tin) -> Tout
+	}
+
+	// Whether an operation would leave its type's range (N-Overflow).
+	would_overflow : namespace = {
+		add : (T: deduced type, a: T, b: T) -> machine.u1
+		subtract : (T: deduced type, a: T, b: T) -> machine.u1
+		multiply : (T: deduced type, a: T, b: T) -> machine.u1
+		divide : (T: deduced type, a: T, b: T) -> machine.u1
+		remainder : (T: deduced type, a: T, b: T) -> machine.u1
+		shift_left : (T: deduced type, a: T, b: T) -> machine.u1
+		negate : (T: deduced type, v: T) -> machine.u1
+		truncate : (Tout: deduced type, Tin: deduced type, v: Tin) -> machine.u1
+	}
+
+	reinterpret_bits : (Tin: deduced type, in: Tin, Tout: deduced type) -> Tout
+	copy : (T: type, v: T) -> T
+	comptime_to_runtime : (T: deduced type, v: T) -> T
+
+	// Control flow (B-Inline, B-Loop, B-If). A label is `std.label`, a distinct copy of the entity handle (B-Label).
+	run_block : (body: block) -> _
+	defer : (body: block) -> void
+	while : (condition: block, body: block) -> _
+	for : (init: block, condition: block, step: block, body: block) -> _
+	loop_length : (Tptr: deduced type, result: Tptr) -> machine.pointer_sized
+	free_loop_result : (Tptr: deduced type, result: Tptr) -> void
+	if : (condition: machine.u1, then: block, else: block) -> _
+	return : (T: deduced type, value: T) -> T
+	block_result : (T: deduced type, value: T) -> T
+	place_label : () -> compiler.entity
+	halt : ()
+	jump_relative : (instructions_to_jump: machine.pointer_sized) -> compiler.byte_pointer
+	jump_to : (destination: compiler.entity) -> compiler.byte_pointer
+	jump_relative_if : (condition: machine.u1, instructions_to_jump: machine.pointer_sized) -> compiler.byte_pointer
+	jump_to_if : (condition: machine.u1, destination: compiler.entity) -> compiler.byte_pointer
+
+	pointers : namespace = {
+		load : (Tptr: deduced type, Tvalue: deduced type, pointer: Tptr) -> Tvalue
+		store : (Tptr: deduced type, Tvalue: deduced type, pointer: Tptr, value: Tvalue) -> Tvalue
+		offset : (Tptr: deduced type, pointer: Tptr, byte_offset: machine.pointer_difference) -> Tptr
+		element_pointer : (Tptr: deduced type, pointer: Tptr, index: machine.pointer_sized) -> Tptr
+		difference : (Tptr: deduced type, a: Tptr, b: Tptr) -> machine.pointer_difference
+		is_null : (Tptr: deduced type, pointer: Tptr) -> machine.u1
+		load_field : (Tptr: deduced type, Tvalue: deduced type, object: Tptr, field: compiler.entity) -> Tvalue
+		store_field : (Tptr: deduced type, Tvalue: deduced type, object: Tptr, field: compiler.entity, value: Tvalue) -> Tvalue
+		null : (Tptr: deduced type) -> Tptr
+	}
+
+	// The runtime stack (MEM-Stack); `alignment` is in bytes, a power of two.
+	stack : namespace = {
+		load : (T: deduced type, stack_offset: machine.pointer_sized) -> T
+		store : (T: deduced type, value: T, stack_offset: machine.pointer_sized) -> T
+		push : (amount: machine.pointer_sized, alignment: machine.pointer_sized) -> compiler.byte_pointer
+		pop : (amount: machine.pointer_sized) -> compiler.byte_pointer
+		allocate : (T: type) -> _
+		top : () -> compiler.byte_pointer
+	}
+
+	// The runtime heap is required (MEM-Heap), usually over the C library. Static storage is laid out by the compiler, and comptime memory is the host's (MEM-Static, MEM-Comptime).
+	heap : namespace = {
+		allocate : (size: machine.pointer_sized, alignment: machine.pointer_sized) -> compiler.byte_pointer
+		reallocate : (p: compiler.byte_pointer, size: machine.pointer_sized, alignment: machine.pointer_sized) -> compiler.byte_pointer
+		free : (p: compiler.byte_pointer) -> void
+	}
+
+	// Arithmetic and comparison (Part II §13). On a float type they follow IEEE 754 (N-Float).
+	is_equal : (T: deduced type, a: T, b: T) -> machine.u1
+	is_not_equal : (T: deduced type, a: T, b: T) -> machine.u1
+	is_less : (T: deduced type, a: T, b: T) -> machine.u1
+	is_less_equal : (T: deduced type, a: T, b: T) -> machine.u1
+	is_greater : (T: deduced type, a: T, b: T) -> machine.u1
+	is_greater_equal : (T: deduced type, a: T, b: T) -> machine.u1
+	add : (T: deduced type, a: T, b: T) -> T
+	subtract : (T: deduced type, a: T, b: T) -> T
+	divide : (T: deduced type, a: T, b: T) -> T
+	multiply : (T: deduced type, a: T, b: T) -> T
+	remainder : (T: deduced type, a: T, b: T) -> T
+	negate : (T: deduced type, v: T) -> T
+	max : (T: deduced type, a: T, b: T) -> T
+	min : (T: deduced type, a: T, b: T) -> T
+	square_root : (T: deduced type, v: T) -> T
+	shift_left : (T: deduced type, a: T, b: T) -> T
+	shift_right : (T: deduced type, a: T, b: T) -> T
+	bitwise_xor : (T: deduced type, a: T, b: T) -> T
+	bitwise_or : (T: deduced type, a: T, b: T) -> T
+	bitwise_and : (T: deduced type, a: T, b: T) -> T
+	bitwise_not : (T: deduced type, v: T) -> T
+	logical_not : (v: machine.u1) -> machine.u1
+	logical_and : (a: machine.u1, b: machine.u1) -> machine.u1
+	logical_or : (a: machine.u1, b: machine.u1) -> machine.u1
+	is_negative : (T: deduced type, v: T) -> machine.u1
+	is_positive : (T: deduced type, v: T) -> machine.u1
+	is_infinite : (T: deduced type, v: T) -> machine.u1
+	is_not_a_number : (T: deduced type, v: T) -> machine.u1
+}
+
+// Optional features (T-Optional): a machine may provide any or none, and one it provides has exactly this shape. `std.numbers` aliases each either way; `integer_available` and `float_available` ask first. The prototype machine provides all of them.
+export machine : namespace = {
+	%16 : compiler.pointer_sized = 16
+
+	// Unsigned integers other than the pointer width; u32 above is a 32-bit target's required one.
+	u16 : type = compiler.base_type(%16, %16)
+
+	// Signed integers; the pointer-wide one is `pointer_difference`.
+	i8 : type = compiler.signed_base_type(%8, %8)
+	i16 : type = compiler.signed_base_type(%16, %16)
+	i32 : type = compiler.signed_base_type(%32, %32)
+
+	// IEEE 754 binary32 and binary64 (N-Float). A machine that provides one gives the float bodies of `std.square_root`, `is_not_a_number`, `is_infinite` and `numbers.float_convert`.
+	f32 : type = compiler.float_base_type(%32, %32)
+	f64 : type = compiler.float_base_type(%64, %64)
+}

@@ -1,0 +1,2 @@
+// F-Pack: only the last parameter may be a pack.
+f : (rest: pack, v: std.u8) -> void

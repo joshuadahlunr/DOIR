@@ -1,0 +1,6 @@
+// T-Live: `record.a` is live on b inside a type live only on a, so it is live for no target and is reported. backends: support/two-targets.doir
+record : type = {
+	a : std.u8
+}
+_ : _ = std.targets.compile_for(record, targets.a)
+_ : _ = std.targets.compile_for(record.a, targets.b)

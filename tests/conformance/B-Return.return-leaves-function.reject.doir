@@ -1,0 +1,19 @@
+// B-Return: std.return in a spliced branch returns from `pick`, so it returns 1 and skips the rest.
+pick : (c: std.u1) -> std.u8 = {
+	one : std.u8 = 1
+	early : block = {
+		_ : _ = std.return(one)
+	}
+	late : block = {
+		_ : _ = std.block_result(std.nothing)
+	}
+	_ : void = std.if(c, early, late)
+	two : std.u8 = 2
+	_ : _ = std.return(two)
+}
+yes : std.u1 = 1
+got : std.u8 = pick(yes)
+two : std.u8 = 2
+same : std.u1 = std.is_equal(got, two)
+message : std.c_string = "B-Return: the branch returned 1 from pick, so this assertion fails"
+_ : void = std.diagnostics.assert(same, message)

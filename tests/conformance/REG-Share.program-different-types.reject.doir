@@ -1,0 +1,11 @@
+// REG-Share: two values share a virtual register only if they have one type; a u8 and a pointer_sized do not.
+f : (v: std.u8, w: std.pointer_sized) -> std.u8 = {
+	_ : std.u8 = std.unsafe.share_register(v, w)
+	_ : _ = std.return(v)
+}
+seed : std.u8 = 7
+x : std.u8 = std.comptime_to_runtime(seed)
+wide : std.pointer_sized = 9
+y : std.pointer_sized = std.comptime_to_runtime(wide)
+r : std.u8 = f(x, y)
+_ : _ = std.halt()

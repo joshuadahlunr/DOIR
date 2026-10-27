@@ -1,0 +1,16 @@
+// L-Lower: std lowers onto mizu directly and through `shader`, so under mizu it has two ways down.
+mizu_backend : namespace = {
+	path : compiler.byte_pointer = "../../reference/machine.doir"
+	_ : compiler.pointer_sized = compiler.paste_file(path)
+}
+shader : namespace = {
+	nothing_here : compiler.pointer_sized = 0
+}
+export targets : namespace = {
+	export mizu : compiler.level = compiler.levels.make(mizu_backend)
+	export shading : compiler.level = compiler.levels.make(shader)
+	_ : compiler.level = compiler.levels.lower_to(mizu, compiler.levels.builtin, mizu_backend.machine.schedule)
+	_ : compiler.level = compiler.levels.lower_to(std.level, mizu, mizu_backend.machine.schedule)
+	_ : compiler.level = compiler.levels.lower_to(shading, mizu, mizu_backend.machine.schedule)
+	_ : compiler.level = compiler.levels.lower_to(std.level, shading, mizu_backend.machine.schedule)
+}

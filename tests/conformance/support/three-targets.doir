@@ -1,0 +1,25 @@
+// Backends for three-target cases: three Mizu targets, `a` the host, with std lowered onto each.
+a_backend : namespace = {
+	path : compiler.byte_pointer = "../../../reference/machine.doir"
+	_ : compiler.pointer_sized = compiler.paste_file(path)
+}
+b_backend : namespace = {
+	path : compiler.byte_pointer = "../../../reference/machine.doir"
+	_ : compiler.pointer_sized = compiler.paste_file(path)
+}
+c_backend : namespace = {
+	path : compiler.byte_pointer = "../../../reference/machine.doir"
+	_ : compiler.pointer_sized = compiler.paste_file(path)
+}
+export targets : namespace = {
+	export a : compiler.level = compiler.levels.make(a_backend)
+	export b : compiler.level = compiler.levels.make(b_backend)
+	export c : compiler.level = compiler.levels.make(c_backend)
+	_ : compiler.level = compiler.levels.lower_to(a, compiler.levels.builtin, a_backend.machine.schedule)
+	_ : compiler.level = compiler.levels.lower_to(std.level, a, a_backend.machine.schedule)
+	_ : compiler.level = compiler.levels.lower_to(b, compiler.levels.builtin, b_backend.machine.schedule)
+	_ : compiler.level = compiler.levels.lower_to(std.level, b, b_backend.machine.schedule)
+	_ : compiler.level = compiler.levels.lower_to(c, compiler.levels.builtin, c_backend.machine.schedule)
+	_ : compiler.level = compiler.levels.lower_to(std.level, c, c_backend.machine.schedule)
+	_ : compiler.level = compiler.levels.set_host(a)
+}

@@ -1,0 +1,14 @@
+// B-Label: `inner` sees `top`, a label in `f`, by name, but a jump may only reach a label in its own function.
+f : (v: std.u8) -> std.u8 = {
+	top : std.label = std.place_label()
+	inner : (w: std.u8) -> std.u8 = {
+		_ : _ = std.jump_to(top)
+		_ : _ = std.return(w)
+	}
+	r : std.u8 = inner(v)
+	_ : _ = std.return(r)
+}
+seed : std.u8 = 7
+x : std.u8 = std.comptime_to_runtime(seed)
+r : std.u8 = f(x)
+_ : _ = std.halt()

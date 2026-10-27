@@ -1,0 +1,4 @@
+// DG-Assert: a comptime condition of 0 is a compile error naming the message.
+zero : std.u1 = 0
+message : std.c_string = "DG-Assert: the condition is a comptime 0, so this assertion fails while compiling"
+_ : void = std.diagnostics.assert(zero, message)

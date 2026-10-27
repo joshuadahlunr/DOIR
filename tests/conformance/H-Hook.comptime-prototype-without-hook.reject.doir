@@ -1,0 +1,6 @@
+// H-Hook: a bodyless comptime prototype is supplied by the host, and the host has no `my_hook` (reference/host.doir).
+my_hook_t : type = (v: std.u8) -> std.u8
+_ : type = std.types.always_comptime(my_hook_t)
+my_hook : my_hook_t
+one : std.u8 = 1
+r : std.u8 = my_hook(one)

@@ -1,0 +1,7 @@
+// N-Overflow: 255 + 1 leaves std.u8, so std.would_overflow.add is 1.
+max : std.u8 = 255
+one : std.u8 = 1
+over : std.u1 = std.would_overflow.add(max, one)
+fits : std.u1 = std.logical_not(over)
+message : std.c_string = "N-Overflow: 255 + 1 overflows std.u8, so this assertion fails"
+_ : void = std.diagnostics.assert(fits, message)

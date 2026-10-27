@@ -1,0 +1,9 @@
+// TF-Overload: the call sees only members added above it (M-Lexical), and `pick` has none there.
+pick_u8 : (v: std.u8) -> std.u8 = {
+	one : std.u8 = 1
+	_ : _ = std.return(one)
+}
+pick : std.functions.overload_set = std.functions.create_overload_set()
+seven : std.u8 = 7
+got : std.u8 = pick(seven)
+_ : std.functions.overload_set = std.functions.add_overload(pick, pick_u8)

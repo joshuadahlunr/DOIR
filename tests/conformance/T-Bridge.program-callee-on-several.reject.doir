@@ -1,0 +1,10 @@
+// T-Bridge: `kernel` lives on b and c, so a call from a would make the compiler pick one; it is ill-formed instead. backends: support/three-targets.doir
+kernel : (v: std.u8) -> std.u8 = {
+	_ : _ = std.return(v)
+}
+_ : _ = std.targets.compile_for(kernel, targets.b)
+_ : _ = std.targets.compile_for(kernel, targets.c)
+seed : std.u8 = 7
+x : std.u8 = std.comptime_to_runtime(seed)
+r : std.u8 = kernel(x)
+_ : _ = std.halt()

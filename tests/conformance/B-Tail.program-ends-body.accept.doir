@@ -1,0 +1,11 @@
+// B-Tail: a tail call ends a function body on its own, returning the callee's result.
+g : (v: std.u8) -> std.u8 = {
+	_ : _ = std.return(v)
+}
+f : (v: std.u8) -> std.u8 = {
+	_ : _ = tail g(v)
+}
+seed : std.u8 = 7
+x : std.u8 = std.comptime_to_runtime(seed)
+r : std.u8 = f(x)
+_ : _ = std.halt()

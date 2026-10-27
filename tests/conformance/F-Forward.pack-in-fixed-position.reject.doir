@@ -1,0 +1,11 @@
+// F-Forward: a pack spreads only as a call's last argument; anywhere else it is one always-comptime value, not a std.u8.
+inner : (v: std.u8, rest: pack) -> std.u8 = {
+	_ : _ = std.return(v)
+}
+outer : (rest: pack) -> std.u8 = {
+	one : std.u8 = 1
+	r : std.u8 = inner(rest, one)
+	_ : _ = std.return(r)
+}
+a : std.u8 = 1
+r : std.u8 = outer(a)

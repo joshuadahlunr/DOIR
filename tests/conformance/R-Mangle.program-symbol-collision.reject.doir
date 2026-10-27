@@ -1,0 +1,16 @@
+// R-Mangle: `math.add` is the symbol of math's add, so renaming another function to it defines the symbol twice.
+math : namespace = {
+	add : (v: std.u8) -> std.u8 = {
+		_ : _ = std.return(v)
+	}
+}
+other : (v: std.u8) -> std.u8 = {
+	_ : _ = std.return(v)
+}
+name : std.c_string = "math.add"
+_ : _ = std.functions.set_symbol_name(other, name)
+seed : std.u8 = 7
+x : std.u8 = std.comptime_to_runtime(seed)
+a : std.u8 = math.add(x)
+b : std.u8 = other(x)
+_ : _ = std.halt()

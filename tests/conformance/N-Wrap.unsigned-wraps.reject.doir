@@ -1,0 +1,8 @@
+// N-Wrap: unchecked addition keeps the low bits, so 255 + 1 is 0 in std.u8.
+max : std.u8 = 255
+one : std.u8 = 1
+sum : std.u8 = std.add(max, one)
+zero : std.u8 = 0
+nonzero : std.u1 = std.is_not_equal(sum, zero)
+message : std.c_string = "N-Wrap: 255 + 1 wraps to 0, so this assertion fails"
+_ : void = std.diagnostics.assert(nonzero, message)

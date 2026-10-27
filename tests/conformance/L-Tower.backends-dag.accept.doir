@@ -1,0 +1,23 @@
+// L-Tower: a DAG, not a chain: std lowers onto `a` directly and onto `b` through `shader`, a level that is not a target.
+a_backend : namespace = {
+	path : compiler.byte_pointer = "../../reference/machine.doir"
+	_ : compiler.pointer_sized = compiler.paste_file(path)
+}
+b_backend : namespace = {
+	path : compiler.byte_pointer = "../../reference/machine.doir"
+	_ : compiler.pointer_sized = compiler.paste_file(path)
+}
+shader : namespace = {
+	nothing_here : compiler.pointer_sized = 0
+}
+export targets : namespace = {
+	export a : compiler.level = compiler.levels.make(a_backend)
+	export b : compiler.level = compiler.levels.make(b_backend)
+	export shading : compiler.level = compiler.levels.make(shader)
+	_ : compiler.level = compiler.levels.lower_to(a, compiler.levels.builtin, a_backend.machine.schedule)
+	_ : compiler.level = compiler.levels.lower_to(b, compiler.levels.builtin, b_backend.machine.schedule)
+	_ : compiler.level = compiler.levels.lower_to(shading, b, b_backend.machine.schedule)
+	_ : compiler.level = compiler.levels.lower_to(std.level, a, a_backend.machine.schedule)
+	_ : compiler.level = compiler.levels.lower_to(std.level, shading, b_backend.machine.schedule)
+	_ : compiler.level = compiler.levels.set_host(a)
+}

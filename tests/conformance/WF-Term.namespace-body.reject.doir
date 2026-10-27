@@ -1,0 +1,6 @@
+// WF-Term: a function body inside a namespace still needs a terminator.
+ns : namespace = {
+	f : () -> void = {
+		x : std.u8 = 1
+	}
+}

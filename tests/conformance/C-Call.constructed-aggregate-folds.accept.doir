@@ -1,0 +1,8 @@
+// C-Call: constructing an aggregate from comptime fields folds, so the result is comptime and may be stored as an attribute (AT-Set).
+priority : type = {
+	level : std.u8
+}
+thing : std.u8 = 0
+three : std.u8 = 3
+value : priority = priority(three)
+_ : priority = std.attributes.set(thing, priority, value)

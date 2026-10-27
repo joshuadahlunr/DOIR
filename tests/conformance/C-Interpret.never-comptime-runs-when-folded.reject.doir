@@ -1,0 +1,14 @@
+// C-Interpret: a folded body runs every call it makes, even one whose type is never_comptime.
+unary_t : type = (v: std.u1) -> std.u1
+_ : type = std.types.never_comptime(unary_t)
+check : unary_t = {
+	message : std.c_string = "C-Interpret: check runs inside the folded outer, so this assertion fails while compiling"
+	_ : void = std.diagnostics.assert(v, message)
+	_ : _ = std.return(v)
+}
+outer : () -> std.u1 = {
+	zero : std.u1 = 0
+	r : std.u1 = check(zero)
+	_ : _ = std.return(r)
+}
+r : std.u1 = outer()

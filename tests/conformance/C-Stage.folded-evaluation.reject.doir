@@ -1,0 +1,9 @@
+// C-Stage: `stage` is called while folding, so std.is_comptime_evaluation() is 1.
+stage : () -> std.u1 = {
+	s : std.u1 = std.is_comptime_evaluation()
+	_ : _ = std.return(s)
+}
+folding : std.u1 = stage()
+emitting : std.u1 = std.logical_not(folding)
+message : std.c_string = "C-Stage: this call is folded, so this assertion fails"
+_ : void = std.diagnostics.assert(emitting, message)

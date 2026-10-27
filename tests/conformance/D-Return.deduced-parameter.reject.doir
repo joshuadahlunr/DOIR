@@ -1,0 +1,7 @@
+// D-Return: a `_` destination receiving a `_` return is unsolvable, even when the callee has other deduced parameters.
+address_t : type = (T: deduced type, function: T) -> _
+address : address_t
+f : (v: std.u8) -> std.u8 = {
+	_ : _ = std.return(v)
+}
+_ : _ = address(f)

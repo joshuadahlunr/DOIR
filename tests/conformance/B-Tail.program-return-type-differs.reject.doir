@@ -1,0 +1,12 @@
+// B-Tail: `g` returns a u64 but `f` returns a u8, so a tail call cannot return g's result from f.
+g : (v: std.u8) -> std.numbers.u64 = {
+	w : std.numbers.u64 = std.numbers.widen(v)
+	_ : _ = std.return(w)
+}
+f : (v: std.u8) -> std.u8 = {
+	_ : _ = tail g(v)
+}
+seed : std.u8 = 7
+x : std.u8 = std.comptime_to_runtime(seed)
+r : std.u8 = f(x)
+_ : _ = std.halt()

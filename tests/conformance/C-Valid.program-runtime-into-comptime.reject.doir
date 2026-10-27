@@ -1,0 +1,15 @@
+// C-Valid: `twice` always runs in the interpreter, which cannot be handed the runtime `v`.
+twice_t : type = (n: std.u8) -> std.u8
+_ : type = std.types.always_comptime(twice_t)
+twice : twice_t = {
+	r : std.u8 = std.add(n, n)
+	_ : _ = std.return(r)
+}
+f : (v: std.u8) -> std.u8 = {
+	r : std.u8 = twice(v)
+	_ : _ = std.return(r)
+}
+seed : std.u8 = 7
+x : std.u8 = std.comptime_to_runtime(seed)
+r : std.u8 = f(x)
+_ : _ = std.halt()

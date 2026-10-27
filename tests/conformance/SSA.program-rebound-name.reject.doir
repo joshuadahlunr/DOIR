@@ -1,0 +1,10 @@
+// SSA: a binding is bound exactly once; a second declaration of `y` does not reassign it.
+f : (v: std.u8) -> std.u8 = {
+	y : std.u8 = std.copy(std.u8, v)
+	y : std.u8 = std.add(y, v)
+	_ : _ = std.return(y)
+}
+seed : std.u8 = 7
+x : std.u8 = std.comptime_to_runtime(seed)
+r : std.u8 = f(x)
+_ : _ = std.halt()

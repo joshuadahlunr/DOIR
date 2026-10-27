@@ -1,0 +1,34 @@
+// B-Loop: a body yielding a value makes the loop return its values; a `pointer(T)` destination takes the heap form with a length header.
+squares : (limit: std.pointer_sized) -> std.pointer_sized = {
+	cell : std.pointer_sized_pointer = std.stack.allocate(std.pointer_sized)
+	init : block = {
+		zero : std.pointer_sized = 0
+		_ : std.pointer_sized = std.pointers.store(cell, zero)
+		_ : _ = std.block_result(std.nothing)
+	}
+	condition : block = {
+		i : std.pointer_sized = std.pointers.load(cell)
+		more : std.u1 = std.is_less(i, limit)
+		_ : _ = std.block_result(more)
+	}
+	step : block = {
+		i : std.pointer_sized = std.pointers.load(cell)
+		one : std.pointer_sized = 1
+		next : std.pointer_sized = std.add(i, one)
+		_ : std.pointer_sized = std.pointers.store(cell, next)
+		_ : _ = std.block_result(std.nothing)
+	}
+	body : block = {
+		i : std.pointer_sized = std.pointers.load(cell)
+		square : std.pointer_sized = std.multiply(i, i)
+		_ : _ = std.block_result(square)
+	}
+	values : std.pointer_sized_pointer = std.for(init, condition, step, body)
+	n : std.pointer_sized = std.loop_length(values)
+	_ : void = std.free_loop_result(values)
+	_ : _ = std.return(n)
+}
+seed : std.pointer_sized = 4
+limit : std.pointer_sized = std.comptime_to_runtime(seed)
+n : std.pointer_sized = squares(limit)
+_ : _ = std.halt()

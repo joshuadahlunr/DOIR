@@ -1,0 +1,7 @@
+// WF-Unique: only namespaces may share a name in one block (R-Merge); a type and a namespace may not.
+point : type = {
+	x : std.u8
+}
+point : namespace = {
+	origin : std.u8 = 0
+}

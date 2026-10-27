@@ -1,0 +1,5 @@
+// T-Live: a namespace has no type to deduce, so compile_for takes its members, not the namespace.
+kernels : namespace = {
+	width : std.u8 = 8
+}
+_ : _ = std.targets.compile_for(kernels, targets.mizu)

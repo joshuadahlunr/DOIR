@@ -1,0 +1,10 @@
+// M-Impure: a modifier whose result is never read still runs; it is not dead code.
+record : type = {
+	a : std.u8
+	b : std.pointer_sized
+}
+unused : type = std.types.packed(record)
+packed : std.u1 = std.types.is_packed(record)
+not_packed : std.u1 = std.logical_not(packed)
+message : std.c_string = "M-Impure: the `packed` call ran although its result is unused, so this assertion fails"
+_ : void = std.diagnostics.assert(not_packed, message)

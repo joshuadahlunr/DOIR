@@ -1,0 +1,2 @@
+// V-Literal: a binary constant has at least one digit.
+x : t = 0b

@@ -1,0 +1,13 @@
+// C-FnType: a function is a comptime binding with no runtime form; convert to runtime its address (FP-Address) instead.
+g : (v: std.u8) -> std.u8 = {
+	_ : _ = std.return(v)
+}
+unary_t : type = (v: std.u8) -> std.u8
+f : (v: std.u8) -> std.u8 = {
+	h : unary_t = std.comptime_to_runtime(g)
+	_ : _ = std.return(v)
+}
+seed : std.u8 = 7
+x : std.u8 = std.comptime_to_runtime(seed)
+r : std.u8 = f(x)
+_ : _ = std.halt()

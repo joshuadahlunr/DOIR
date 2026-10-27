@@ -1,0 +1,12 @@
+// S-Numeric: std.pointer_difference carries the signed discriminator, so it is not std.pointer_sized.
+g : (n: std.pointer_sized) -> std.pointer_sized = {
+	_ : _ = std.return(n)
+}
+f : (d: std.pointer_difference) -> std.pointer_sized = {
+	r : std.pointer_sized = g(d)
+	_ : _ = std.return(r)
+}
+three : std.pointer_difference = 3
+q : std.pointer_difference = std.comptime_to_runtime(three)
+r : std.pointer_sized = f(q)
+_ : _ = std.halt()

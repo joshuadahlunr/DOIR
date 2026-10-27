@@ -1,0 +1,8 @@
+// L-Scan: make is read by the scan before ascent, so it cannot sit in a function body.
+extra : namespace = {
+	nothing_here : std.u8 = 0
+}
+f : () -> compiler.level = {
+	t : compiler.level = compiler.levels.make(extra)
+	_ : _ = std.return(t)
+}

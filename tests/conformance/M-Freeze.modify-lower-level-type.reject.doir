@@ -1,0 +1,2 @@
+// M-Freeze: std.byte_pointer belongs to std's level, which is frozen before this one runs.
+_ : type = std.pointers.read_only(std.byte_pointer)

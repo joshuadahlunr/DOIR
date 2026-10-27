@@ -1,0 +1,10 @@
+// AT-Type: an attribute is its declaration, so `first` and `second` are two attributes despite equal bodies.
+first : type = {}
+second : type = {}
+record : type = {
+	a : std.u8
+}
+_ : first = std.attributes.mark(record, first)
+has : std.u1 = std.attributes.has(record, second)
+message : std.c_string = "AT-Type: record has first, not second, so this assertion fails"
+_ : void = std.diagnostics.assert(has, message)

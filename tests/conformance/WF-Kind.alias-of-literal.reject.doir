@@ -1,0 +1,3 @@
+// WF-Kind: an alias carries only a name and its target; a literal is not a binding it can name.
+one : alias = 1
+two : std.u8 = std.add(one, one)

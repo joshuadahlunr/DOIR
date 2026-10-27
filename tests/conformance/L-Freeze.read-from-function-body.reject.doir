@@ -1,0 +1,13 @@
+// L-Freeze: a body run from the `early` line sees the level as it stands at that line, before the pack.
+record : type = {
+	a : std.u8
+	b : std.pointer_sized
+}
+read_packed : () -> std.u1 = {
+	r : std.u1 = std.types.is_packed(record)
+	_ : _ = std.return(r)
+}
+early : std.u1 = read_packed()
+_ : type = std.types.packed(record)
+message : std.c_string = "L-Freeze: read_packed ran before the pack, so this assertion fails"
+_ : void = std.diagnostics.assert(early, message)

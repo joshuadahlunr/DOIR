@@ -1,0 +1,12 @@
+// I-Extern: the definition bound to a prototype must have the prototype's type.
+ext : (v: std.u8) -> std.u8
+impl : (v: std.pointer_sized) -> std.u8 = {
+	narrow : std.u8 = std.numbers.truncate(v)
+	_ : _ = std.return(narrow)
+}
+name : std.c_string = "ext"
+_ : _ = std.functions.set_symbol_name(impl, name)
+seed : std.u8 = 7
+x : std.u8 = std.comptime_to_runtime(seed)
+r : std.u8 = ext(x)
+_ : _ = std.halt()

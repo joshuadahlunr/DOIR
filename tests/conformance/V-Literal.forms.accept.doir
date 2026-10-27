@@ -1,0 +1,10 @@
+// V-Literal: every constant form of Part I §1, each in a type it fits.
+a : std.u8 = 0b101
+b : std.numbers.f64 = 0x1p3
+c : std.numbers.f64 = 1e5
+d : std.u8 = 017
+e : std.numbers.f64 = 1.5e-3
+f : std.u8 = 0
+g : std.u8 = 'a'
+h : std.c_string = "s"
+i : std.c_string = """raw"""

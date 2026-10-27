@@ -1,0 +1,14 @@
+// B-Scope: `inner` belongs to the block, not to the function around it.
+f : (v: std.u8) -> std.u8 = {
+	work : block = {
+		inner : std.u8 = std.copy(std.u8, v)
+		_ : _ = std.block_result(std.nothing)
+	}
+	_ : void = std.run_block(work)
+	out : std.u8 = std.copy(std.u8, inner)
+	_ : _ = std.return(out)
+}
+seed : std.u8 = 7
+x : std.u8 = std.comptime_to_runtime(seed)
+r : std.u8 = f(x)
+_ : _ = std.halt()

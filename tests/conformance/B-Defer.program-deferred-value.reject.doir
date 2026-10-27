@@ -1,0 +1,12 @@
+// B-Defer: a deferred block yields std.nothing; nothing could receive a value at the function's exit.
+f : (v: std.u8) -> std.u8 = {
+	later : block = {
+		_ : _ = std.block_result(v)
+	}
+	_ : void = std.defer(later)
+	_ : _ = std.return(v)
+}
+seed : std.u8 = 7
+x : std.u8 = std.comptime_to_runtime(seed)
+r : std.u8 = f(x)
+_ : _ = std.halt()

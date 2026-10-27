@@ -1,0 +1,5 @@
+// D-Return: naming the destination type solves the return.
+c : std.u1 = 1
+a : block = { _ : _ = std.block_result(std.nothing) ; }
+b : block = { _ : _ = std.block_result(std.nothing) ; }
+_ : void = std.if(c, a, b)

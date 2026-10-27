@@ -1,0 +1,2 @@
+// WF-Val: a function's value is a body or nothing (a prototype); a constant is neither.
+f : (a: std.u8) -> std.u8 = 5

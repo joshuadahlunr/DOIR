@@ -1,0 +1,10 @@
+// L-Scan: an edge inside a block binding would depend on whether the block runs, so the scan cannot read it.
+extra : namespace = {
+	nothing_here : std.u8 = 0
+}
+extra_target : compiler.level = compiler.levels.make(extra)
+passes : compiler.byte_pointer = ""
+edge : block = {
+	_ : compiler.level = compiler.levels.lower_to(extra_target, std.level, passes)
+	_ : _ = std.block_result(std.nothing)
+}

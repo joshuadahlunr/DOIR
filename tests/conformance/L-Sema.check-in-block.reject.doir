@@ -1,0 +1,10 @@
+// L-Sema: a check given inside a block binding would depend on whether the block runs, so the level's checks cannot be found without running it.
+extra : namespace = {
+	nothing_here : std.u8 = 0
+}
+extra_target : compiler.level = compiler.levels.make(extra)
+arity : compiler.byte_pointer = "functionArity"
+analysis : block = {
+	_ : compiler.level = compiler.levels.check(extra_target, arity)
+	_ : _ = std.block_result(std.nothing)
+}

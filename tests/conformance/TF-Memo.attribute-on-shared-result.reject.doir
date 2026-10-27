@@ -1,0 +1,9 @@
+// TF-Memo: both former calls return one type entity, so an attribute added through `a` is on `b`.
+marker : type = {}
+a : type = std.types.pointer(std.u8)
+b : type = std.types.pointer(std.u8)
+_ : marker = std.attributes.mark(a, marker)
+has : std.u1 = std.attributes.has(b, marker)
+missing : std.u1 = std.logical_not(has)
+message : std.c_string = "TF-Memo: a and b are one entity, so this assertion fails"
+_ : void = std.diagnostics.assert(missing, message)

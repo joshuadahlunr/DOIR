@@ -1,0 +1,4 @@
+// I-Paste: an include adds no aliases, so pasting one file twice into a block declares its names twice (WF-Unique).
+path : compiler.byte_pointer = "support/private.doir"
+_ : compiler.pointer_sized = compiler.paste_file(path)
+_ : compiler.pointer_sized = compiler.paste_file(path)

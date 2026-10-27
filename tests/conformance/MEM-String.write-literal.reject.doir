@@ -1,0 +1,8 @@
+// MEM-String: a string literal's storage is read-only; writing it is undefined, so a folded write is a compile error.
+scribble : () -> std.u8 = {
+	text : std.byte_pointer = "abc"
+	zero : std.u8 = 0
+	_ : std.u8 = std.pointers.store(text, zero)
+	_ : _ = std.return(zero)
+}
+r : std.u8 = scribble()

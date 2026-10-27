@@ -1,0 +1,9 @@
+// C-ToRuntime: `v` is already runtime, so there is nothing to convert.
+f : (v: std.u8) -> std.u8 = {
+	again : std.u8 = std.comptime_to_runtime(v)
+	_ : _ = std.return(again)
+}
+seed : std.u8 = 7
+x : std.u8 = std.comptime_to_runtime(seed)
+r : std.u8 = f(x)
+_ : _ = std.halt()

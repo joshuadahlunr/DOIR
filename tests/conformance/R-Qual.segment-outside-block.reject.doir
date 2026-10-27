@@ -1,0 +1,8 @@
+// R-Qual: after the first segment, `c` is sought only inside a.b, so the root `c` is not found.
+a : namespace = {
+	b : namespace = {
+		d : std.u8 = 1
+	}
+}
+c : std.u8 = 2
+copy : std.u8 = std.copy(std.u8, a.b.c)

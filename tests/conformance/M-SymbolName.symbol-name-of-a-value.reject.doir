@@ -1,0 +1,4 @@
+// M-SymbolName: set_symbol_name gives a function a symbol; a std.u8 value has none.
+count : std.u8 = 1
+name : std.c_string = "count_symbol"
+_ : _ = std.functions.set_symbol_name(count, name)

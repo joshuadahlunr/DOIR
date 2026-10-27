@@ -1,0 +1,18 @@
+// C-Splice: the condition is runtime, so both branches are resolved, and `nowhere` is not declared.
+f : (c: std.u1, v: std.u8) -> std.u8 = {
+	taken : block = {
+		_ : _ = std.block_result(std.nothing)
+	}
+	broken : block = {
+		copy : std.u8 = std.copy(std.u8, nowhere)
+		_ : _ = std.block_result(std.nothing)
+	}
+	_ : void = std.if(c, taken, broken)
+	_ : _ = std.return(v)
+}
+bit : std.u1 = 1
+c : std.u1 = std.comptime_to_runtime(bit)
+seed : std.u8 = 7
+x : std.u8 = std.comptime_to_runtime(seed)
+r : std.u8 = f(c, x)
+_ : _ = std.halt()

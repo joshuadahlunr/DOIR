@@ -1,0 +1,14 @@
+// MEM-Access: storing through a pointer type carrying Immutable is a diagnostic.
+read_only : type = std.types.distinct_copy(std.byte_pointer)
+_ : type = std.pointers.read_only(read_only)
+f : (p: read_only, v: std.u8) -> std.u8 = {
+	_ : std.u8 = std.pointers.store(p, v)
+	_ : _ = std.return(v)
+}
+cell : std.byte_pointer = std.static.allocate(std.u8)
+locked : read_only = std.reinterpret_bits(cell)
+p : read_only = std.comptime_to_runtime(locked)
+seed : std.u8 = 7
+x : std.u8 = std.comptime_to_runtime(seed)
+r : std.u8 = f(p, x)
+_ : _ = std.halt()

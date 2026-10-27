@@ -1,0 +1,6 @@
+// AT-Id: id 1 is std.meta.source_location.location's, so no other type may pin it.
+mine : type = {
+	a : std.u8
+}
+one : std.pointer_sized = 1
+_ : type = std.types.set_attribute_id(mine, one)

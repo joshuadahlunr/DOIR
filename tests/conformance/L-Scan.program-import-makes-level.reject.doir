@@ -1,0 +1,4 @@
+// L-Scan: an imported file arrives finished, so the make call inside it cannot shape the importer's tower.
+path : std.c_string = "support/makes-a-level.doir"
+_ : _ = std.import(path)
+_ : _ = std.halt()

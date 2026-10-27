@@ -1,0 +1,9 @@
+// M-Lexical: `before` is read above the `packed` line, so it sees no Packed flag.
+record : type = {
+	a : std.u8
+	b : std.pointer_sized
+}
+before : std.u1 = std.types.is_packed(record)
+_ : type = std.types.packed(record)
+message : std.c_string = "M-Lexical: the `packed` call below this read had not happened yet, so this assertion fails"
+_ : void = std.diagnostics.assert(before, message)

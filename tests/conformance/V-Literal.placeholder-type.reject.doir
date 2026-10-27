@@ -1,0 +1,2 @@
+// V-Literal: a literal takes the type written on its declaration, so the type is written.
+x : _ = 1

@@ -1,0 +1,12 @@
+// S-Struct: a pointer and std.pointer_sized have one layout but different shapes, so they are not one type.
+g : (n: std.pointer_sized) -> std.pointer_sized = {
+	_ : _ = std.return(n)
+}
+f : (p: std.byte_pointer) -> std.pointer_sized = {
+	r : std.pointer_sized = g(p)
+	_ : _ = std.return(r)
+}
+text : std.byte_pointer = "abc"
+q : std.byte_pointer = std.comptime_to_runtime(text)
+r : std.pointer_sized = f(q)
+_ : _ = std.halt()

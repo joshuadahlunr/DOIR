@@ -1,0 +1,11 @@
+// MEM-Comptime: comptime stack memory lives as long as its interpreted frame, so `cell`'s storage is gone once `leak` returns.
+leak : () -> std.byte_pointer = {
+	cell : std.byte_pointer = std.stack.allocate(std.u8)
+	_ : _ = std.return(cell)
+}
+read : () -> std.u8 = {
+	p : std.byte_pointer = leak()
+	v : std.u8 = std.pointers.load(p)
+	_ : _ = std.return(v)
+}
+r : std.u8 = read()

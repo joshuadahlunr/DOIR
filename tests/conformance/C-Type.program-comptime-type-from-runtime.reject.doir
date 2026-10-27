@@ -1,0 +1,11 @@
+// C-Type: every value of an always-comptime type is comptime, and this one depends on the runtime `v`.
+flag : type = std.types.distinct_copy(std.u1)
+_ : type = std.types.always_comptime(flag)
+f : (v: std.u1) -> std.u1 = {
+	known : flag = std.reinterpret_bits(v)
+	_ : _ = std.return(v)
+}
+bit : std.u1 = 1
+y : std.u1 = std.comptime_to_runtime(bit)
+r : std.u1 = f(y)
+_ : _ = std.halt()

@@ -1,0 +1,3 @@
+// WF-Order: a value is read on a line above the one that binds it.
+y : std.u8 = std.copy(std.u8, v)
+v : std.u8 = 5

@@ -1,0 +1,9 @@
+// AT-Source: the annotation on `x` replaces its parsed range, so its start line is 1, not the line it is written on.
+x : std.u8 = 1 <"AT-Source.annotation-replaces-location.reject.doir":1:1>
+e : std.meta.entity = std.meta.entity_of(x)
+where : std.meta.source_location.location = std.meta.source_location.get(e)
+line : std.pointer_sized = std.meta.source_location.start_line(where)
+written : std.pointer_sized = 2
+same : std.u1 = std.is_equal(line, written)
+message : std.c_string = "AT-Source: the annotation moved x to line 1, so this assertion fails"
+_ : void = std.diagnostics.assert(same, message)

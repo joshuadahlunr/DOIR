@@ -1,0 +1,13 @@
+// FP-Type: a function pointer type carries its own discriminator, so it is not std.byte_pointer.
+g : (v: std.u8) -> std.u8 = {
+	_ : _ = std.return(v)
+}
+unary_t : type = (v: std.u8) -> std.u8
+unary_pointer : type = std.types.function_pointer(unary_t)
+take : (p: std.byte_pointer) -> std.byte_pointer = {
+	_ : _ = std.return(p)
+}
+address : unary_pointer = std.functions.address(g)
+runtime : unary_pointer = std.comptime_to_runtime(address)
+r : std.byte_pointer = take(runtime)
+_ : _ = std.halt()

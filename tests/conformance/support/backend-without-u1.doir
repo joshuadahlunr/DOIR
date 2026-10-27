@@ -1,0 +1,35 @@
+// Backends for the T-Sig case. The backend declares all of sig(std) except `machine.u1` (T-Sig), and leaves every `std` body to the linker (`I-Extern`).
+minimal : namespace = {
+	export machine : namespace = {
+		%1 : compiler.pointer_sized = 1
+		%8 : compiler.pointer_sized = 8
+		%64 : compiler.pointer_sized = 64
+		u8 : type = compiler.base_type(%8, %8)
+		u64 : type = compiler.base_type(%64, %64)
+		pointer_sized : alias = u64
+		i64 : type = compiler.signed_base_type(%64, %64)
+		pointer_difference : alias = i64
+		byte_order : compiler.pointer_sized = 0
+	}
+	export compiler_impl : namespace = {
+		frame_t : type = (function: compiler.entity)
+		_ : type = compiler.never_comptime(frame_t)
+		prologue : frame_t
+		epilogue : frame_t
+		pass_arguments_t : type = (call: compiler.entity, i: machine.pointer_sized)
+		_ : type = compiler.never_comptime(pass_arguments_t)
+		pass_arguments : pass_arguments_t
+		transfer_t : type = (function: compiler.entity, call: compiler.entity)
+		_ : type = compiler.never_comptime(transfer_t)
+		call : transfer_t
+		emit_return_t : type = (T: deduced type, value: T, function: compiler.entity)
+		_ : type = compiler.never_comptime(emit_return_t)
+		emit_return : emit_return_t
+	}
+	passes : compiler.byte_pointer = ""
+}
+export targets : namespace = {
+	export minimal : compiler.level = compiler.levels.make(minimal)
+	_ : compiler.level = compiler.levels.lower_to(minimal, compiler.levels.builtin, minimal.passes)
+	_ : compiler.level = compiler.levels.lower_to(std.level, minimal, minimal.passes)
+}

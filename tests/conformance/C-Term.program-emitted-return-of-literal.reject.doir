@@ -1,0 +1,9 @@
+// C-Term: f is emitted, so its return is emitted, and the comptime `one` must be converted to runtime first.
+f : (v: std.u8) -> std.u8 = {
+	one : std.u8 = 1
+	_ : _ = std.return(one)
+}
+seed : std.u8 = 7
+x : std.u8 = std.comptime_to_runtime(seed)
+r : std.u8 = f(x)
+_ : _ = std.halt()

@@ -1,0 +1,3 @@
+// N-FloatConvert: float_convert needs a Float on one side; between integers use widen or truncate.
+small : std.u8 = 3
+wide : std.pointer_sized = std.numbers.float_convert(small)

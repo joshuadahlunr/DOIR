@@ -1,0 +1,2 @@
+// A-Bind: a former hands back a type, so its destination is `type`, `_` or the type's own type, not std.u8.
+p : std.u8 = std.types.pointer(std.u8)

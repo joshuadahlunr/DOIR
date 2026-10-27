@@ -1,0 +1,2 @@
+// V-Literal: a float literal fits only a Float type.
+x : std.u8 = 1.5

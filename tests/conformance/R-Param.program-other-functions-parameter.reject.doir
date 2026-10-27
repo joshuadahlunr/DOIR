@@ -1,0 +1,12 @@
+// R-Param: `n` is a parameter of f's copy of the type, not a name g can see.
+unary_t : type = (n: std.u8) -> std.u8
+f : unary_t = {
+	_ : _ = std.return(n)
+}
+g : (v: std.u8) -> std.u8 = {
+	_ : _ = std.return(n)
+}
+seed : std.u8 = 7
+x : std.u8 = std.comptime_to_runtime(seed)
+r : std.u8 = g(x)
+_ : _ = std.halt()

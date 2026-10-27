@@ -1,0 +1,18 @@
+// B-Inline: a call that passes a block must be spliced, and `run`'s type forbids inlining.
+run_t : type = (body: block) -> void
+_ : type = std.functions.never_inline(run_t)
+run : run_t = {
+	_ : void = std.run_block(body)
+	_ : _ = std.return(std.nothing)
+}
+f : (v: std.u8) -> std.u8 = {
+	work : block = {
+		_ : _ = std.block_result(std.nothing)
+	}
+	_ : void = run(work)
+	_ : _ = std.return(v)
+}
+seed : std.u8 = 7
+x : std.u8 = std.comptime_to_runtime(seed)
+r : std.u8 = f(x)
+_ : _ = std.halt()

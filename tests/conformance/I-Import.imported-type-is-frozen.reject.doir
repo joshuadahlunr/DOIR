@@ -1,0 +1,4 @@
+// I-Import: an imported file arrives finished, so its types are frozen and the importer cannot make `record` packed.
+path : std.c_string = "support/private.doir"
+_ : std.pointer_sized = std.import(path)
+_ : type = std.types.packed(record)

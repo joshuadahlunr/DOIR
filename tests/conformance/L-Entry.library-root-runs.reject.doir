@@ -1,0 +1,2 @@
+// L-Entry: only the program's root runs; every root line of another file must fold, and std.halt never does.
+_ : _ = std.halt()

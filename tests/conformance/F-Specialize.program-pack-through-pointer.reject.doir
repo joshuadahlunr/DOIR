@@ -1,0 +1,18 @@
+// F-Specialize: each pack shape has its own body, so a function pointer, which has one fixed shape, cannot take a pack.
+variadic_t : type = (rest: pack) -> std.u8
+variadic_pointer : type = std.types.function_pointer(variadic_t)
+f : (p: variadic_pointer, v: std.u8) -> std.u8 = {
+	r : std.u8 = p(v, v)
+	_ : _ = std.return(r)
+}
+first : variadic_t = {
+	zero : std.pointer_sized = 0
+	r : std.u8 = std.packs.get(rest, zero)
+	_ : _ = std.return(r)
+}
+address : variadic_pointer = std.functions.address(first)
+runtime : variadic_pointer = std.comptime_to_runtime(address)
+seed : std.u8 = 7
+x : std.u8 = std.comptime_to_runtime(seed)
+r : std.u8 = f(runtime, x)
+_ : _ = std.halt()

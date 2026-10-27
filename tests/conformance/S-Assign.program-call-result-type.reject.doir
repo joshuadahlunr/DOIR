@@ -1,0 +1,9 @@
+// S-Assign: g returns std.pointer_sized, which a std.u8 destination cannot receive.
+g : (v: std.u8) -> std.pointer_sized = {
+	wide : std.pointer_sized = std.numbers.widen(v)
+	_ : _ = std.return(wide)
+}
+seed : std.u8 = 7
+x : std.u8 = std.comptime_to_runtime(seed)
+r : std.u8 = g(x)
+_ : _ = std.halt()

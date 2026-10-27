@@ -1,0 +1,6 @@
+// I-ExportNS: `shared` is exported, so its `member` is too, and reopening `shared` declares `member` twice (R-Merge).
+path : std.c_string = "support/exported-namespace.doir"
+_ : std.pointer_sized = std.import(path)
+shared : namespace = {
+	member : std.u8 = 2
+}

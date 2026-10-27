@@ -1,0 +1,34 @@
+// B-Loop: an `array(T, n)` destination needs a comptime count, and this loop's limit is a runtime argument.
+length : std.pointer_sized = 4
+four_bytes : type = std.types.array(std.u8, length)
+f : (limit: std.pointer_sized) -> std.u8 = {
+	cell : std.pointer_sized_pointer = std.stack.allocate(std.pointer_sized)
+	init : block = {
+		zero : std.pointer_sized = 0
+		_ : std.pointer_sized = std.pointers.store(cell, zero)
+		_ : _ = std.block_result(std.nothing)
+	}
+	condition : block = {
+		i : std.pointer_sized = std.pointers.load(cell)
+		more : std.u1 = std.is_less(i, limit)
+		_ : _ = std.block_result(more)
+	}
+	step : block = {
+		i : std.pointer_sized = std.pointers.load(cell)
+		one : std.pointer_sized = 1
+		next : std.pointer_sized = std.add(i, one)
+		_ : std.pointer_sized = std.pointers.store(cell, next)
+		_ : _ = std.block_result(std.nothing)
+	}
+	body : block = {
+		seven : std.u8 = 7
+		_ : _ = std.block_result(seven)
+	}
+	values : four_bytes = std.for(init, condition, step, body)
+	zero : std.u8 = 0
+	_ : _ = std.return(zero)
+}
+seed : std.pointer_sized = 4
+limit : std.pointer_sized = std.comptime_to_runtime(seed)
+r : std.u8 = f(limit)
+_ : _ = std.halt()

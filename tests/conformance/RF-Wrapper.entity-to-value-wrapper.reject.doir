@@ -1,0 +1,6 @@
+// RF-Wrapper: std.types wrappers take the entity of a binding; an entity from std.meta continues through std.meta.types.
+record : type = {
+	a : std.u8
+}
+e : std.meta.entity = std.meta.entity_of(record)
+_ : type = std.types.packed(e)

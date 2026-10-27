@@ -1,0 +1,11 @@
+// L-Scan: the scan only recognises make spelled out, so a level made through an alias of it names no level.
+mizu_backend : namespace = {
+	path : compiler.byte_pointer = "../../reference/machine.doir"
+	_ : compiler.pointer_sized = compiler.paste_file(path)
+}
+export targets : namespace = {
+	build : alias = compiler.levels.make
+	export mizu : compiler.level = build(mizu_backend)
+	_ : compiler.level = compiler.levels.lower_to(mizu, compiler.levels.builtin, mizu_backend.machine.schedule)
+	_ : compiler.level = compiler.levels.lower_to(std.level, mizu, mizu_backend.machine.schedule)
+}

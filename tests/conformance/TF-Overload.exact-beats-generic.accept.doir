@@ -1,0 +1,18 @@
+// TF-Overload: `pick_u8` takes a std.u8 with a fixed type, so the call selects it over the generic `pick_any`.
+pick_u8 : (v: std.u8) -> std.u8 = {
+	one : std.u8 = 1
+	_ : _ = std.return(one)
+}
+pick_any : (T: deduced type, v: T) -> std.u8 = {
+	zero : std.u8 = 0
+	_ : _ = std.return(zero)
+}
+pick : std.functions.overload_set = std.functions.create_overload_set()
+_ : std.functions.overload_set = std.functions.add_overload(pick, pick_any)
+_ : std.functions.overload_set = std.functions.add_overload(pick, pick_u8)
+seven : std.u8 = 7
+got : std.u8 = pick(seven)
+one : std.u8 = 1
+same : std.u1 = std.is_equal(got, one)
+message : std.c_string = "TF-Overload: the exact member pick_u8 should have been selected"
+_ : void = std.diagnostics.assert(same, message)

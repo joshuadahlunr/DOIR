@@ -1,0 +1,10 @@
+// R-Shadow: f's own `level` hides the root one, so f returns 2.
+level : std.u8 = 1
+f : () -> std.u8 = {
+	level : std.u8 = 2
+	_ : _ = std.return(level)
+}
+got : std.u8 = f()
+same : std.u1 = std.is_equal(got, level)
+message : std.c_string = "R-Shadow: f returns its own level, 2, so this assertion fails"
+_ : void = std.diagnostics.assert(same, message)

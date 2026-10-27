@@ -1,0 +1,4 @@
+// Q-Cycle: resolving `a` needs `b`, which needs `a`.
+a : alias = b
+b : alias = a
+copy : std.u8 = std.copy(std.u8, a)

@@ -1,0 +1,3 @@
+// WF-Term: the program root ends with std.halt (L-Entry).
+x : std.u8 = 1
+_ : _ = std.halt()

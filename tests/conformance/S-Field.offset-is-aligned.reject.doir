@@ -1,0 +1,11 @@
+// S-Field: `b` is aligned to its own 64 bits, so it starts at bit 64, not right after `a`.
+record : type = {
+	a : std.u8
+	b : std.pointer_sized
+}
+b_field : std.meta.entity = std.meta.entity_of(record.b)
+offset : std.pointer_sized = std.types.field_offset_bits(record, b_field)
+eight : std.pointer_sized = 8
+packed_offset : std.u1 = std.is_equal(offset, eight)
+message : std.c_string = "S-Field: b starts at bit 64, so this assertion fails"
+_ : void = std.diagnostics.assert(packed_offset, message)

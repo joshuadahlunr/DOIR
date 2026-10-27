@@ -1,0 +1,2 @@
+// F-Default: a deduced parameter is never written at a call site, so it takes no default.
+f : (T: deduced type = 0) -> T

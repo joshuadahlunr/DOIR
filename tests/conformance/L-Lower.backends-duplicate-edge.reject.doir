@@ -1,0 +1,12 @@
+// L-Lower: two explicit edges with the same ends would give std two sets of passes onto mizu.
+mizu_backend : namespace = {
+	path : compiler.byte_pointer = "../../reference/machine.doir"
+	_ : compiler.pointer_sized = compiler.paste_file(path)
+}
+export targets : namespace = {
+	export mizu : compiler.level = compiler.levels.make(mizu_backend)
+	_ : compiler.level = compiler.levels.lower_to(mizu, compiler.levels.builtin, mizu_backend.machine.schedule)
+	_ : compiler.level = compiler.levels.lower_to(std.level, mizu, mizu_backend.machine.schedule)
+	other_passes : compiler.byte_pointer = ""
+	_ : compiler.level = compiler.levels.lower_to(std.level, mizu, other_passes)
+}

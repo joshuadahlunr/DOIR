@@ -1,0 +1,9 @@
+// V-NoImplicitCopy: naming a binding is not copying it; write `y : alias = v` or std.copy.
+f : (v: std.u8) -> std.u8 = {
+	y : std.u8 = v
+	_ : _ = std.return(y)
+}
+seed : std.u8 = 7
+x : std.u8 = std.comptime_to_runtime(seed)
+r : std.u8 = f(x)
+_ : _ = std.halt()

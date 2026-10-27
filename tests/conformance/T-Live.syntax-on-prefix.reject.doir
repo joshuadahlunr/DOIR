@@ -1,0 +1,2 @@
+// T-Live: `on` is no longer a declaration prefix; restrict with std.targets.compile_for.
+on x86 s : t = 1

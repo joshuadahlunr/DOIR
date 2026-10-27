@@ -1,0 +1,944 @@
+// Standard interface specification for DOIR. Requires the target's backend to provide machine.u1, machine.u8, the pointer-wide machine.u32 or machine.u64, machine.pointer_sized, machine.pointer_difference, machine.byte_order, and the compiler_impl hooks (rule T-Sig, spec Part II §17), and optionally the wider integers and the floats (rule T-Optional); the whole contract, optional shapes included, is spelled out in `reference/machine.doir`. A function with a type but no body is a prototype. If its type is marked `comptime` it is a host hook the compiler supplies (rule H-Hook, listed in `reference/host.doir`); otherwise a lower level or the linker supplies it (rule I-Extern). `std.meta.*` is entirely hooks, and `std.types.*` and `std.functions.*` are inline wrappers over it (rule RF-Wrapper). Implements in-place modification (M-Flag) and bidirectional deduction (D-Deduce).
+
+std : namespace = {
+	// Reflection handles are entities (`meta.entity`), never plain integers, so E-Remap can rewrite every holder of one when the store is renumbered. A field declaration is an entity, and a dotted path `T.f` names one.
+	//
+	// Every entry here is an always-inline wrapper over its `std.meta.types` counterpart (rule RF-Wrapper): take the entity of each argument, run the entity version, and turn the result back with `meta.from_entity`. `std.meta.types` is therefore the complete interface, and the only one that can be handed a stored entity.
+	types : namespace = {
+		export modifier_t : type = (in: type) -> type
+		_ : type = always_comptime(modifier_t)
+		_ : type = functions.always_inline(modifier_t)
+
+		export type_builder_t : type = (in: type) -> type
+		_ : type = always_comptime(type_builder_t)
+		_ : type = functions.always_inline(type_builder_t)
+
+		set_attribute_id_t : type = (T: type, attribute_id: pointer_sized) -> type
+		_ : type = always_comptime(set_attribute_id_t)
+		_ : type = functions.always_inline(set_attribute_id_t)
+		export set_attribute_id : set_attribute_id_t = {
+			type_entity : meta.entity = meta.entity_of(T)
+			out_entity : meta.entity = meta.types.set_attribute_id(type_entity, attribute_id)
+			out : type = meta.from_entity(out_entity)
+			_ : _ = std.return(out)
+		}
+
+		array_t : type = (in: type, size: pointer_sized) -> type
+		_ : type = always_comptime(array_t)
+		_ : type = functions.always_inline(array_t)
+		export array : array_t = {
+			element_entity : meta.entity = meta.entity_of(in)
+			out_entity : meta.entity = meta.types.array(element_entity, size)
+			out : type = meta.from_entity(out_entity)
+			_ : _ = std.return(out)
+		}
+
+		export always_comptime : modifier_t = {
+			entity : meta.entity = meta.entity_of(in)
+			out_entity : meta.entity = meta.types.always_comptime(entity)
+			out : type = meta.from_entity(out_entity)
+			_ : _ = std.return(out)
+		}
+
+		export never_comptime : modifier_t = {
+			entity : meta.entity = meta.entity_of(in)
+			out_entity : meta.entity = meta.types.never_comptime(entity)
+			out : type = meta.from_entity(out_entity)
+			_ : _ = std.return(out)
+		}
+
+		export share_body_across_values : modifier_t = {
+			entity : meta.entity = meta.entity_of(in)
+			out_entity : meta.entity = meta.types.share_body_across_values(entity)
+			out : type = meta.from_entity(out_entity)
+			_ : _ = std.return(out)
+		}
+
+		export pointer : type_builder_t = {
+			entity : meta.entity = meta.entity_of(in)
+			out_entity : meta.entity = meta.types.pointer(entity)
+			out : type = meta.from_entity(out_entity)
+			_ : _ = std.return(out)
+		}
+
+		// A pointer whose pointee is a function type (rule FP-Type). It is its own type rather than a plain pointer, so `S-Struct` does not silently convert it to a `byte_pointer` and the signature survives being stored in a field.
+		export function_pointer : type_builder_t = {
+			entity : meta.entity = meta.entity_of(in)
+			out_entity : meta.entity = meta.types.function_pointer(entity)
+			out : type = meta.from_entity(out_entity)
+			_ : _ = std.return(out)
+		}
+
+		export union : modifier_t = {
+			entity : meta.entity = meta.entity_of(in)
+			out_entity : meta.entity = meta.types.union(entity)
+			out : type = meta.from_entity(out_entity)
+			_ : _ = std.return(out)
+		}
+
+		export packed : modifier_t = {
+			entity : meta.entity = meta.entity_of(in)
+			out_entity : meta.entity = meta.types.packed(entity)
+			out : type = meta.from_entity(out_entity)
+			_ : _ = std.return(out)
+		}
+
+		export distinct_copy : type_builder_t = {
+			entity : meta.entity = meta.entity_of(in)
+			out_entity : meta.entity = meta.types.distinct_copy(entity)
+			out : type = meta.from_entity(out_entity)
+			_ : _ = std.return(out)
+		}
+
+		size_bits_t : type = (in: type) -> pointer_sized
+		_ : type = always_comptime(size_bits_t)
+		_ : type = functions.always_inline(size_bits_t)
+		export size_bits : size_bits_t = {
+			entity : meta.entity = meta.entity_of(in)
+			out : pointer_sized = meta.types.size_bits(entity)
+			_ : _ = std.return(out)
+		}
+
+		export align_bits : size_bits_t = {
+			entity : meta.entity = meta.entity_of(in)
+			out : pointer_sized = meta.types.align_bits(entity)
+			_ : _ = std.return(out)
+		}
+
+		// The distance between consecutive elements of type `in` (rule RF-Fields).
+		export stride_bits : size_bits_t = {
+			entity : meta.entity = meta.entity_of(in)
+			out : pointer_sized = meta.types.stride_bits(entity)
+			_ : _ = std.return(out)
+		}
+
+		compare_t : type = (a: type, b: type) -> u1
+		_ : type = always_comptime(compare_t)
+		_ : type = functions.always_inline(compare_t)
+		export is_same_type : compare_t = {
+			a_entity : meta.entity = meta.entity_of(a)
+			b_entity : meta.entity = meta.entity_of(b)
+			out : u1 = meta.types.is_same_type(a_entity, b_entity)
+			_ : _ = std.return(out)
+		}
+
+		export converts_implicitly : compare_t = {
+			a_entity : meta.entity = meta.entity_of(a)
+			b_entity : meta.entity = meta.entity_of(b)
+			out : u1 = meta.types.converts_implicitly(a_entity, b_entity)
+			_ : _ = std.return(out)
+		}
+
+		// Layout shape of a type, for metaprograms that branch on it.
+		shape_t : type = (T: type) -> u1
+		_ : type = always_comptime(shape_t)
+		_ : type = functions.always_inline(shape_t)
+		export is_pointer : shape_t = {
+			entity : meta.entity = meta.entity_of(T)
+			out : u1 = meta.types.is_pointer(entity)
+			_ : _ = std.return(out)
+		}
+
+		export is_array : shape_t = {
+			entity : meta.entity = meta.entity_of(T)
+			out : u1 = meta.types.is_array(entity)
+			_ : _ = std.return(out)
+		}
+
+		export has_fields : shape_t = {
+			entity : meta.entity = meta.entity_of(T)
+			out : u1 = meta.types.has_fields(entity)
+			_ : _ = std.return(out)
+		}
+
+		// The layout flags of S-Field: overlapping fields, and fields without padding (rule RF-Fields).
+		export is_union : shape_t = {
+			entity : meta.entity = meta.entity_of(T)
+			out : u1 = meta.types.is_union(entity)
+			_ : _ = std.return(out)
+		}
+
+		export is_packed : shape_t = {
+			entity : meta.entity = meta.entity_of(T)
+			out : u1 = meta.types.is_packed(entity)
+			_ : _ = std.return(out)
+		}
+
+		// The type a pointer type points at; ill-formed for a non-pointer.
+		inner_type_t : type = (T: type) -> type
+		_ : type = always_comptime(inner_type_t)
+		_ : type = functions.always_inline(inner_type_t)
+		export pointed_to_type : inner_type_t = {
+			entity : meta.entity = meta.entity_of(T)
+			out_entity : meta.entity = meta.types.pointed_to_type(entity)
+			out : type = meta.from_entity(out_entity)
+			_ : _ = std.return(out)
+		}
+
+		// The element type of an array type built by `array`, or the pointee of a pointer type (rule RF-Fields).
+		export element : inner_type_t = {
+			entity : meta.entity = meta.entity_of(T)
+			out_entity : meta.entity = meta.types.element(entity)
+			out : type = meta.from_entity(out_entity)
+			_ : _ = std.return(out)
+		}
+
+		// The element count of an array type built by `array`; ill-formed otherwise.
+		array_length_t : type = (T: type) -> pointer_sized
+		_ : type = always_comptime(array_length_t)
+		_ : type = functions.always_inline(array_length_t)
+		export array_length : array_length_t = {
+			entity : meta.entity = meta.entity_of(T)
+			out : pointer_sized = meta.types.array_length(entity)
+			_ : _ = std.return(out)
+		}
+
+		// Field enumeration (rule RF-Fields). `field_count` is the number of declarations in the type's block; `field` names the i-th one.
+		field_count_t : type = (T: type) -> pointer_sized
+		_ : type = always_comptime(field_count_t)
+		_ : type = functions.always_inline(field_count_t)
+		export field_count : field_count_t = {
+			entity : meta.entity = meta.entity_of(T)
+			out : pointer_sized = meta.types.field_count(entity)
+			_ : _ = std.return(out)
+		}
+
+		field_t : type = (T: type, index: pointer_sized) -> meta.entity
+		_ : type = always_comptime(field_t)
+		_ : type = functions.always_inline(field_t)
+		export field : field_t = {
+			entity : meta.entity = meta.entity_of(T)
+			out : meta.entity = meta.types.field(entity, index)
+			_ : _ = std.return(out)
+		}
+
+		field_type_t : type = (T: type, index: pointer_sized) -> type
+		_ : type = always_comptime(field_type_t)
+		_ : type = functions.always_inline(field_type_t)
+		export field_type : field_type_t = {
+			entity : meta.entity = meta.entity_of(T)
+			out_entity : meta.entity = meta.types.field_type(entity, index)
+			out : type = meta.from_entity(out_entity)
+			_ : _ = std.return(out)
+		}
+
+		field_offset_t : type = (T: type, field: meta.entity) -> pointer_sized
+		_ : type = always_comptime(field_offset_t)
+		_ : type = functions.always_inline(field_offset_t)
+		export field_offset_bits : field_offset_t = {
+			entity : meta.entity = meta.entity_of(T)
+			out : pointer_sized = meta.types.field_offset_bits(entity, field)
+			_ : _ = std.return(out)
+		}
+
+		// `object` is a pointer to an aggregate and `field` the entity of one of its fields, from `field` or `meta.entity_of(T.f)`; the result points at that field (rule RF-FieldPtr). The return type is `pointer(TypeOf(field))`, which `TF-Name` cannot write in a declaration, so the caller names it and `D-Deduce` solves `Tret` from that.
+		field_pointer_t : type = (Tret: deduced type, Tobj: deduced type, object: Tobj, field: meta.entity) -> Tret
+		_ : type = functions.always_inline(field_pointer_t)
+		export field_pointer : field_pointer_t = {
+			object_entity : meta.entity = meta.entity_of(object)
+			result_entity : meta.entity = meta.types.field_pointer(object_entity, field)
+			out : Tret = meta.from_entity(result_entity)
+			_ : _ = std.return(out)
+		}
+
+		// Resolved by TF-Self inside a type definition; ill-formed elsewhere.
+		export self : type
+	}
+
+	export u1 : alias = machine.u1
+	export u8 : alias = machine.u8
+	export pointer_sized : alias = machine.pointer_sized
+	// Signed pointer-width type (rule S-Numeric), distinct from `pointer_sized`: the result of pointer subtraction and the offset argument of `pointers.offset`.
+	export pointer_difference : alias = machine.pointer_difference
+
+	export byte : alias = u8
+	export byte_pointer : type = types.pointer(byte)
+	export c_string : alias = byte_pointer
+
+	// Spelled-out pointer aliases, because `Type` in the grammar is an identifier: a call like `std.types.pointer(T)` cannot appear in a type position.
+	export pointer_sized_pointer : type = types.pointer(pointer_sized)
+	export pointer_difference_pointer : type = types.pointer(pointer_difference)
+	export byte_pointer_pointer : type = types.pointer(byte_pointer)
+	export u1_pointer : type = types.pointer(u1)
+
+	// Boolean literals. `true` and `false` are identifiers, not keywords, and IntegerConstant has no signed form, so the standard supplies them.
+	export false : u1 = 0
+	export true : u1 = 1
+
+	// The one value of `void` (rule WF-Void): what a function without a return type returns, and what a block run only for its effects yields.
+	export nothing : void = void()
+
+	import_t : type = (path: c_string) -> pointer_sized
+	_ : type = types.always_comptime(import_t)
+	export import : import_t
+
+	meta : namespace = {
+		// Entity ids are compiler-host values, always comptime, and of their own type so E-Remap can find every holder. Defined at level 0 because the `compiler_impl` hooks need it below `std` (rule L-Mono).
+		export entity : alias = compiler.entity
+
+		entity_of_t : type = (T: deduced type, register: T) -> entity
+		_ : type = std.types.always_comptime(entity_of_t)
+		export entity_of : entity_of_t
+
+		// Hands back the entity itself, so the destination becomes an alias of it (rule A-Bind); the destination names its type (rule D-Return).
+		from_entity_t : type = (e: entity) -> _
+		_ : type = std.types.always_comptime(from_entity_t)
+		export from_entity : from_entity_t
+
+		type_of_t : type = (e: entity) -> entity
+		_ : type = std.types.always_comptime(type_of_t)
+		export type_of : type_of_t
+
+		name_of_t : type = (e: entity) -> c_string
+		_ : type = std.types.always_comptime(name_of_t)
+		export name_of : name_of_t
+
+		// Declaration enumeration: the children of a namespace, type or block.
+		member_count_t : type = (e: entity) -> pointer_sized
+		_ : type = std.types.always_comptime(member_count_t)
+		export member_count : member_count_t
+
+		member_t : type = (e: entity, index: pointer_sized) -> entity
+		_ : type = std.types.always_comptime(member_t)
+		export member : member_t
+
+		argument_count_t : type = (call: entity) -> pointer_sized
+		_ : type = std.types.always_comptime(argument_count_t)
+		export argument_count : argument_count_t
+
+		argument_t : type = (call: entity, i: pointer_sized) -> entity
+		_ : type = std.types.always_comptime(argument_t)
+		export argument : argument_t
+
+		// The call being inlined or folded; ill-formed in an emitted body (rule RF-Args).
+		call_being_inlined_t : type = () -> entity
+		_ : type = std.types.always_comptime(call_being_inlined_t)
+		export call_being_inlined : call_being_inlined_t
+
+		parameter_count_t : type = (function: entity) -> pointer_sized
+		_ : type = std.types.always_comptime(parameter_count_t)
+		export parameter_count : parameter_count_t
+
+		parameter_t : type = (function: entity, i: pointer_sized) -> entity
+		_ : type = std.types.always_comptime(parameter_t)
+		export parameter : parameter_t
+
+		return_type_t : type = (function: entity) -> entity
+		_ : type = std.types.always_comptime(return_type_t)
+		export return_type : return_type_t
+
+		// The entity-level primitives. `std.types.*` and `std.functions.*` are inline wrappers over these (rule RF-Wrapper), so the two namespaces mirror each other entry for entry; only `self` (rule TF-Self) has no entity form.
+		types : namespace = {
+			// Is this entity a type at all?
+			is_type_t : type = (e: entity) -> u1
+			_ : type = std.types.always_comptime(is_type_t)
+			export is_type : is_type_t
+
+			set_attribute_id_t : type = (e: entity, attribute_id: pointer_sized) -> entity
+			_ : type = std.types.always_comptime(set_attribute_id_t)
+			export set_attribute_id : set_attribute_id_t
+
+			export modifier_t : type = (e: entity) -> entity
+			_ : type = std.types.always_comptime(modifier_t)
+
+			export type_builder_t : type = (e: entity) -> entity
+			_ : type = std.types.always_comptime(type_builder_t)
+
+			array_t : type = (e: entity, size: pointer_sized) -> entity
+			_ : type = std.types.always_comptime(array_t)
+			export array : array_t
+
+			export always_comptime : modifier_t
+			export never_comptime : modifier_t
+			export share_body_across_values : modifier_t
+			export pointer : type_builder_t
+			export function_pointer : type_builder_t
+			export union : modifier_t
+			export packed : modifier_t
+			export distinct_copy : type_builder_t
+
+			size_bits_t : type = (e: entity) -> pointer_sized
+			_ : type = std.types.always_comptime(size_bits_t)
+			export size_bits : size_bits_t
+			export align_bits : size_bits_t
+			export stride_bits : size_bits_t
+
+			compare_t : type = (a: entity, b: entity) -> u1
+			_ : type = std.types.always_comptime(compare_t)
+			export is_same_type : compare_t
+			export converts_implicitly : compare_t
+
+			export shape_t : type = (e: entity) -> u1
+			_ : type = std.types.always_comptime(shape_t)
+			export is_pointer : shape_t
+			export is_array : shape_t
+			export has_fields : shape_t
+			export is_union : shape_t
+			export is_packed : shape_t
+
+			// The entity of the type a pointer entity points at; ill-formed otherwise.
+			inner_type_t : type = (e: entity) -> entity
+			_ : type = std.types.always_comptime(inner_type_t)
+			export pointed_to_type : inner_type_t
+			// The element entity of an array entity, or the pointee of a pointer entity.
+			export element : inner_type_t
+
+			// The element count of an array entity built by `array`; ill-formed otherwise.
+			array_length_t : type = (e: entity) -> pointer_sized
+			_ : type = std.types.always_comptime(array_length_t)
+			export array_length : array_length_t
+
+			// Field enumeration over the type's block (rule RF-Fields).
+			field_count_t : type = (e: entity) -> pointer_sized
+			_ : type = std.types.always_comptime(field_count_t)
+			export field_count : field_count_t
+
+			field_t : type = (e: entity, index: pointer_sized) -> entity
+			_ : type = std.types.always_comptime(field_t)
+			export field : field_t
+
+			field_type_t : type = (e: entity, index: pointer_sized) -> entity
+			_ : type = std.types.always_comptime(field_type_t)
+			export field_type : field_type_t
+
+			field_offset_t : type = (e: entity, field: meta.entity) -> pointer_sized
+			_ : type = std.types.always_comptime(field_offset_t)
+			export field_offset_bits : field_offset_t
+
+			// Both arguments are entities: the object's register and the field declaration.
+			field_pointer_t : type = (object: entity, field: entity) -> entity
+			_ : type = std.types.always_comptime(field_pointer_t)
+			export field_pointer : field_pointer_t
+
+		}
+
+		// The entity-level number queries (rule N-Limits).
+		numbers : namespace = {
+			export shape_t : type = (e: entity) -> u1
+			_ : type = std.types.always_comptime(shape_t)
+			export is_integer : shape_t
+			export is_float : shape_t
+			export is_signed : shape_t
+			export is_unsigned : shape_t
+
+			// `min_value` and `max_value` return a value entity of the queried type.
+			limit_t : type = (e: entity) -> entity
+			_ : type = std.types.always_comptime(limit_t)
+			export min_value : limit_t
+			export max_value : limit_t
+
+			bits_excluding_sign_t : type = (e: entity) -> pointer_sized
+			_ : type = std.types.always_comptime(bits_excluding_sign_t)
+			export bits_excluding_sign : bits_excluding_sign_t
+		}
+
+		functions : namespace = {
+			// Function flags and renames, over entities. `std.functions.*` wraps these.
+			export modifier_t : type = (e: entity) -> entity
+			_ : type = std.types.always_comptime(modifier_t)
+
+			export always_inline : modifier_t
+			export never_inline : modifier_t
+			export always_inline_recursively : modifier_t
+
+			// The entity-level form of `std.functions.address` (rule FP-Address). The host makes a binding of type function_pointer(TypeOf(function)) whose comptime value is the function entity itself; the returned entity is that new binding.
+			address_t : type = (function: entity) -> entity
+			_ : type = std.types.always_comptime(address_t)
+			export address : address_t
+
+			set_symbol_name_t : type = (function: entity, new_name: c_string) -> entity
+			_ : type = std.types.always_comptime(set_symbol_name_t)
+			export set_symbol_name : set_symbol_name_t
+
+			// The entity form of `std.functions.bind_arguments` (rule FP-Bind): every element of `arguments` is an entity, bound in order to the function's leading parameters.
+			bind_arguments_t : type = (function: entity, arguments: pack) -> entity
+			_ : type = std.types.always_comptime(bind_arguments_t)
+			export bind_arguments : bind_arguments_t
+
+			// The entity forms of `std.functions.create_overload_set` and `add_overload` (rule TF-Overload).
+			create_overload_set_t : type = () -> entity
+			_ : type = std.types.always_comptime(create_overload_set_t)
+			export create_overload_set : create_overload_set_t
+
+			add_overload_t : type = (overloads: entity, function: entity) -> entity
+			_ : type = std.types.always_comptime(add_overload_t)
+			export add_overload : add_overload_t
+		}
+
+		// Target liveness over entities (rule T-Live). `std.targets.*` wraps these.
+		targets : namespace = {
+			compile_for_t : type = (e: entity, target: compiler.level) -> entity
+			_ : type = std.types.always_comptime(compile_for_t)
+			export compile_for : compile_for_t
+		}
+
+		source_location : namespace = {
+			export location : type = {
+				file : c_string
+				start_byte : pointer_sized
+				end_byte : pointer_sized
+			}
+			core_attribute_id : pointer_sized = 1
+			_ : type = std.types.set_attribute_id(location, core_attribute_id)
+
+			get_t : type = (e: entity) -> location
+			_ : type = std.types.always_comptime(get_t)
+			export get : get_t
+
+			// Lines and columns are computed from the byte range by reading the file (rule AT-Source).
+			position_t : type = (loc: location) -> pointer_sized
+			_ : type = std.types.always_comptime(position_t)
+			export start_line : position_t
+			export start_column : position_t
+			export end_line : position_t
+			export end_column : position_t
+		}
+	}
+
+	// Each entry is an always-inline wrapper over its `std.meta.functions` counterpart (rule RF-Wrapper): take the entity of the function type, apply the entity version, turn it back.
+	functions : namespace = {
+		export always_inline : types.modifier_t = {
+			entity : meta.entity = meta.entity_of(in)
+			out_entity : meta.entity = meta.functions.always_inline(entity)
+			out : type = meta.from_entity(out_entity)
+			_ : _ = std.return(out)
+		}
+
+		export never_inline : types.modifier_t = {
+			entity : meta.entity = meta.entity_of(in)
+			out_entity : meta.entity = meta.functions.never_inline(entity)
+			out : type = meta.from_entity(out_entity)
+			_ : _ = std.return(out)
+		}
+
+		export always_inline_recursively : types.modifier_t = {
+			entity : meta.entity = meta.entity_of(in)
+			out_entity : meta.entity = meta.functions.always_inline_recursively(entity)
+			out : type = meta.from_entity(out_entity)
+			_ : _ = std.return(out)
+		}
+
+		// Rule TF-Overload: the type of an overload set's name. A set is a name, not a value, so its type is always-comptime, and unique so that it is equivalent to no other (rule S-Struct).
+		overload_set_shape : type = {}
+		export overload_set : type = types.distinct_copy(overload_set_shape)
+		_ : type = types.always_comptime(overload_set)
+
+		// Makes an empty overload set; the destination becomes its name (rule A-Bind), and a call through that name calls the member its arguments select.
+		create_overload_set_t : type = () -> overload_set
+		_ : type = types.always_comptime(create_overload_set_t)
+		_ : type = functions.always_inline(create_overload_set_t)
+		export create_overload_set : create_overload_set_t = {
+			out_entity : meta.entity = meta.functions.create_overload_set()
+			out : overload_set = meta.from_entity(out_entity)
+			_ : _ = std.return(out)
+		}
+
+		// Adds `function` to the set in place, like a modifier (rule M-Lexical), and hands the set back.
+		add_overload_t : type = (T: deduced type, overloads: overload_set, function: T) -> overload_set
+		_ : type = types.always_comptime(add_overload_t)
+		_ : type = functions.always_inline(add_overload_t)
+		export add_overload : add_overload_t = {
+			overloads_entity : meta.entity = meta.entity_of(overloads)
+			function_entity : meta.entity = meta.entity_of(function)
+			out_entity : meta.entity = meta.functions.add_overload(overloads_entity, function_entity)
+			out : overload_set = meta.from_entity(out_entity)
+			_ : _ = std.return(out)
+		}
+
+		// Renames `function`'s symbol in place, like every modifier (rule M-SymbolName); the result names the same function.
+		set_symbol_name_t : type = (T: deduced type, function: T, new_name: c_string) -> T
+		_ : type = types.always_comptime(set_symbol_name_t)
+		_ : type = functions.always_inline(set_symbol_name_t)
+		export set_symbol_name : set_symbol_name_t = {
+			function_entity : meta.entity = meta.entity_of(function)
+			out_entity : meta.entity = meta.functions.set_symbol_name(function_entity, new_name)
+			out : T = meta.from_entity(out_entity)
+			_ : _ = std.return(out)
+		}
+
+		// Rule FP-Address: the only crossing from a function entity to a value. Unlike the other entries here it is not a wrapper over `std.meta.functions` (rule RF-Wrapper), because the result is a value of function-pointer type, not a type, so there is nothing to turn back with `from_entity`. `TF-Name` cannot write `function_pointer(T)` in a return position, so the caller names the pointer type it wants.
+		address_t : type = (T: deduced type, function: T) -> _
+		_ : type = types.always_comptime(address_t)
+		export address : address_t
+
+		// Rule FP-Bind: the specialization of `function` with its leading parameters bound to the comptime `arguments`, as a function entity that can be called or passed to `address`. Like `address`, a primitive rather than a wrapper, since the result is a function. `TF-Name` cannot write the specialized function type, so the caller names it.
+		bind_arguments_t : type = (T: deduced type, function: T, arguments: pack) -> _
+		_ : type = types.always_comptime(bind_arguments_t)
+		export bind_arguments : bind_arguments_t
+
+		// Calling-convention hooks live in compiler_impl (rule T-Sig).
+	}
+
+	// The level `std`'s own file is (rule T-Value), so a backends file can lower it onto each backend without `std` naming any (rule L-Lower).
+	export level : compiler.level = compiler.levels.this_file()
+
+	// Rule T-Live: which of the build's targets a declaration is lowered for. Each entry wraps its `std.meta.targets` twin (rule RF-Wrapper).
+	targets : namespace = {
+		// Makes `declaration` live on target `t` in place, like every modifier (rule M-Alias); repeated calls add targets, and the result names the same binding.
+		compile_for_t : type = (T: deduced type, declaration: T, t: compiler.level) -> T
+		_ : type = types.always_comptime(compile_for_t)
+		_ : type = functions.always_inline(compile_for_t)
+		export compile_for : compile_for_t = {
+			declaration_entity : meta.entity = meta.entity_of(declaration)
+			out_entity : meta.entity = meta.targets.compile_for(declaration_entity, t)
+			out : T = meta.from_entity(out_entity)
+			_ : _ = std.return(out)
+		}
+	}
+
+	// The number types and the questions about them (rules N-Limits, N-Convert, N-FloatConvert, T-Optional). Every entry over a type wraps its `std.meta.numbers` twin (rule RF-Wrapper).
+	numbers : namespace = {
+		export u1 : alias = machine.u1
+		export u8 : alias = machine.u8
+		export pointer_sized : alias = machine.pointer_sized
+		export pointer_difference : alias = machine.pointer_difference
+		// Optional (rule T-Optional): absent when the machine does not provide them; ask `integer_available` or `float_available`.
+		export u16 : alias = machine.u16
+		export u32 : alias = machine.u32
+		export u64 : alias = machine.u64
+		export i8 : alias = machine.i8
+		export i16 : alias = machine.i16
+		export i32 : alias = machine.i32
+		export i64 : alias = machine.i64
+		// The operands of `square_root`, `is_not_a_number` and `is_infinite`.
+		export f32 : alias = machine.f32
+		export f64 : alias = machine.f64
+
+		shape_t : type = (T: type) -> std.u1
+		_ : type = std.types.always_comptime(shape_t)
+		_ : type = std.functions.always_inline(shape_t)
+		export is_integer : shape_t = {
+			entity : std.meta.entity = std.meta.entity_of(T)
+			out : std.u1 = std.meta.numbers.is_integer(entity)
+			_ : _ = std.return(out)
+		}
+
+		export is_float : shape_t = {
+			entity : std.meta.entity = std.meta.entity_of(T)
+			out : std.u1 = std.meta.numbers.is_float(entity)
+			_ : _ = std.return(out)
+		}
+
+		export is_signed : shape_t = {
+			entity : std.meta.entity = std.meta.entity_of(T)
+			out : std.u1 = std.meta.numbers.is_signed(entity)
+			_ : _ = std.return(out)
+		}
+
+		export is_unsigned : shape_t = {
+			entity : std.meta.entity = std.meta.entity_of(T)
+			out : std.u1 = std.meta.numbers.is_unsigned(entity)
+			_ : _ = std.return(out)
+		}
+
+		limit_t : type = (T: type) -> T
+		_ : type = std.types.always_comptime(limit_t)
+		_ : type = std.functions.always_inline(limit_t)
+		export min_value : limit_t = {
+			entity : std.meta.entity = std.meta.entity_of(T)
+			out_entity : std.meta.entity = std.meta.numbers.min_value(entity)
+			out : T = std.meta.from_entity(out_entity)
+			_ : _ = std.return(out)
+		}
+
+		export max_value : limit_t = {
+			entity : std.meta.entity = std.meta.entity_of(T)
+			out_entity : std.meta.entity = std.meta.numbers.max_value(entity)
+			out : T = std.meta.from_entity(out_entity)
+			_ : _ = std.return(out)
+		}
+
+		bits_excluding_sign_t : type = (T: type) -> std.pointer_sized
+		_ : type = std.types.always_comptime(bits_excluding_sign_t)
+		_ : type = std.functions.always_inline(bits_excluding_sign_t)
+		export bits_excluding_sign : bits_excluding_sign_t = {
+			entity : std.meta.entity = std.meta.entity_of(T)
+			out : std.pointer_sized = std.meta.numbers.bits_excluding_sign(entity)
+			_ : _ = std.return(out)
+		}
+
+		// Whether the machine provides the `bits`-wide integer of that signedness, or the `bits`-wide float (rule T-Optional). Hooks: they take no type, so they have no `std.meta` twin (rule RF-Wrapper).
+		integer_available_t : type = (bits: std.pointer_sized, signed: std.u1) -> std.u1
+		_ : type = std.types.always_comptime(integer_available_t)
+		export integer_available : integer_available_t
+
+		float_available_t : type = (bits: std.pointer_sized) -> std.u1
+		_ : type = std.types.always_comptime(float_available_t)
+		export float_available : float_available_t
+
+		// Width changes (rule N-Convert): `widen` fills the new bits by the source's signedness, `truncate` keeps the low bits. The destination type is the binding's (rule D-Deduce).
+		export widen : (Tout: deduced type, Tin: deduced type, v: Tin) -> Tout
+		export truncate : (Tout: deduced type, Tin: deduced type, v: Tin) -> Tout
+
+		// Integer to float, float to integer (truncating toward zero), or between float widths; the destination type is the binding's (rules N-FloatConvert, D-Deduce).
+		export float_convert : (Tout: deduced type, Tin: deduced type, v: Tin) -> Tout
+	}
+
+	// Whether an operation would leave its type's range (rule N-Overflow). Each pairs with the unchecked primitive of the same name and reads the operand type's signedness.
+	would_overflow : namespace = {
+		binary_t : type = (T: deduced type, a: T, b: T) -> u1
+		export add : binary_t
+		export subtract : binary_t
+		export multiply : binary_t
+		// A zero divisor, or the most negative value divided by -1.
+		export divide : binary_t
+		export remainder : binary_t
+		// Bits shifted out, or a shift at least the width.
+		export shift_left : binary_t
+		export negate : (T: deduced type, v: T) -> u1
+		// Whether `v` does not fit the destination type (rule N-Convert).
+		export truncate : (Tout: deduced type, Tin: deduced type, v: Tin) -> u1
+	}
+
+	// Reading a variadic parameter (rules F-Pack, F-Access). The index must be comptime.
+	packs : namespace = {
+		count_t : type = (p: pack) -> pointer_sized
+		_ : type = types.always_comptime(count_t)
+		export count : count_t
+
+		type_of_t : type = (p: pack, i: pointer_sized) -> type
+		_ : type = types.always_comptime(type_of_t)
+		export type_of : type_of_t
+
+		// Hands back element `i` itself, so the destination becomes an alias of it and keeps its stage (rules F-Access, A-Bind). The caller names its type (rule D-Return).
+		get_t : type = (p: pack, i: pointer_sized) -> _
+		_ : type = types.always_comptime(get_t)
+		export get : get_t
+	}
+
+	unsafe : namespace = {
+		share_register_t : type = (T: deduced type, a: T, b: T) -> T
+		_ : type = types.always_comptime(share_register_t)
+		export share_register : share_register_t
+	}
+
+	// Host hooks: each receives its arguments as bindings, so a runtime condition needs no conversion to runtime (rules C-Valid, DG-Assert, DG-Report). The message is comptime.
+	diagnostics : namespace = {
+		assert_t : type = (condition: u1, message: c_string)
+		_ : type = types.always_comptime(assert_t)
+		export assert : assert_t
+
+		report_t : type = (message: c_string, help: c_string, location: meta.source_location.location)
+		_ : type = types.always_comptime(report_t)
+		export info : report_t
+		export warning : report_t
+		export error : report_t
+	}
+
+	attributes : namespace = {
+		id_of_type_t : type = (T: type) -> pointer_sized
+		_ : type = types.always_comptime(id_of_type_t)
+		export id_of_type : id_of_type_t
+
+		id_of_name_t : type = (name: c_string) -> pointer_sized
+		_ : type = types.always_comptime(id_of_name_t)
+		export id_of_name : id_of_name_t
+
+		// An attribute is a type: declaring it registers the component named after it, and any entity may then hold that component (rule AT-Type). Identity is the declaration, not the structure: two type definitions with identical bodies are two different attributes. `mark` is for attribute types with no fields (rule AT-Set).
+		has_t : type = (T: deduced type, v: T, attribute: type) -> u1
+		_ : type = types.always_comptime(has_t)
+		export has : has_t
+
+		mark_t : type = (T: deduced type, v: T, attribute: type) -> attribute
+		_ : type = types.always_comptime(mark_t)
+		export mark : mark_t
+
+		set_t : type = (T: deduced type, v: T, attribute: type, value: attribute) -> attribute
+		_ : type = types.always_comptime(set_t)
+		export set : set_t
+
+		get_t : type = (T: deduced type, v: T, attribute: type) -> attribute
+		_ : type = types.always_comptime(get_t)
+		export get : get_t
+	}
+
+	// Relabels the bits of `in` as `Tout`; ill-formed between types of different sizes (rule N-Convert).
+	export reinterpret_bits : (Tin: deduced type, in: Tin, Tout: deduced type) -> Tout
+
+	export copy : (T: type, v: T) -> T
+	// A copy after which `v` may not be read (rule V-Move); the compiler checks that at each call.
+	export move : (T: type, v: T) -> T = {
+		%0 : T = inline copy(T, v)
+		_ : _ = return(%0)
+	}
+
+	// Bridges a compile-time value into a runtime one. A comptime binding cannot be an operand of an emitted primitive, which has no body to specialize (WF-ToRuntime), so a value a runtime instruction needs has to cross the boundary explicitly, and the binding it lands in is no longer comptime. Converting to runtime also opts an argument out of C-Specialize. The type is marked never_comptime so the call itself is never folded away (C-ToRuntime).
+	comptime_to_runtime_t : type = (T: deduced type, v: T) -> T
+	_ : type = types.never_comptime(comptime_to_runtime_t)
+	export comptime_to_runtime : comptime_to_runtime_t
+
+	// A comptime value handed to the stage the caller is in (rules C-Inline, C-Stage). The unconditional primitive above always emits the conversion to runtime; this one emits it only when the call site is emitted. `always_inline` splices the body before the call's stage is decided, so `is_comptime_evaluation` here reports the caller's stage. A non-inlined helper cannot do this: `C-Call` folds it, and the answer is always "comptime".
+	comptime_to_runtime_if_needed_t : type = (T: deduced type, v: T) -> T
+	_ : type = types.always_comptime(comptime_to_runtime_if_needed_t)
+	_ : type = functions.always_inline(comptime_to_runtime_if_needed_t)
+	export comptime_to_runtime_if_needed : comptime_to_runtime_if_needed_t = {
+		stage : u1 = std.is_comptime_evaluation()
+		keep : block = { _ : _ = std.block_result(v) ; }
+		runtime : block = { m : T = std.comptime_to_runtime(v) ; _ : _ = std.block_result(m) ; }
+		out : T = std.if(stage, keep, runtime)
+		_ : _ = std.return(out)
+	}
+
+	// Whether the code this call appears in is being folded or emitted (rule C-Stage). The answer is itself always known at compile time, so it can drive an `std.if`.
+	stage_t : type = () -> u1
+	_ : type = types.always_comptime(stage_t)
+	export is_comptime_evaluation : stage_t
+
+	// Every call passing a block is spliced into its caller (rule B-Inline). `run_block` runs a block in place; its value is what the block yields (rule B-Result).
+	export run_block : (body: block) -> _
+	// Runs `body` when the enclosing function returns (rule B-Defer).
+	export defer : (body: block) -> void
+
+	// `condition` yields a u1 and `init` and `step` yield `nothing`. A body yielding `nothing` returns void; otherwise the destination names `array(T, n)` for a comptime count or `pointer(T)` for a heap result with a length header (rule B-Loop).
+	export while : (condition: block, body: block) -> _
+	export for : (init: block, condition: block, step: block, body: block) -> _
+	// The count stored before element 0 of a heap loop result, and the call that frees it (rule B-Loop).
+	export loop_length : (Tptr: deduced type, result: Tptr) -> pointer_sized
+	export free_loop_result : (Tptr: deduced type, result: Tptr) -> void
+	// Both blocks yield the type the destination names (rules B-If, D-Return).
+	export if : (condition: u1, then: block, else: block) -> _
+
+	export return : (T: deduced type, value: T) -> T
+	export block_result : (T: deduced type, value: T) -> T
+
+	// Labels and jumps are the primitives backends build `if` and `while` from (rule B-Label). A label is the declaration `place_label` is assigned to, named by it and marking its position; a jump may name it before that line (rule WF-Order). Its type is always comptime and is never converted to runtime (rule WF-ToRuntime). None of these fold: a call whose operands are all constant would otherwise run at compile time and emit nothing (rule C-Call).
+	export label : type = types.distinct_copy(meta.entity)
+	_ : type = types.always_comptime(label)
+	place_label_t : type = () -> label
+	_ : type = types.never_comptime(place_label_t)
+	export place_label : place_label_t
+
+	halt_t : type = ()
+	_ : type = types.never_comptime(halt_t)
+	export halt : halt_t
+
+	pointers : namespace = {
+		load_t : type = (Tptr: deduced type, Tvalue: deduced type, pointer: Tptr) -> Tvalue
+		store_t : type = (Tptr: deduced type, Tvalue: deduced type, pointer: Tptr, value: Tvalue) -> Tvalue
+		// `byte_offset` is signed, so walking backwards from a payload pointer (to a header, for instance) needs no separate primitive.
+		offset_t : type = (Tptr: deduced type, pointer: Tptr, byte_offset: pointer_difference) -> Tptr
+		// A pointer to element `index`, scaled by the pointee's stride (rule RF-Fields).
+		element_pointer_t : type = (Tptr: deduced type, pointer: Tptr, index: pointer_sized) -> Tptr
+		// Signed, so `difference(a, b)` is negative when a precedes b.
+		difference_t : type = (Tptr: deduced type, a: Tptr, b: Tptr) -> pointer_difference
+		is_null_t : type = (Tptr: deduced type, pointer: Tptr) -> u1
+		// One field of the aggregate `object` points to, at any bit offset; how a packed field off a byte boundary is reached (rule MEM-Field).
+		load_field_t : type = (Tptr: deduced type, Tvalue: deduced type, object: Tptr, field: meta.entity) -> Tvalue
+		store_field_t : type = (Tptr: deduced type, Tvalue: deduced type, object: Tptr, field: meta.entity, value: Tvalue) -> Tvalue
+		// Memory effects are never folded at an emitted call site. Inside an interpreted body they act on comptime memory (rules C-Interpret, MEM-Comptime).
+		_ : type = types.never_comptime(load_t)
+		_ : type = types.never_comptime(store_t)
+		_ : type = types.never_comptime(offset_t)
+		_ : type = types.never_comptime(element_pointer_t)
+		_ : type = types.never_comptime(difference_t)
+		_ : type = types.never_comptime(is_null_t)
+		_ : type = types.never_comptime(load_field_t)
+		_ : type = types.never_comptime(store_field_t)
+
+		export load : load_t
+		export store : store_t
+		export offset : offset_t
+		export element_pointer : element_pointer_t
+		export difference : difference_t
+		export is_null : is_null_t
+		export load_field : load_field_t
+		export store_field : store_field_t
+		export null : (Tptr: deduced type) -> Tptr
+
+		export read_only : types.modifier_t
+	}
+
+	stack : namespace = {
+		stack_load_t : type = (T: deduced type, stack_offset: pointer_sized) -> T
+		stack_store_t : type = (T: deduced type, value: T, stack_offset: pointer_sized) -> T
+		// `alignment` is in bytes, a power of two (rule MEM-Stack).
+		push_t : type = (amount: pointer_sized, alignment: pointer_sized) -> byte_pointer
+		pop_t : type = (amount: pointer_sized) -> byte_pointer
+		// `TF-Name` cannot write `pointer(T)` in a return position, so the caller names the pointer type it expects and `D-Return` solves it from that.
+		allocate_t : type = (T: type) -> _
+		// The current top of the stack; `load` and `store` take byte offsets from it (rule MEM-Stack).
+		top_t : type = () -> byte_pointer
+		// A stack address does not exist until the frame is live, so none of these fold at an emitted call site; an interpreted frame has a comptime stack (rules MEM-Stack, MEM-Comptime).
+		_ : type = types.never_comptime(stack_load_t)
+		_ : type = types.never_comptime(stack_store_t)
+		_ : type = types.never_comptime(push_t)
+		_ : type = types.never_comptime(pop_t)
+		_ : type = types.never_comptime(allocate_t)
+		_ : type = types.never_comptime(top_t)
+
+		export load : stack_load_t
+		export store : stack_store_t
+		export push : push_t
+		export pop : pop_t
+		export allocate : allocate_t
+		export top : top_t
+	}
+
+	// The heap (rule MEM-Heap): the machine supplies the runtime bodies, the comptime host the comptime ones (rule MEM-Comptime). Null is refusal, and a refused `reallocate` leaves `p` valid.
+	heap : namespace = {
+		allocate_t : type = (size: pointer_sized, alignment: pointer_sized) -> byte_pointer
+		reallocate_t : type = (p: byte_pointer, size: pointer_sized, alignment: pointer_sized) -> byte_pointer
+		free_t : type = (p: byte_pointer) -> void
+		_ : type = types.never_comptime(allocate_t)
+		_ : type = types.never_comptime(reallocate_t)
+		_ : type = types.never_comptime(free_t)
+
+		export allocate : allocate_t
+		export reallocate : reallocate_t
+		export free : free_t
+	}
+
+	// Static storage (rule MEM-Static): one zero-initialized `T` per call entity and `T`, for the life of the program. Its address is comptime; the caller names `pointer(T)` (rule D-Return).
+	static : namespace = {
+		allocate_t : type = (T: type) -> _
+		_ : type = types.always_comptime(allocate_t)
+		export allocate : allocate_t
+	}
+
+	jump_relative_t : type = (instructions_to_jump: pointer_sized) -> byte_pointer
+	jump_to_t : type = (destination: label) -> byte_pointer
+	jump_relative_if_t : type = (condition: u1, instructions_to_jump: pointer_sized) -> byte_pointer
+	jump_to_if_t : type = (condition: u1, destination: label) -> byte_pointer
+	_ : type = types.never_comptime(jump_relative_t)
+	_ : type = types.never_comptime(jump_to_t)
+	_ : type = types.never_comptime(jump_relative_if_t)
+	_ : type = types.never_comptime(jump_to_if_t)
+	export jump_relative : jump_relative_t
+	export jump_to : jump_to_t
+	export jump_relative_if : jump_relative_if_t
+	export jump_to_if : jump_to_if_t
+
+	export is_equal : (T: deduced type, a: T, b: T) -> u1
+	export is_not_equal : (T: deduced type, a: T, b: T) -> u1
+	export is_less : (T: deduced type, a: T, b: T) -> u1
+	export is_less_equal : (T: deduced type, a: T, b: T) -> u1
+	export is_greater : (T: deduced type, a: T, b: T) -> u1
+	export is_greater_equal : (T: deduced type, a: T, b: T) -> u1
+
+	export add : (T: deduced type, a: T, b: T) -> T
+	export subtract : (T: deduced type, a: T, b: T) -> T
+	export divide : (T: deduced type, a: T, b: T) -> T
+	export multiply : (T: deduced type, a: T, b: T) -> T
+	export remainder : (T: deduced type, a: T, b: T) -> T
+	export negate : (T: deduced type, v: T) -> T
+
+	export max : (T: deduced type, a: T, b: T) -> T
+	export min : (T: deduced type, a: T, b: T) -> T
+	export square_root : (T: deduced type, v: T) -> T
+
+	export shift_left : (T: deduced type, a: T, b: T) -> T
+	export shift_right : (T: deduced type, a: T, b: T) -> T
+	export bitwise_xor : (T: deduced type, a: T, b: T) -> T
+	export bitwise_or : (T: deduced type, a: T, b: T) -> T
+	export bitwise_and : (T: deduced type, a: T, b: T) -> T
+	export bitwise_not : (T: deduced type, v: T) -> T
+
+	export logical_not : (v: u1) -> u1
+	export logical_and : (a: u1, b: u1) -> u1
+	export logical_or : (a: u1, b: u1) -> u1
+
+	export is_negative : (T: deduced type, v: T) -> u1
+	export is_positive : (T: deduced type, v: T) -> u1
+	export is_infinite : (T: deduced type, v: T) -> u1
+	export is_not_a_number : (T: deduced type, v: T) -> u1
+}

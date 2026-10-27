@@ -1,0 +1,7 @@
+// B-Tail: the program's root is not a function body, so a tail call there has nothing to return from.
+g : (v: std.u8) -> std.u8 = {
+	_ : _ = std.return(v)
+}
+seed : std.u8 = 7
+x : std.u8 = std.comptime_to_runtime(seed)
+_ : _ = tail g(x)

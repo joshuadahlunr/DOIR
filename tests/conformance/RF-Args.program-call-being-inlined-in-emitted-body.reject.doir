@@ -1,0 +1,9 @@
+// RF-Args: an emitted body is shared by every call, so it has no single call being inlined.
+f : (v: std.u8) -> std.u8 = {
+	call : std.meta.entity = std.meta.call_being_inlined()
+	_ : _ = std.return(v)
+}
+seed : std.u8 = 7
+x : std.u8 = std.comptime_to_runtime(seed)
+r : std.u8 = f(x)
+_ : _ = std.halt()

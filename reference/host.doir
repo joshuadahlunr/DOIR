@@ -1,0 +1,216 @@
+// The `HostServices` table a comptime host implements (`H-Hook`, `H-Services`, spec Part II §11): one C-ABI entry per host hook, the bodyless prototypes of `standard.doir` whose type is marked `std.types.always_comptime`, and one per machine primitive the host interprets at comptime (`C-Interpret`, `MEM-Comptime`). A mizu backend reaches an entry through a comptime-machine instruction, a native JIT through a direct call.
+//
+// Each entry is named by its hook's path below `std`, and looked up by that name and `revision`, never by position (`H-ABI`), so adding an entry does not break a host written against an earlier revision.
+//
+// How an argument crosses: one of an always-comptime type (`type`, `std.meta.entity`, `pack`, `compiler.level`) as the `compiler.entity` naming it; one of a fixed type as its value in the target's layout (`H-Target`), written here as its `std` type. A hook's value of a deduced type crosses as the entity naming its binding, and so does a `_` result, which the destination aliases (`A-Bind`). A primitive's value of a deduced type crosses as a `compiler.byte_pointer` to its bytes in comptime memory, its type's entity giving the layout, and a result of a deduced type is written through `result`.
+host_services : namespace = {
+	revision : compiler.pointer_sized = 1
+
+	import : (path: std.c_string) -> std.pointer_sized
+
+	// Store and reflection.
+	meta : namespace = {
+		entity_of : (T: compiler.entity, register: compiler.entity) -> compiler.entity
+		from_entity : (e: compiler.entity) -> compiler.entity
+		type_of : (e: compiler.entity) -> compiler.entity
+		name_of : (e: compiler.entity) -> std.c_string
+		member_count : (e: compiler.entity) -> std.pointer_sized
+		member : (e: compiler.entity, index: std.pointer_sized) -> compiler.entity
+		argument_count : (call: compiler.entity) -> std.pointer_sized
+		argument : (call: compiler.entity, i: std.pointer_sized) -> compiler.entity
+		call_being_inlined : () -> compiler.entity
+		parameter_count : (function: compiler.entity) -> std.pointer_sized
+		parameter : (function: compiler.entity, i: std.pointer_sized) -> compiler.entity
+		return_type : (function: compiler.entity) -> compiler.entity
+
+		types : namespace = {
+			is_type : (e: compiler.entity) -> std.u1
+			set_attribute_id : (e: compiler.entity, attribute_id: std.pointer_sized) -> compiler.entity
+			array : (e: compiler.entity, size: std.pointer_sized) -> compiler.entity
+			always_comptime : (e: compiler.entity) -> compiler.entity
+			never_comptime : (e: compiler.entity) -> compiler.entity
+			share_body_across_values : (e: compiler.entity) -> compiler.entity
+			pointer : (e: compiler.entity) -> compiler.entity
+			function_pointer : (e: compiler.entity) -> compiler.entity
+			union : (e: compiler.entity) -> compiler.entity
+			packed : (e: compiler.entity) -> compiler.entity
+			distinct_copy : (e: compiler.entity) -> compiler.entity
+			size_bits : (e: compiler.entity) -> std.pointer_sized
+			align_bits : (e: compiler.entity) -> std.pointer_sized
+			stride_bits : (e: compiler.entity) -> std.pointer_sized
+			is_same_type : (a: compiler.entity, b: compiler.entity) -> std.u1
+			converts_implicitly : (a: compiler.entity, b: compiler.entity) -> std.u1
+			is_pointer : (e: compiler.entity) -> std.u1
+			is_array : (e: compiler.entity) -> std.u1
+			has_fields : (e: compiler.entity) -> std.u1
+			is_union : (e: compiler.entity) -> std.u1
+			is_packed : (e: compiler.entity) -> std.u1
+			pointed_to_type : (e: compiler.entity) -> compiler.entity
+			element : (e: compiler.entity) -> compiler.entity
+			array_length : (e: compiler.entity) -> std.pointer_sized
+			field_count : (e: compiler.entity) -> std.pointer_sized
+			field : (e: compiler.entity, index: std.pointer_sized) -> compiler.entity
+			field_type : (e: compiler.entity, index: std.pointer_sized) -> compiler.entity
+			field_offset_bits : (e: compiler.entity, field: compiler.entity) -> std.pointer_sized
+			field_pointer : (object: compiler.entity, field: compiler.entity) -> compiler.entity
+		}
+
+		numbers : namespace = {
+			is_integer : (e: compiler.entity) -> std.u1
+			is_float : (e: compiler.entity) -> std.u1
+			is_signed : (e: compiler.entity) -> std.u1
+			is_unsigned : (e: compiler.entity) -> std.u1
+			min_value : (e: compiler.entity) -> compiler.entity
+			max_value : (e: compiler.entity) -> compiler.entity
+			bits_excluding_sign : (e: compiler.entity) -> std.pointer_sized
+		}
+
+		functions : namespace = {
+			always_inline : (e: compiler.entity) -> compiler.entity
+			never_inline : (e: compiler.entity) -> compiler.entity
+			always_inline_recursively : (e: compiler.entity) -> compiler.entity
+			address : (function: compiler.entity) -> compiler.entity
+			set_symbol_name : (function: compiler.entity, new_name: std.c_string) -> compiler.entity
+			bind_arguments : (function: compiler.entity, arguments: compiler.entity) -> compiler.entity
+			create_overload_set : () -> compiler.entity
+			add_overload : (overloads: compiler.entity, function: compiler.entity) -> compiler.entity
+		}
+
+		targets : namespace = {
+			compile_for : (e: compiler.entity, target: compiler.entity) -> compiler.entity
+		}
+
+		// Lines and columns are computed from the byte range by reading the file (AT-Source).
+		source_location : namespace = {
+			get : (e: compiler.entity) -> std.meta.source_location.location
+			start_line : (loc: std.meta.source_location.location) -> std.pointer_sized
+			start_column : (loc: std.meta.source_location.location) -> std.pointer_sized
+			end_line : (loc: std.meta.source_location.location) -> std.pointer_sized
+			end_column : (loc: std.meta.source_location.location) -> std.pointer_sized
+		}
+	}
+
+	// `address` and `bind_arguments` are primitives rather than wrappers, since each results in a value, not a type (FP-Address, FP-Bind).
+	functions : namespace = {
+		address : (T: compiler.entity, function: compiler.entity) -> compiler.entity
+		bind_arguments : (T: compiler.entity, function: compiler.entity, arguments: compiler.entity) -> compiler.entity
+	}
+
+	// The two that fold, so code can ask before naming an optional type (T-Optional).
+	numbers : namespace = {
+		integer_available : (bits: std.pointer_sized, signed: std.u1) -> std.u1
+		float_available : (bits: std.pointer_sized) -> std.u1
+
+		widen : (Tout: compiler.entity, Tin: compiler.entity, v: compiler.byte_pointer, result: compiler.byte_pointer)
+		truncate : (Tout: compiler.entity, Tin: compiler.entity, v: compiler.byte_pointer, result: compiler.byte_pointer)
+		float_convert : (Tout: compiler.entity, Tin: compiler.entity, v: compiler.byte_pointer, result: compiler.byte_pointer)
+	}
+
+	would_overflow : namespace = {
+		add : (T: compiler.entity, a: compiler.byte_pointer, b: compiler.byte_pointer) -> std.u1
+		subtract : (T: compiler.entity, a: compiler.byte_pointer, b: compiler.byte_pointer) -> std.u1
+		multiply : (T: compiler.entity, a: compiler.byte_pointer, b: compiler.byte_pointer) -> std.u1
+		divide : (T: compiler.entity, a: compiler.byte_pointer, b: compiler.byte_pointer) -> std.u1
+		remainder : (T: compiler.entity, a: compiler.byte_pointer, b: compiler.byte_pointer) -> std.u1
+		shift_left : (T: compiler.entity, a: compiler.byte_pointer, b: compiler.byte_pointer) -> std.u1
+		negate : (T: compiler.entity, v: compiler.byte_pointer) -> std.u1
+		truncate : (Tout: compiler.entity, Tin: compiler.entity, v: compiler.byte_pointer) -> std.u1
+	}
+
+	packs : namespace = {
+		count : (p: compiler.entity) -> std.pointer_sized
+		type_of : (p: compiler.entity, i: std.pointer_sized) -> compiler.entity
+		get : (p: compiler.entity, i: std.pointer_sized) -> compiler.entity
+	}
+
+	unsafe : namespace = {
+		share_register : (T: compiler.entity, a: compiler.entity, b: compiler.entity) -> compiler.entity
+	}
+
+	diagnostics : namespace = {
+		assert : (condition: std.u1, message: std.c_string)
+		info : (message: std.c_string, help: std.c_string, location: std.meta.source_location.location)
+		warning : (message: std.c_string, help: std.c_string, location: std.meta.source_location.location)
+		error : (message: std.c_string, help: std.c_string, location: std.meta.source_location.location)
+	}
+
+	// The attribute itself is a value of a deduced type, so it crosses as the entity naming it.
+	attributes : namespace = {
+		id_of_type : (T: compiler.entity) -> std.pointer_sized
+		id_of_name : (name: std.c_string) -> std.pointer_sized
+		has : (T: compiler.entity, v: compiler.entity, attribute: compiler.entity) -> std.u1
+		mark : (T: compiler.entity, v: compiler.entity, attribute: compiler.entity) -> compiler.entity
+		set : (T: compiler.entity, v: compiler.entity, attribute: compiler.entity, value: compiler.entity) -> compiler.entity
+		get : (T: compiler.entity, v: compiler.entity, attribute: compiler.entity) -> compiler.entity
+	}
+
+	is_comptime_evaluation : () -> std.u1
+
+	// One zero-initialized `T` per call entity and `T`, for the life of the program (MEM-Static).
+	static : namespace = {
+		allocate : (T: compiler.entity) -> std.byte_pointer
+	}
+
+	// Comptime memory is the host's (MEM-Comptime): these run the machine's primitives over it, at the target's widths.
+	stack : namespace = {
+		load : (T: compiler.entity, stack_offset: std.pointer_sized, result: compiler.byte_pointer)
+		store : (T: compiler.entity, value: compiler.byte_pointer, stack_offset: std.pointer_sized, result: compiler.byte_pointer)
+		push : (amount: std.pointer_sized, alignment: std.pointer_sized) -> std.byte_pointer
+		pop : (amount: std.pointer_sized) -> std.byte_pointer
+		allocate : (T: compiler.entity) -> std.byte_pointer
+		top : () -> std.byte_pointer
+	}
+
+	heap : namespace = {
+		allocate : (size: std.pointer_sized, alignment: std.pointer_sized) -> std.byte_pointer
+		reallocate : (p: std.byte_pointer, size: std.pointer_sized, alignment: std.pointer_sized) -> std.byte_pointer
+		free : (p: std.byte_pointer)
+	}
+
+	// `Tptr` is always a pointer type, so a pointer crosses as its value.
+	pointers : namespace = {
+		read_only : (e: compiler.entity) -> compiler.entity
+		load : (Tptr: compiler.entity, Tvalue: compiler.entity, pointer: std.byte_pointer, result: compiler.byte_pointer)
+		store : (Tptr: compiler.entity, Tvalue: compiler.entity, pointer: std.byte_pointer, value: compiler.byte_pointer, result: compiler.byte_pointer)
+		offset : (Tptr: compiler.entity, pointer: std.byte_pointer, byte_offset: std.pointer_difference) -> std.byte_pointer
+		element_pointer : (Tptr: compiler.entity, pointer: std.byte_pointer, index: std.pointer_sized) -> std.byte_pointer
+		difference : (Tptr: compiler.entity, a: std.byte_pointer, b: std.byte_pointer) -> std.pointer_difference
+		is_null : (Tptr: compiler.entity, pointer: std.byte_pointer) -> std.u1
+		null : (Tptr: compiler.entity) -> std.byte_pointer
+		load_field : (Tptr: compiler.entity, Tvalue: compiler.entity, object: std.byte_pointer, field: compiler.entity, result: compiler.byte_pointer)
+		store_field : (Tptr: compiler.entity, Tvalue: compiler.entity, object: std.byte_pointer, field: compiler.entity, value: compiler.byte_pointer, result: compiler.byte_pointer)
+	}
+
+	reinterpret_bits : (Tin: compiler.entity, in: compiler.byte_pointer, Tout: compiler.entity, result: compiler.byte_pointer)
+	copy : (T: compiler.entity, v: compiler.byte_pointer, result: compiler.byte_pointer)
+
+	// Arithmetic and comparison (Part II §13), with the semantics the spec gives each.
+	is_equal : (T: compiler.entity, a: compiler.byte_pointer, b: compiler.byte_pointer) -> std.u1
+	is_not_equal : (T: compiler.entity, a: compiler.byte_pointer, b: compiler.byte_pointer) -> std.u1
+	is_less : (T: compiler.entity, a: compiler.byte_pointer, b: compiler.byte_pointer) -> std.u1
+	is_less_equal : (T: compiler.entity, a: compiler.byte_pointer, b: compiler.byte_pointer) -> std.u1
+	is_greater : (T: compiler.entity, a: compiler.byte_pointer, b: compiler.byte_pointer) -> std.u1
+	is_greater_equal : (T: compiler.entity, a: compiler.byte_pointer, b: compiler.byte_pointer) -> std.u1
+	add : (T: compiler.entity, a: compiler.byte_pointer, b: compiler.byte_pointer, result: compiler.byte_pointer)
+	subtract : (T: compiler.entity, a: compiler.byte_pointer, b: compiler.byte_pointer, result: compiler.byte_pointer)
+	divide : (T: compiler.entity, a: compiler.byte_pointer, b: compiler.byte_pointer, result: compiler.byte_pointer)
+	multiply : (T: compiler.entity, a: compiler.byte_pointer, b: compiler.byte_pointer, result: compiler.byte_pointer)
+	remainder : (T: compiler.entity, a: compiler.byte_pointer, b: compiler.byte_pointer, result: compiler.byte_pointer)
+	negate : (T: compiler.entity, v: compiler.byte_pointer, result: compiler.byte_pointer)
+	max : (T: compiler.entity, a: compiler.byte_pointer, b: compiler.byte_pointer, result: compiler.byte_pointer)
+	min : (T: compiler.entity, a: compiler.byte_pointer, b: compiler.byte_pointer, result: compiler.byte_pointer)
+	square_root : (T: compiler.entity, v: compiler.byte_pointer, result: compiler.byte_pointer)
+	shift_left : (T: compiler.entity, a: compiler.byte_pointer, b: compiler.byte_pointer, result: compiler.byte_pointer)
+	shift_right : (T: compiler.entity, a: compiler.byte_pointer, b: compiler.byte_pointer, result: compiler.byte_pointer)
+	bitwise_xor : (T: compiler.entity, a: compiler.byte_pointer, b: compiler.byte_pointer, result: compiler.byte_pointer)
+	bitwise_or : (T: compiler.entity, a: compiler.byte_pointer, b: compiler.byte_pointer, result: compiler.byte_pointer)
+	bitwise_and : (T: compiler.entity, a: compiler.byte_pointer, b: compiler.byte_pointer, result: compiler.byte_pointer)
+	bitwise_not : (T: compiler.entity, v: compiler.byte_pointer, result: compiler.byte_pointer)
+	logical_not : (v: std.u1) -> std.u1
+	logical_and : (a: std.u1, b: std.u1) -> std.u1
+	logical_or : (a: std.u1, b: std.u1) -> std.u1
+	is_negative : (T: compiler.entity, v: compiler.byte_pointer) -> std.u1
+	is_positive : (T: compiler.entity, v: compiler.byte_pointer) -> std.u1
+	is_infinite : (T: compiler.entity, v: compiler.byte_pointer) -> std.u1
+	is_not_a_number : (T: compiler.entity, v: compiler.byte_pointer) -> std.u1
+}

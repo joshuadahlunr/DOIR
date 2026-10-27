@@ -1,0 +1,10 @@
+// MEM-Stack: pop(n) releases the most recent push, which must have been of n bytes; a folded mismatch is a compile error (C-Interpret).
+f : () -> std.u8 = {
+	sixteen : std.pointer_sized = 16
+	eight : std.pointer_sized = 8
+	_ : std.byte_pointer = std.stack.push(sixteen, eight)
+	_ : std.byte_pointer = std.stack.pop(eight)
+	zero : std.u8 = 0
+	_ : _ = std.return(zero)
+}
+r : std.u8 = f()
