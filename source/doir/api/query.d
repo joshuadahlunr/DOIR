@@ -529,6 +529,16 @@ version(unittest) {
 		}
 	}
 
+	// Depth(n), demanded from outside any query at n = 0, runs in frame n and nests down to Depth(3).
+	private struct Depth {
+		alias Key = size_t;
+		alias Value = size_t;
+		static size_t compute(ref QueryEngine engine, size_t key) @nogc nothrow {
+			assert(ecrs.context.getComponent!(doir.engine.query.Running)(*engine.store, currentQuery(engine)).frame == key);
+			return key == 3 ? key : *query!Depth(engine, key + 1);
+		}
+	}
+
 	// A labelled graph: node entities carry a label and an ordered child list.
 	private struct Node {
 		mixin ecrs.relation.Relates!2; // the children
@@ -762,10 +772,15 @@ unittest { // cycles: reported chains, deep chains and the depth limit
 	assert(*query!Resolve(engine, -1) == -1);
 	assert(diagnose.count(manager) == 2);
 
+	// Each running query is marked with its frame, and only while it runs.
+	assert(*query!Depth(engine, 0) == 3);
+	foreach (k; 0 .. 4) assert(!ecrs.context.hasComponent!(doir.engine.query.Running)(store, doir.engine.query.find!Depth(engine, k)));
+
 	// A chain within the depth limit resolves; one past it is reported instead of overflowing the stack.
 	diagnose.clear(manager);
 	assert(*query!Resolve(engine, defaultDepthLimit - 8) == 0);
 	assert(diagnose.count(manager) == 0);
+	assert(!ecrs.context.hasComponent!(doir.engine.query.Running)(store, doir.engine.query.find!Resolve(engine, defaultDepthLimit - 8)));
 	engine.depthLimit = 64;
 	assert(*query!Resolve(engine, 2 * defaultDepthLimit) == -1);
 	assert(diagnose.count(manager) == 1);

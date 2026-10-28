@@ -127,3 +127,27 @@ The compiler is written in D under `-betterC` on LDC, on libfp. These rules are 
 
 - If you find a bug while working, fix it, with a test that would have caught it, rather than only reporting it.
   Only when the fix would likely take a long time, report it instead, saying what you found and where.
+
+## Profiling
+
+```sh
+DFLAGS="--frame-pointer=all" dub build --config=doir --compiler=ldc2 --build=release-debug --force
+perf record --call-graph fp -e cpu_core/cycles/ -- ./bin/doir test.doir # the run to profile
+perf script > perf.script
+FlameGraph/stackcollapse-perf.pl perf.script > perf.folded
+FlameGraph/flamegraph.pl perf.folded > perf.svg
+```
+
+To profile the tests, build them with `DFLAGS="-g -unittest -O --frame-pointer=all" dub build --config=unittest --compiler=ldc2 --build=plain --force`: dub ignores `DFLAGS` under `--build=unittest`, and `release-debug` would compile out the tests' asserts. The suite runs in milliseconds, so record many runs at a high rate (`perf record -F 20000 … -- sh -c 'for i in $(seq 500); do ./bin/doir-tests; done'`).
+
+The scripts are from [FlameGraph](https://github.com/brendangregg/FlameGraph). The same steps are written up for no-api in its [README](https://github.com/doir-lang/no-api#profiling); keep the two in step.
+
+The frame pointer flag is what makes the profile readable, and it is not optional. In the waterfall compiler, `--call-graph dwarf` against a build without it unwound 0.1% of cycles to a real stack, left 65% of samples with no frames at all, throttled the sample period 5x and wrote 4.6GB of `perf.data`. It goes in `DFLAGS` rather than `dub.json`'s `dflags` because `DFLAGS` reaches every dependency too (libfp, libECRS, libdiagnose, Mizu), and a stack is only as unwindable as the least cooperative frame on it. With frame pointers in the binary, `--call-graph fp` needs no stack copying; `dwarf` also works, but it adds nothing and makes `perf.data` much larger.
+
+`-e cpu_core/cycles/` because a hybrid CPU otherwise reports `cpu_atom` and `cpu_core` as two events with their own sample periods, and anything that sums raw sample counts across them is measuring nothing.
+
+Check `kernel.perf_event_paranoid` before reading any of the numbers. At the default of 2, perf quietly records user space only (the event shows up as `cpu_core/cycles/u`), so kernel time is invisible or lands on a single unresolvable `0xffffffff...` address, ~40% of the cycles in one waterfall run. `sudo sysctl kernel.perf_event_paranoid=1` brings it back.
+
+Mind what the driver spends its time on. Printing the IR took 20–39% of the waterfall `bin/doir`'s cycles, none of it compilation. Profile `bin/doir-tests`, or subtract the driver's output, when the question is about compile speed rather than the driver.
+
+`perf.script` grows quickly with run length, so stream it with `awk` rather than loading it. Weight each sample by the period in its header line: once perf has throttled, that period is not constant, and counting every sample as one unit silently reweights the profile.
