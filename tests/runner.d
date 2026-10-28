@@ -4,8 +4,15 @@ static import core.stdc.stdio;
 
 private enum modules = [
 	"doir.strings",
-	"doir.builders",
-	"doir.query",
+	"doir.engine.positions",
+	"doir.engine.query",
+	"doir.engine.logs",
+	"doir.api.query",
+	"doir.api.positions",
+	"doir.api.components",
+	"doir.api.builders",
+	"doir.api.effects",
+	"doir.api.imports",
 ];
 
 private int runEveryTest() {

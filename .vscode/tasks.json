@@ -1,0 +1,46 @@
+{
+	"version": "2.0.0",
+	"tasks": [
+		{
+			"label": "build doir",
+			"type": "shell",
+			"command": "dub",
+			"args": ["build", "--compiler=ldc2", "--build=debug"],
+			"options": { "cwd": "${workspaceFolder}" },
+			"group": { "kind": "build", "isDefault": true },
+			"problemMatcher": {
+				"owner": "d",
+				"fileLocation": ["relative", "${workspaceFolder}"],
+				"pattern": {
+					"regexp": "^(.*?)\\((\\d+),(\\d+)\\): (Error|Warning|Deprecation): (.*)$",
+					"file": 1, "line": 2, "column": 3, "severity": 4, "message": 5
+				}
+			}
+		},
+		{
+			"label": "build doir-tests",
+			"type": "shell",
+			"command": "dub",
+			"args": ["build", "--compiler=ldc2", "--config=unittest", "--build=unittest"],
+			"options": { "cwd": "${workspaceFolder}" },
+			"group": "build",
+			"problemMatcher": {
+				"owner": "d",
+				"fileLocation": ["relative", "${workspaceFolder}"],
+				"pattern": {
+					"regexp": "^(.*?)\\((\\d+),(\\d+)\\): (Error|Warning|Deprecation): (.*)$",
+					"file": 1, "line": 2, "column": 3, "severity": 4, "message": 5
+				}
+			}
+		},
+		{
+			"label": "test",
+			"type": "shell",
+			"command": "${workspaceFolder}/bin/doir-tests",
+			"options": { "cwd": "${workspaceFolder}" },
+			"dependsOn": "build doir-tests",
+			"group": { "kind": "test", "isDefault": true },
+			"problemMatcher": []
+		}
+	]
+}

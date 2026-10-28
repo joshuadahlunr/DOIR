@@ -1,0 +1,53 @@
+{
+	"version": "0.2.0",
+	"configurations": [
+		{
+			"name": "doir (gdb)",
+			"type": "cppdbg",
+			"request": "launch",
+			"program": "${workspaceFolder}/bin/doir",
+			"args": [],
+			"cwd": "${workspaceFolder}",
+			"MIMode": "gdb",
+			"miDebuggerPath": "/usr/bin/gdb",
+			"preLaunchTask": "build doir",
+			"setupCommands": [
+				{ "text": "-enable-pretty-printing", "ignoreFailures": true },
+				{ "text": "set language d", "ignoreFailures": true }
+			]
+		},
+		{
+			"name": "doir-tests (gdb)",
+			"type": "cppdbg",
+			"request": "launch",
+			"program": "${workspaceFolder}/bin/doir-tests",
+			"args": [],
+			"cwd": "${workspaceFolder}",
+			"MIMode": "gdb",
+			"miDebuggerPath": "/usr/bin/gdb",
+			"preLaunchTask": "build doir-tests",
+			"setupCommands": [
+				{ "text": "-enable-pretty-printing", "ignoreFailures": true },
+				{ "text": "set language d", "ignoreFailures": true }
+			]
+		},
+		{
+			"name": "doir (lldb)",
+			"type": "lldb",
+			"request": "launch",
+			"program": "${workspaceFolder}/bin/doir",
+			"args": [],
+			"cwd": "${workspaceFolder}",
+			"preLaunchTask": "build doir"
+		},
+		{
+			"name": "doir-tests (lldb)",
+			"type": "lldb",
+			"request": "launch",
+			"program": "${workspaceFolder}/bin/doir-tests",
+			"args": [],
+			"cwd": "${workspaceFolder}",
+			"preLaunchTask": "build doir-tests"
+		}
+	]
+}

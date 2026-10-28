@@ -166,6 +166,27 @@ unittest {
 	}
 	assert(intern(strings, "n42").value == 43);
 	assert(count(strings) == 101);
+
+	// A refused allocation at any step leaves the strings as they were; budgets cover every step at every table size.
+	Strings rationed;
+	scope(exit) free(rationed);
+	foreach (i; 0 .. 100) {
+		char[8] buffer;
+		immutable n = cast(size_t) core.stdc.stdio.snprintf(buffer.ptr, buffer.length, "n%d", i);
+		for (size_t budget = 0;; ++budget) {
+			auto previous = doir.testing.beginRationedAllocator(budget);
+			immutable id = intern(rationed, buffer[0 .. n]);
+			doir.testing.endRationedAllocator(previous);
+			if (id != noName) {
+				assert(id.value == i && text(rationed, id) == buffer[0 .. n]);
+				break;
+			}
+			assert(count(rationed) == i && find(rationed, buffer[0 .. n]) == noName);
+		}
+	}
 }
 
-version(unittest) static import core.stdc.stdio;
+version(unittest) {
+	static import core.stdc.stdio;
+	static import doir.testing;
+}
