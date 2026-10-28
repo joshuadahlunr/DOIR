@@ -1,4 +1,4 @@
-/// The `doir` executable. For now a hello world that touches each dependency: it builds a root block in the libECRS store through `doir.builders`, runs a Mizu program, and reports through libdiagnose.
+/// The `doir` executable. For now a hello world that touches each dependency: it builds a root block in the libECRS store through `doir.api.builders`, runs a Mizu program, and reports through libdiagnose.
 module main;
 
 static import core.stdc.stdio;
@@ -9,14 +9,15 @@ static import diagnose;
 static import ecrs.context;
 static import mizu;
 
-static import doir.builders;
+static import doir.api.builders;
+static import doir.api.components;
 
 /// Builds a root block, runs a Mizu program, and prints its result as a libdiagnose note. Returns 1 if a step fails, 0 otherwise.
 extern(C) int main() {
 	auto store = ecrs.context.create();
 	scope(exit) ecrs.context.free(store);
-	auto root = doir.builders.createRoot(store);
-	if (!ecrs.context.hasComponent!(doir.builders.Block)(store, root.block)) return 1;
+	auto root = doir.api.builders.createRoot(store);
+	if (!ecrs.context.hasComponent!(doir.api.components.Block)(store, root.block)) return 1;
 
 	static immutable mizu.Opcode[4] program = [
 		mizu.setImmediate(mizu.Opcode(&mizu.loadImmediate, mizu.Registers.t(0)), 6),

@@ -4,17 +4,15 @@
 	"license": "MIT",
 	"targetType": "executable",
 	"sourcePaths": [
-		"reference",
 		"source"
 	],
 	"importPaths": [
-		"reference",
 		"source"
 	],
 	"dependencies": {
 		"libecrs": {
 			"repository": "git+https://github.com/doir-lang/libECRS.git",
-			"version": "4f8e3d1874461420bba6983481bc31460bc2ff94"
+			"version": "810f2e9717206ceeb0cfc4e4b7aa1e3bd308112f"
 		},
 		"libdiagnose": {
 			"repository": "git+https://github.com/doir-lang/libdiagnose.git",
@@ -40,7 +38,6 @@
 			"targetName": "doir",
 			"mainSourceFile": "source/main.d",
 			"sourcePaths": [
-				"reference",
 				"source"
 			]
 		},
@@ -49,7 +46,6 @@
 			"targetType": "executable",
 			"mainSourceFile": "tests/runner.d",
 			"sourcePaths": [
-				"reference",
 				"source",
 				"tests"
 			],
@@ -57,7 +53,6 @@
 				"source/main.d"
 			],
 			"importPaths": [
-				"reference",
 				"source",
 				"tests"
 			],

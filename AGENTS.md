@@ -26,6 +26,7 @@ Three reference codebases guide implementation (`rustc-architecture.md` summariz
 2. **Entity Ids & Renumbering (`E-Remap`):**
    - Entities are natural-number ids (`EntityId`). Renumbering is allowed.
    - Every renumbering rewrites all holders of entity ids in one step: entity-valued components, attribute values and query entities included, through libECRS's `remapEntities` hooks. It runs only between levels or between edits (matching a reparse), when no comptime frame or comptime memory is live, and `std.meta.entity` values never enter memory (`MEM-Escape`). The legacy corruption (`canon/sort.d` in `tree/D`) came from skipped holders.
+   - Anything that holds an `EntityId` holds it by mixing in libECRS's relation, `mixin ecrs.relation.Relates!n;` (`Relates;` for a list), as its first member, naming fixed slots where a name reads better (`Relates!("file", "level")`, then `key.file`). That gives it the remap, lifetime, copy, encoding, `contentHash` and `equal` hooks in one place; never hand-write those for entity ids.
 
 3. **Stratified Level Tower (spec Part II §16):**
    - DOIR has no standalone runtime semantics; a level supplies them (`compiler` -> `machine` -> `std` -> source languages).
@@ -89,13 +90,13 @@ The compiler is written in D under `-betterC` on LDC, on libfp. These rules are 
 
 - Keep examples short, and make them correct against the current API: they should compile and pass as written under `-betterC`.
   Check them with `python3 tools/doctest.py`, which compiles and runs every example and reports public definitions missing documentation or an example.
-  With no arguments it checks `reference/*.d` and `source/**/*.d`; pass files and `-I dir` import paths for the modules those sources import.
+  With no arguments it checks `source/**/*.d`; pass files and `-I dir` import paths for the modules those sources import.
 - A DDoc comment is documentation, not a free-standing comment, so the 25-word cap does not apply to it, but keep it as brief as the definition allows.
 
 ### Style
 
 - Prefer plain-data structs operated on by free functions that take them by `ref` (for example `pushBack(arr, x)`, `free(arr)`), rather than methods.
-  Use member functions only for operator overloads and for what a language protocol requires to be a member, such as range primitives (`empty`, `front`, `popFront`) or an `alias this` target.
+  Use member functions only for operator overloads, for `@property` accessors that name part of a field (such as `ecrs.relation.Relates` naming a slot of `related`), and for what a language protocol requires to be a member, such as range primitives (`empty`, `front`, `popFront`) or an `alias this` target.
 - Prefer fully qualified names to aliasing imports: call `fp.string.free(s)` rather than `import fp.string : stringFree = free;` or `alias stringFree = fp.string.free;`.
   A `static import` keeps a module's names out of scope so every use has to be qualified.
 - One module uses another through a `static import`, so every call names its layer (`fp.dynarray.pushBack`, `fp.pointer.notFound`).

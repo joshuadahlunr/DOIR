@@ -7,7 +7,7 @@ A module defining `main` is checked but not compiled into the doctest binary, wh
 
 Import paths and libraries for the dub dependencies (libECRS, libdiagnose, Mizu and theirs) come from `dub describe`.
 
-Usage: tools/doctest.py [-I dir]... [file.d]...   (default sources: reference/*.d and source/**/*.d; -I adds further import paths; set DC to use a compiler other than ldc2)
+Usage: tools/doctest.py [-I dir]... [file.d]...   (default sources: source/**/*.d; -I adds further import paths; set DC to use a compiler other than ldc2)
 """
 import glob, os, re, subprocess, sys
 
@@ -122,7 +122,7 @@ def main(argv):
 			sources.append(argv[i])
 			i += 1
 	if not sources:
-		sources = sorted(glob.glob(os.path.join(root, 'reference', '*.d')) + glob.glob(os.path.join(root, 'source', '**', '*.d'), recursive=True))
+		sources = sorted(glob.glob(os.path.join(root, 'source', '**', '*.d'), recursive=True))
 
 	os.makedirs(out, exist_ok=True)
 	for old in glob.glob(os.path.join(out, '*.d')):
@@ -170,7 +170,7 @@ def main(argv):
 	includes += dub_describe('import-paths')
 	libs = ['-L-l' + lib for lib in dub_describe('libs')]
 	command = [compiler, '-betterC', '-checkaction=C', '-unittest', '-i'] + libs + ['-I' + inc for inc in includes] + [
-		'-I' + os.path.join(root, 'reference'), '-I' + os.path.join(root, 'source'), '-of=' + exe] + compiled + sorted(
+		'-I' + os.path.join(root, 'source'), '-of=' + exe] + compiled + sorted(
 		glob.glob(os.path.join(out, '*.d')))
 	if subprocess.run(command, cwd=root).returncode != 0:
 		return 1
