@@ -168,6 +168,11 @@ struct InCycle {
 	enum isTag = true;
 }
 
+/// Marks a running query with the index of its frame on the engine's stack, so finding it never scans the stack. Present only while the query runs.
+struct Running {
+	size_t frame; /// Its index in the engine's stack.
+}
+
 unittest { // libECRS silently skips a holder whose hook is not `@nogc nothrow`; every holder of an entity id must pass (E-Remap)
 	static assert(ecrs.registry.hasRemapEntities!DependsOn && ecrs.registry.hasRemapEntities!Produces && ecrs.registry.hasRemapEntities!Creates
 		&& ecrs.registry.hasRemapEntities!Provenance && ecrs.registry.hasRemapEntities!QueryDiagnostics && ecrs.registry.hasRemapEntities!ProvisionalOn);
@@ -412,12 +417,6 @@ struct QueryEngine {
 
 // --- entry points for doir.api ----------------------------------------------
 
-private size_t frameOf(ref QueryEngine engine, EntityId q) {
-	foreach (i, frame; fp.dynarray.slice(engine.stack))
-		if (frame.query == q) return i;
-	return noFrame;
-}
-
 /// Whether no query is running, as entering a revision, an input commit and a renumbering require.
 ///
 /// Examples:
@@ -432,6 +431,12 @@ private size_t frameOf(ref QueryEngine engine, EntityId q) {
 /// ---
 package(doir) bool idle(ref QueryEngine engine) {
 	return fp.dynarray.length(engine.stack) == 0;
+}
+
+private size_t frameOf(ref QueryEngine engine, EntityId q) {
+	if (idle(engine)) return noFrame;
+	auto running = ecrs.context.findComponent!Running(*engine.store, q);
+	return running is null ? noFrame : running.frame;
 }
 
 /// Releases the engine's own memory: its stack and its positions.
@@ -824,11 +829,13 @@ private void execute(Q)(ref QueryEngine engine, EntityId q) {
 	auto deps = &ecrs.context.getComponent!DependsOn(*store, q);
 	if (deps.related !is null) fp.dynarray.clear(deps.related);
 
+	attach!Running(*store, q).frame = fp.dynarray.length(engine.stack);
 	append(engine.stack, Frame(q, 0));
 	auto key = ecrs.context.getComponent!(QueryKey!Q)(*store, q).key;
 	auto value = Q.compute(engine, key);
 	auto frame = *fp.dynarray.back(engine.stack);
 	fp.dynarray.popBack(engine.stack);
+	ecrs.context.removeComponent!Running(*store, q);
 	removeCreated(engine, q, frame.created);
 
 	immutable hash = hashProduced(engine, q);
