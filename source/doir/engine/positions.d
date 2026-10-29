@@ -201,6 +201,8 @@ void free(ref Positions positions) @trusted {
 }
 
 
+version(unittest) static import doir.testing;
+
 unittest {
 	Positions positions;
 	scope(exit) free(positions);
@@ -256,5 +258,3 @@ unittest {
 		}
 	}
 }
-
-version(unittest) static import doir.testing;

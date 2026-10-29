@@ -36,8 +36,8 @@ private int runEveryTest() {
 
 version(DoirCoverage) {
 	shared static this() {
-		import core.runtime : Runtime, UnitTestResult;
-		Runtime.extendedModuleUnitTester = () => UnitTestResult(0, 0, true, false);
+		static import core.runtime;
+		core.runtime.Runtime.extendedModuleUnitTester = () => core.runtime.UnitTestResult(0, 0, true, false);
 	}
 
 	int main() { return runEveryTest(); }
