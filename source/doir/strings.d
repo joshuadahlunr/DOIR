@@ -152,6 +152,11 @@ void free(ref Strings strings) @trusted {
 }
 
 
+version(unittest) {
+	static import core.stdc.stdio;
+	static import doir.testing;
+}
+
 unittest {
 	Strings strings;
 	scope(exit) free(strings);
@@ -184,9 +189,4 @@ unittest {
 			assert(count(rationed) == i && find(rationed, buffer[0 .. n]) == noName);
 		}
 	}
-}
-
-version(unittest) {
-	static import core.stdc.stdio;
-	static import doir.testing;
 }

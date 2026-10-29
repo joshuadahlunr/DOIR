@@ -10,14 +10,13 @@ static import ecrs.context;
 static import mizu;
 
 static import doir.api.builders;
-static import doir.api.components;
 
 /// Builds a root block, runs a Mizu program, and prints its result as a libdiagnose note. Returns 1 if a step fails, 0 otherwise.
 extern(C) int main() {
 	auto store = ecrs.context.create();
 	scope(exit) ecrs.context.free(store);
 	auto root = doir.api.builders.createRoot(store);
-	if (!ecrs.context.hasComponent!(doir.api.components.Block)(store, root.block)) return 1;
+	if (root.block == doir.api.builders.invalidEntity) return 1;
 
 	static immutable mizu.Opcode[4] program = [
 		mizu.setImmediate(mizu.Opcode(&mizu.loadImmediate, mizu.Registers.t(0)), 6),
@@ -34,6 +33,10 @@ extern(C) int main() {
 	diagnose.Diagnostic hello;
 	hello.kind = diagnose.Kind.note;
 	hello.message = fp.string.format("hello, world (mizu says 6 * 7 = %d)", cast(int) env.memory[mizu.Registers.a(0)]);
-	if (hello.message is null || diagnose.push(manager, hello) is null) return 1;
+	if (hello.message is null) return 1;
+	if (diagnose.push(manager, hello) is null) {
+		fp.string.free(hello.message);
+		return 1;
+	}
 	return diagnose.printAll(manager, core.stdc.stdio.stdout) ? 0 : 1;
 }
