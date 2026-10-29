@@ -21,6 +21,7 @@ static import ecrs.relation;
 
 static import doir.engine.positions;
 static import doir.engine.query;
+static import doir.components.query;
 
 public import ecrs.registry : EntityId, invalidEntity;
 
@@ -170,7 +171,7 @@ package(doir) bool append(L, E)(ref doir.engine.query.QueryEngine engine, Entity
 	immutable q = doir.engine.query.currentQuery(engine);
 	assert(q != invalidEntity, "doir.logs: writing an effect outside a query");
 	// Recorded first, so no entry exists that a reset of its owner would not strip.
-	if (!doir.engine.query.recordProduced(engine, doir.engine.query.Produced([e], ecrs.registry.componentId!L(), &strip!L, &hash!L), false)) return false;
+	if (!doir.engine.query.recordProduced(engine, doir.components.query.Produced([e], ecrs.registry.componentId!L(), &strip!L, &hash!L), false)) return false;
 	auto log = ecrs.context.getOrAddComponent!L(*engine.store, e);
 	size_t i = log is null ? 0 : fp.dynarray.length(log.entries);
 	while (i > 0 && doir.engine.positions.precedes(engine.positions, at, log.entries[i - 1].at)) --i;
@@ -212,7 +213,7 @@ package(doir) bool fold(L, E)(ref doir.engine.query.QueryEngine engine, EntityId
 		auto entries = ecrs.context.getComponent!L(*engine.store, e).entries;
 		if (i >= fp.dynarray.length(entries) || !visible(engine, entries[i].at, at)) break;
 		immutable owner = entries[i].owner;
-		if (owner != reader && !doir.engine.query.running(engine, owner)) complete = ecrs.context.getComponent!(doir.engine.query.QueryInfo)(*engine.store, owner).refresh(engine, owner) && complete;
+		if (owner != reader && !doir.engine.query.running(engine, owner)) complete = ecrs.context.getComponent!(doir.components.query.QueryInfo)(*engine.store, owner).refresh(engine, owner) && complete;
 	}
 	foreach (entry; fp.dynarray.slice(ecrs.context.getComponent!L(*engine.store, e).entries)) {
 		if (!visible(engine, entry.at, at)) break;
