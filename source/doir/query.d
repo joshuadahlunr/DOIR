@@ -33,8 +33,9 @@ static import ecrs.relation;
 static import ecrs.registry;
 
 static import doir.engine.query;
+static import doir.components.query;
 
-public import doir.engine.query : EntityId, invalidEntity, Revision, ChangedAt, VerifiedAt, Provenance, QueryDiagnostic, Produced, StripFunction, HashFunction, QueryEngine, defaultDepthLimit, isQuery, free, currentQuery, read, recordProduced, fail, query, evict;
+public import doir.engine.query : EntityId, invalidEntity, Revision, QueryEngine, defaultDepthLimit, isQuery, free, currentQuery, read, recordProduced, fail, query, evict;
 
 @nogc nothrow:
 
@@ -95,7 +96,7 @@ void beginRevision(ref QueryEngine engine) {
 bool markChanged(ref QueryEngine engine, EntityId e) {
 	assert(doir.engine.query.idle(engine));
 	// Set rather than written in place, so a transaction around an input commit can undo it.
-	return ecrs.context.setComponent!ChangedAt(*engine.store, e, ChangedAt(engine.revision));
+	return ecrs.context.setComponent!(doir.components.query.ChangedAt)(*engine.store, e, doir.components.query.ChangedAt(engine.revision));
 }
 
 /// The revision `e` last changed in; 0 if it never has.
@@ -110,7 +111,7 @@ bool markChanged(ref QueryEngine engine, EntityId e) {
 /// assert(changedAt(engine, ecrs.context.addEntity(store)) == 0);
 /// ---
 Revision changedAt(ref QueryEngine engine, EntityId e) {
-	auto changed = ecrs.context.findComponent!ChangedAt(*engine.store, e);
+	auto changed = ecrs.context.findComponent!(doir.components.query.ChangedAt)(*engine.store, e);
 	return changed is null ? 0 : changed.revision;
 }
 
@@ -148,7 +149,7 @@ Revision changedAt(ref QueryEngine engine, EntityId e) {
 /// ---
 C* produce(C)(ref QueryEngine engine, EntityId e) {
 	immutable id = ecrs.registry.componentId!C();
-	if (!doir.engine.query.recordProduced(engine, Produced([e], id, &doir.engine.query.stripComponent, &doir.engine.query.hashComponent!C), true)) return null;
+	if (!doir.engine.query.recordProduced(engine, doir.components.query.Produced([e], id, &doir.engine.query.stripComponent, &doir.engine.query.hashComponent!C), true)) return null;
 	auto component = ecrs.context.addComponent!C(*engine.store, e);
 	if (component is null) doir.engine.query.fail(engine);
 	return component;
@@ -158,6 +159,7 @@ C* produce(C)(ref QueryEngine engine, EntityId e) {
 ///
 /// Examples:
 /// ---
+/// static import doir.components.query;
 /// static import ecrs.relation;
 /// static import ecrs.context;
 /// struct Make {
@@ -171,12 +173,12 @@ C* produce(C)(ref QueryEngine engine, EntityId e) {
 /// scope(exit) free(engine);
 /// immutable from = ecrs.context.addEntity(store);
 /// immutable made = query!Make(engine, Make.Key([from])).related[0];
-/// assert(ecrs.context.getComponent!Provenance(store, made).origin == from);
+/// assert(ecrs.context.getComponent!(doir.components.query.Provenance)(store, made).origin == from);
 /// ---
 EntityId createEntity(ref QueryEngine engine, EntityId origin) {
 	immutable e = doir.engine.query.nextCreated(engine);
 	if (e == invalidEntity) return invalidEntity;
-	auto provenance = produce!Provenance(engine, e);
+	auto provenance = produce!(doir.components.query.Provenance)(engine, e);
 	if (provenance is null) return invalidEntity;
 	provenance.origin = origin;
 	return e;
@@ -215,17 +217,17 @@ struct Related {
 /// ---
 bool report(ref QueryEngine engine, EntityId subject, diagnose.Kind kind, const(char)[] message, const(char)[] hint, const(Related)[] related = null) {
 	assert(hint.length, "every diagnostic says how to fix it");
-	auto d = QueryDiagnostic([subject], kind, fp.string.makeDynamic(message), fp.string.makeDynamic(hint));
+	auto d = doir.components.query.QueryDiagnostic([subject], kind, fp.string.makeDynamic(message), fp.string.makeDynamic(hint));
 	bool ok = (d.message !is null || message.length == 0) && d.hint !is null
 		&& (related.length == 0 || fp.dynarray.reserve(d.annotations, related.length) !is null);
 	foreach (r; related) {
 		if (!ok) break;
-		auto a = doir.engine.query.QueryAnnotation([r.target], fp.string.makeDynamic(r.message));
+		auto a = doir.components.query.QueryAnnotation([r.target], fp.string.makeDynamic(r.message));
 		ok = (a.message !is null || r.message.length == 0) && fp.dynarray.pushBack(d.annotations, a); // reserved above
 		if (!ok) fp.string.free(a.message);
 	}
 	if (ok) return doir.engine.query.recordDiagnostic(engine, d);
-	doir.engine.query.freeDiagnostic(d);
+	doir.components.query.freeDiagnostic(d);
 	doir.engine.query.fail(engine);
 	return false;
 }
@@ -367,8 +369,8 @@ version(unittest) {
 		static bool compute(ref QueryEngine engine, Key key) @nogc nothrow {
 			immutable e = key.related[0];
 			doir.testing.addComponent!Amount(*engine.store, e).value = 9;
-			assert(recordProduced(engine, Produced([e], ecrs.registry.componentId!Amount(), &strip, &hash), false));
-			assert(recordProduced(engine, Produced([e], ecrs.registry.componentId!Amount(), &strip, &hash), false));
+			assert(recordProduced(engine, doir.components.query.Produced([e], ecrs.registry.componentId!Amount(), &strip, &hash), false));
+			assert(recordProduced(engine, doir.components.query.Produced([e], ecrs.registry.componentId!Amount(), &strip, &hash), false));
 			return true;
 		}
 	}
@@ -454,7 +456,7 @@ version(unittest) {
 		alias Key = size_t;
 		alias Value = size_t;
 		static size_t compute(ref QueryEngine engine, size_t key) @nogc nothrow {
-			assert(ecrs.context.getComponent!(doir.engine.query.Running)(*engine.store, currentQuery(engine)).frame == key);
+			assert(ecrs.context.getComponent!(doir.components.query.Running)(*engine.store, currentQuery(engine)).frame == key);
 			return key == 3 ? key : *query!Depth(engine, key + 1);
 		}
 	}
@@ -574,7 +576,7 @@ unittest { // stable created ids, provenance, ownership and eviction
 	runs = 0;
 	immutable made = query!Twin(engine, 7).related[0];
 	assert(ecrs.context.getComponent!Amount(store, made).value == 7);
-	assert(ecrs.context.getComponent!Provenance(store, made).origin == invalidEntity);
+	assert(ecrs.context.getComponent!(doir.components.query.Provenance)(store, made).origin == invalidEntity);
 
 	// Evicting removes what the query produced and created, and the next demand re-runs it.
 	evict!Twin(engine, 7);
@@ -587,7 +589,7 @@ unittest { // stable created ids, provenance, ownership and eviction
 	beginRevision(engine);
 	int key = 7;
 	immutable q = doir.engine.query.find!Twin(engine, key);
-	ecrs.context.getComponent!VerifiedAt(store, q).revision = 0;
+	ecrs.context.getComponent!(doir.components.query.VerifiedAt)(store, q).revision = 0;
 	immutable before = changedAt(engine, q);
 	assert(query!Twin(engine, 7).related[0] == remade);
 	assert(changedAt(engine, q) == before);
@@ -599,7 +601,7 @@ unittest { // stable created ids, provenance, ownership and eviction
 	runs = 0;
 	assert(*query!CopiedAmount(engine, CopiedAmount.Key([knob])) == 1);
 	immutable copy = query!Copy(engine, Copy.Key([knob])).related[0];
-	assert(ecrs.context.getComponent!Provenance(store, copy).origin == knob);
+	assert(ecrs.context.getComponent!(doir.components.query.Provenance)(store, copy).origin == knob);
 	beginRevision(engine);
 	assert(markChanged(engine, knob));
 	assert(*query!CopiedAmount(engine, CopiedAmount.Key([knob])) == 1);
@@ -616,7 +618,7 @@ unittest { // stable created ids, provenance, ownership and eviction
 	assert(*query!Stamp(engine, Stamp.Key([stamped])));
 	assert(ecrs.context.getComponent!Amount(store, stamped).value == 9);
 	immutable stamp = doir.engine.query.find!Stamp(engine, Stamp.Key([stamped]));
-	assert(fp.dynarray.length(ecrs.context.getComponent!(doir.engine.query.Produces)(store, stamp).items) == 1);
+	assert(fp.dynarray.length(ecrs.context.getComponent!(doir.components.query.Produces)(store, stamp).items) == 1);
 	evict!Stamp(engine, Stamp.Key([stamped]));
 	assert(!ecrs.context.hasComponent!Amount(store, stamped));
 
@@ -707,7 +709,7 @@ unittest { // cycles: reported chains, deep chains and the depth limit
 	assert(fp.string.slice(manager.diagnostics[0].message)
 		== "Q-Cycle: a query needs its own answer: Resolve(-1) -> Resolve(-3) -> Resolve(-2) -> Resolve(-1)");
 	assert(fp.string.slice(manager.diagnostics[0].additionalNote) == doir.engine.query.cycleHint);
-	assert(ecrs.context.hasComponent!(doir.engine.query.InCycle)(store, doir.engine.query.find!Resolve(engine, -1)));
+	assert(ecrs.context.hasComponent!(doir.components.query.InCycle)(store, doir.engine.query.find!Resolve(engine, -1)));
 
 	// The cycle is reported again by its memo in a later revision, which re-runs rather than re-validates.
 	beginRevision(engine);
@@ -722,13 +724,13 @@ unittest { // cycles: reported chains, deep chains and the depth limit
 
 	// Each running query is marked with its frame, and only while it runs.
 	assert(*query!Depth(engine, 0) == 3);
-	foreach (k; 0 .. 4) assert(!ecrs.context.hasComponent!(doir.engine.query.Running)(store, doir.engine.query.find!Depth(engine, k)));
+	foreach (k; 0 .. 4) assert(!ecrs.context.hasComponent!(doir.components.query.Running)(store, doir.engine.query.find!Depth(engine, k)));
 
 	// A chain within the depth limit resolves; one past it is reported instead of overflowing the stack.
 	diagnose.clear(manager);
 	assert(*query!Resolve(engine, defaultDepthLimit - 8) == 0);
 	assert(diagnose.count(manager) == 0);
-	assert(!ecrs.context.hasComponent!(doir.engine.query.Running)(store, doir.engine.query.find!Resolve(engine, defaultDepthLimit - 8)));
+	assert(!ecrs.context.hasComponent!(doir.components.query.Running)(store, doir.engine.query.find!Resolve(engine, defaultDepthLimit - 8)));
 	engine.depthLimit = 64;
 	assert(*query!Resolve(engine, 2 * defaultDepthLimit) == -1);
 	assert(diagnose.count(manager) == 1);
@@ -767,7 +769,7 @@ unittest { // cycle fallbacks: coinductive equality, and reset of provisional an
 	link(y, z);
 	link(z, y);
 	assert(*query!Equal(engine, Pair([x, y])));
-	assert(!ecrs.context.hasComponent!(doir.engine.query.ProvisionalOn)(store, doir.engine.query.find!Equal(engine, Pair([x, z]))));
+	assert(!ecrs.context.hasComponent!(doir.components.query.ProvisionalOn)(store, doir.engine.query.find!Equal(engine, Pair([x, z]))));
 
 	// A = [A, X], B = [B', Y], B' = [B, X], X != Y. Equal(A, B') answers true resting on Equal(A, B), which fails.
 	immutable leafX = node(2), leafY = node(3);
@@ -779,7 +781,7 @@ unittest { // cycle fallbacks: coinductive equality, and reset of provisional an
 	link(b2, b, leafX);
 	assert(!*query!Equal(engine, Pair([a, b])));
 	immutable provisional = doir.engine.query.find!Equal(engine, Pair([a, b2]));
-	assert(!ecrs.context.hasComponent!(doir.engine.query.QueryValue!Equal)(store, provisional));
+	assert(!ecrs.context.hasComponent!(doir.components.query.QueryValue!Equal)(store, provisional));
 	equalRuns = 0;
 	assert(!*query!Equal(engine, Pair([a, b2])));
 	assert(equalRuns == 1);
@@ -794,8 +796,8 @@ unittest { // cycle fallbacks: coinductive equality, and reset of provisional an
 	link(b3, d);
 	assert(*query!Equal(engine, Pair([a3, b3])));
 	assert(*query!Equal(engine, Pair([c, d])) && *query!Equal(engine, Pair([e, f])));
-	assert(!ecrs.context.hasComponent!(doir.engine.query.ProvisionalOn)(store, doir.engine.query.find!Equal(engine, Pair([c, d]))));
-	assert(!ecrs.context.hasComponent!(doir.engine.query.ProvisionalOn)(store, doir.engine.query.find!Equal(engine, Pair([e, f]))));
+	assert(!ecrs.context.hasComponent!(doir.components.query.ProvisionalOn)(store, doir.engine.query.find!Equal(engine, Pair([c, d]))));
+	assert(!ecrs.context.hasComponent!(doir.components.query.ProvisionalOn)(store, doir.engine.query.find!Equal(engine, Pair([e, f]))));
 }
 
 unittest { // a refused allocation fails every running query, which memoizes nothing and runs again on its next demand

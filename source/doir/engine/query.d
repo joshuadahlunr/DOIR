@@ -1,4 +1,4 @@
-/// The query engine's machinery (`roadmap.md` Phase 1): the components a query entity carries, the engine's state, and demand, validation, execution and cycle handling. Programs use it through `doir.query`, which re-exports the public functions here.
+/// The query engine's machinery (`roadmap.md` Phase 1): the engine's state, and demand, validation, execution and cycle handling over the components a query entity carries (`doir.components.query`). Programs use it through `doir.query`, which re-exports the public functions here.
 ///
 /// A refused allocation fails every query running at the time (`fail`): each keeps no value and returns null to its demander, so nothing computed from a partial run is memoized. `QueryEngine.refused` records that it happened. Work outside a run, such as adding a query entity or delivering a diagnostic, reports through its result and the same flag.
 module doir.engine.query;
@@ -21,6 +21,7 @@ static import ecrs.storage;
 
 static import doir.engine.locations;
 static import doir.engine.positions;
+static import doir.components.query;
 
 public import ecrs.registry : EntityId, invalidEntity;
 
@@ -32,281 +33,10 @@ public import ecrs.registry : EntityId, invalidEntity;
 /// A point in the engine's history. Revision 0 means "before anything was recorded".
 alias Revision = ulong;
 
-/// The revision an entity last changed in: set on inputs by `markChanged`, and on a query entity whenever a run produces a different value or different components.
-struct ChangedAt {
-	Revision revision;
-}
-
-/// The revision a query entity's value was last confirmed current in.
-struct VerifiedAt {
-	Revision revision;
-}
-
-/// The entities and query entities a query read during its last run.
-struct DependsOn {
-	mixin ecrs.relation.Relates;
-}
-
-/// Removes what query `owner` wrote of component `component` on `e`: the whole component, or for a shared one such as an effect log, only `owner`'s entries.
-alias StripFunction = void function(ref ecrs.context.Context store, EntityId e, size_t component, EntityId owner) @nogc nothrow;
-
-/// Hashes what query `owner` wrote of component `component` on `e`, so a re-run that writes the same thing keeps early cutoff.
-alias HashFunction = size_t function(ref const ecrs.context.Context store, EntityId e, size_t component, EntityId owner) @nogc nothrow;
-
-/// One component a query wrote to `entity`, `component` being its libECRS component id, with how to remove and hash it.
-struct Produced {
-	mixin ecrs.relation.Relates!"entity";
-	size_t component; /// The component written.
-	StripFunction strip; /// Removes it.
-	HashFunction hash; /// Hashes it.
-}
-
-/// Every component a query wrote during its last run, removed before it runs again and when it is evicted, and the hash of their contents at the end of that run.
-struct Produces {
-	Produced* items = null; /// What was written, in order.
-	size_t hash = 0; /// The contents' hash, which early cutoff compares.
-
-	/// The `E-Remap` hook libECRS finds by name.
-	///
-	/// Examples:
-	/// ---
-	/// static import fp.dynarray;
-	/// Produces list;
-	/// scope(exit) list.finalize();
-	/// assert(fp.dynarray.pushBack(list.items, Produced([1], 0)));
-	/// immutable EntityId[3] remap = [0, 2, 1];
-	/// Produces.remapEntities(list, remap[]);
-	/// assert(list.items[0].entity == 2);
-	/// ---
-	static void remapEntities(ref Produces self, const(EntityId)[] remap) @nogc nothrow {
-		foreach (ref item; fp.dynarray.slice(self.items)) Produced.remapEntities(item, remap);
-	}
-	/// Releases the list when the component is removed.
-	///
-	/// Examples:
-	/// ---
-	/// static import fp.dynarray;
-	/// Produces list;
-	/// assert(fp.dynarray.pushBack(list.items, Produced([1], 0)));
-	/// list.finalize();
-	/// ---
-	void finalize() @nogc nothrow { fp.dynarray.free(items); }
-}
-
-/// The entities a query created, indexed by creation sequence number, so a re-run hands back the same ids.
-struct Creates {
-	mixin ecrs.relation.Relates;
-}
-
-/// The entity a query-created entity was derived from, so a diagnostic about it resolves to a source location.
-struct Provenance {
-	mixin ecrs.relation.Relates!"origin";
-}
-
-/// Another entity a query's diagnostic involves, `target`, drawn as an annotation at it saying what part it plays.
-struct QueryAnnotation {
-	mixin ecrs.relation.Relates!"target";
-	char* message = null; /// An owned fp string.
-}
-
-/// A diagnostic a query reported: the entity it is about, `subject`, or `invalidEntity`, how severe it is, its message, the hint saying how to fix it, and the other entities involved. Its locations are resolved from the entities only when it is reported.
-struct QueryDiagnostic {
-	mixin ecrs.relation.Relates!"subject";
-	diagnose.Kind kind; /// How severe it is.
-	char* message = null; /// An owned fp string.
-	char* hint = null; /// An owned fp string, drawn as an annotation at `subject`, or as the closing note if `subject` has no location.
-	QueryAnnotation* annotations = null; /// An owned fp dynarray, an annotation at each other entity involved.
-}
-
-/// Frees what `d` owns, nulling its pointers.
-///
-/// Examples:
-/// ---
-/// static import fp.string;
-/// static import diagnose;
-/// auto d = QueryDiagnostic([1], diagnose.Kind.error, fp.string.makeDynamic("bad"));
-/// freeDiagnostic(d);
-/// assert(d.message is null);
-/// ---
-package(doir) void freeDiagnostic(ref QueryDiagnostic d) {
-	fp.string.free(d.message);
-	fp.string.free(d.hint);
-	foreach (ref a; fp.dynarray.slice(d.annotations)) fp.string.free(a.message);
-	fp.dynarray.free(d.annotations);
-	d.message = d.hint = null;
-	d.annotations = null;
-}
-
-/// The diagnostics a query reported during its last run, reported again whenever its memo is reused in a later revision.
-struct QueryDiagnostics {
-	QueryDiagnostic* items = null;
-
-	/// The `E-Remap` hook libECRS finds by name.
-	///
-	/// Examples:
-	/// ---
-	/// static import fp.dynarray;
-	/// QueryDiagnostics list;
-	/// scope(exit) list.finalize();
-	/// assert(fp.dynarray.pushBack(list.items, QueryDiagnostic([1])));
-	/// immutable EntityId[2] remap = [0, 3];
-	/// QueryDiagnostics.remapEntities(list, remap[]);
-	/// assert(list.items[0].subject == 3);
-	/// ---
-	static void remapEntities(ref QueryDiagnostics self, const(EntityId)[] remap) @nogc nothrow {
-		foreach (ref d; fp.dynarray.slice(self.items)) {
-			QueryDiagnostic.remapEntities(d, remap);
-			foreach (ref a; fp.dynarray.slice(d.annotations)) QueryAnnotation.remapEntities(a, remap);
-		}
-	}
-	/// Releases the diagnostics and the list.
-	///
-	/// Examples:
-	/// ---
-	/// static import fp.dynarray;
-	/// QueryDiagnostics list;
-	/// assert(fp.dynarray.pushBack(list.items, QueryDiagnostic([1])));
-	/// list.finalize();
-	/// assert(list.items is null);
-	/// ---
-	void finalize() @nogc nothrow {
-		foreach (ref d; fp.dynarray.slice(items)) freeDiagnostic(d);
-		fp.dynarray.free(items);
-		items = null;
-	}
-}
-
-/// Marks a finished query whose value rests on a running query's cycle fallback, until that query, `head`, finishes and confirms or discards it.
-struct ProvisionalOn {
-	mixin ecrs.relation.Relates!"head";
-}
-
-/// Tags a query whose last run took part in a cycle (`Q-Cycle`). It is re-run, not re-validated, in a later revision, since its dependencies loop back to it.
-struct InCycle {
-	enum isTag = true;
-}
-
-/// Marks a running query with the index of its frame on the engine's stack, so finding it never scans the stack. Present only while the query runs.
-struct Running {
-	size_t frame; /// Its index in the engine's stack.
-}
-
-unittest { // libECRS silently skips a holder whose hook is not `@nogc nothrow`; every holder of an entity id must pass (E-Remap)
-	static assert(ecrs.registry.hasRemapEntities!DependsOn && ecrs.registry.hasRemapEntities!Produces && ecrs.registry.hasRemapEntities!Creates
-		&& ecrs.registry.hasRemapEntities!Provenance && ecrs.registry.hasRemapEntities!QueryDiagnostics && ecrs.registry.hasRemapEntities!QueryAnnotation && ecrs.registry.hasRemapEntities!ProvisionalOn);
-}
-
-/// Brings query entity `q` up to date, re-running it if needed. Returns false if it cannot: `q` is already running, the depth limit is reached, or its run failed on a refused allocation.
-alias RefreshFunction = bool function(ref QueryEngine engine, EntityId q) @nogc nothrow;
-
-/// Discards query entity `q`'s value and what it produced and created, so the next demand runs it.
-alias ResetFunction = void function(ref QueryEngine engine, EntityId q) @nogc nothrow;
-
-/// Appends a description of query entity `q`, such as `Layout(12)`, to an fp string. Returns false if the string could not grow, leaving it holding a prefix of the description.
-alias DescribeFunction = bool function(ref QueryEngine engine, EntityId q, ref char* out_) @nogc nothrow;
-
-/// Marks an entity as a query instance, with the type-erased entry points that let a dependent re-validate it and a cycle report name it.
-struct QueryInfo {
-	RefreshFunction refresh; /// Re-validates or re-runs it.
-	ResetFunction reset; /// Discards its value.
-	DescribeFunction describe; /// Names it.
-}
-
 /// True if `Q` follows the query protocol `doir.query` documents. A key's lifetime must be its bytes, since the index holds a bit copy of it.
 enum isQuery(Q) = is(Q.Key) && is(Q.Value) && fp.lifecycle.isBitMoveable!(Q.Key) && __traits(compiles, (ref QueryEngine engine, Q.Key key) @nogc nothrow {
 	Q.Value value = Q.compute(engine, key);
 });
-
-/// The key of a query entity of type `Q`.
-///
-/// Examples:
-/// ---
-/// struct Identity {
-/// 	alias Key = int;
-/// 	alias Value = int;
-/// 	static int compute(ref QueryEngine engine, int key) @nogc nothrow { return key; }
-/// }
-/// QueryKey!Identity k;
-/// k.key = 3;
-/// assert(k.key == 3);
-/// ---
-struct QueryKey(Q) {
-	Q.Key key;
-
-	static if (ecrs.registry.hasRemapEntities!(Q.Key))
-	/// The `E-Remap` hook libECRS finds by name, forwarded to the key's own, which it has by mixing in `ecrs.relation.Relates`.
-	///
-	/// Examples:
-	/// ---
-	/// static import ecrs.relation;
-	/// struct Of {
-	/// 	alias Key = ecrs.relation.Relation!1;
-	/// 	alias Value = int;
-	/// 	static int compute(ref QueryEngine engine, Key key) @nogc nothrow { return 0; }
-	/// }
-	/// auto k = QueryKey!Of(Of.Key([1]));
-	/// immutable EntityId[2] remap = [0, 7];
-	/// QueryKey!Of.remapEntities(k, remap[]);
-	/// assert(k.key.related[0] == 7);
-	/// ---
-	static void remapEntities(ref QueryKey self, const(EntityId)[] remap) @nogc nothrow { Q.Key.remapEntities(self.key, remap); }
-}
-
-/// The value of a query entity of type `Q`, present once it has run and until it is evicted.
-///
-/// Examples:
-/// ---
-/// struct Constant {
-/// 	alias Key = int;
-/// 	alias Value = int;
-/// 	static int compute(ref QueryEngine engine, int key) @nogc nothrow { return 1; }
-/// }
-/// QueryValue!Constant v;
-/// v.value = 1;
-/// assert(v.value == 1);
-/// ---
-struct QueryValue(Q) {
-	Q.Value value;
-
-	static if (ecrs.registry.hasRemapEntities!(Q.Value))
-	/// The `E-Remap` hook libECRS finds by name, forwarded to the value's own, which it has by mixing in `ecrs.relation.Relates`.
-	///
-	/// Examples:
-	/// ---
-	/// static import ecrs.relation;
-	/// struct Pick {
-	/// 	alias Key = int;
-	/// 	alias Value = ecrs.relation.Relation!1;
-	/// 	static Value compute(ref QueryEngine engine, int key) @nogc nothrow { return Value([1]); }
-	/// }
-	/// auto v = QueryValue!Pick(Pick.Value([1]));
-	/// immutable EntityId[2] remap = [0, 7];
-	/// QueryValue!Pick.remapEntities(v, remap[]);
-	/// assert(v.value.related[0] == 7);
-	/// ---
-	static void remapEntities(ref QueryValue self, const(EntityId)[] remap) @nogc nothrow { Q.Value.remapEntities(self.value, remap); }
-
-	static if (!fp.lifecycle.isBitMoveable!(Q.Value))
-	/// Ends the value's lifetime when the component is removed, so a value owning memory is freed on eviction.
-	///
-	/// Examples:
-	/// ---
-	/// static import fp.dynarray;
-	/// struct Owning {
-	/// 	int* items;
-	/// 	void finalize() @nogc nothrow { fp.dynarray.free(items); }
-	/// }
-	/// struct Listed {
-	/// 	alias Key = int;
-	/// 	alias Value = Owning;
-	/// 	static Owning compute(ref QueryEngine engine, int key) @nogc nothrow { return Owning.init; }
-	/// 	static bool valueEqual(ref const Owning a, ref const Owning b) @nogc nothrow { return true; }
-	/// }
-	/// QueryValue!Listed v;
-	/// v.finalize();
-	/// ---
-	void finalize() @nogc nothrow { fp.lifecycle.endLifetime(value); }
-}
 
 private bool keysEqual(Q)(ref const Q.Key a, ref const Q.Key b) @trusted {
 	static if (__traits(hasMember, Q, "keyEqual")) return Q.keyEqual(a, b);
@@ -442,7 +172,7 @@ package(doir) bool idle(ref QueryEngine engine) {
 
 private size_t frameOf(ref QueryEngine engine, EntityId q) {
 	if (idle(engine)) return noFrame;
-	auto running = ecrs.context.findComponent!Running(*engine.store, q);
+	auto running = ecrs.context.findComponent!(doir.components.query.Running)(*engine.store, q);
 	return running is null ? noFrame : running.frame;
 }
 
@@ -538,13 +268,13 @@ bool read(ref QueryEngine engine, EntityId e) {
 	if (n == 0) return true;
 	auto top = &engine.stack[n - 1];
 	if (top.query == e) return true;
-	if (auto provisional = ecrs.context.findComponent!ProvisionalOn(*engine.store, e)) {
+	if (auto provisional = ecrs.context.findComponent!(doir.components.query.ProvisionalOn)(*engine.store, e)) {
 		immutable h = frameOf(engine, provisional.head);
 		assert(h != noFrame);
 		top.cycle = true;
 		if (h < n - 1 && h < top.head) top.head = h;
 	}
-	auto deps = &ecrs.context.getComponent!DependsOn(*engine.store, top.query);
+	auto deps = &ecrs.context.getComponent!(doir.components.query.DependsOn)(*engine.store, top.query);
 	foreach (d; fp.dynarray.slice(deps.related))
 		if (d == e) return true;
 	if (fp.dynarray.pushBack(deps.related, e)) return true;
@@ -556,6 +286,7 @@ bool read(ref QueryEngine engine, EntityId e) {
 ///
 /// Examples:
 /// ---
+/// static import doir.components.query;
 /// static import fp.dynarray;
 /// static import ecrs.context;
 /// static import ecrs.registry;
@@ -565,9 +296,9 @@ bool read(ref QueryEngine engine, EntityId e) {
 /// 	alias Key = int;
 /// 	alias Value = size_t;
 /// 	static size_t compute(ref QueryEngine engine, int key) @nogc nothrow {
-/// 		immutable item = Produced([currentQuery(engine)], ecrs.registry.componentId!int(), &strip, &hash);
+/// 		immutable item = doir.components.query.Produced([currentQuery(engine)], ecrs.registry.componentId!int(), &strip, &hash);
 /// 		if (!recordProduced(engine, item, false) || !recordProduced(engine, item, false)) return 0;
-/// 		return fp.dynarray.length(ecrs.context.getComponent!Produces(*engine.store, currentQuery(engine)).items);
+/// 		return fp.dynarray.length(ecrs.context.getComponent!(doir.components.query.Produces)(*engine.store, currentQuery(engine)).items);
 /// 	}
 /// }
 /// auto store = ecrs.context.create();
@@ -577,10 +308,10 @@ bool read(ref QueryEngine engine, EntityId e) {
 /// scope(exit) free(engine);
 /// assert(*query!Claim(engine, 1) == 1);
 /// ---
-bool recordProduced(ref QueryEngine engine, Produced item, bool unique) {
+bool recordProduced(ref QueryEngine engine, doir.components.query.Produced item, bool unique) {
 	immutable q = currentQuery(engine);
 	assert(q != invalidEntity, "doir.query: writing a component outside a query");
-	auto produces = &ecrs.context.getComponent!Produces(*engine.store, q);
+	auto produces = &ecrs.context.getComponent!(doir.components.query.Produces)(*engine.store, q);
 	if (!unique)
 		foreach (existing; fp.dynarray.slice(produces.items))
 			if (existing.entity == item.entity && existing.component == item.component) return true;
@@ -634,6 +365,7 @@ package(doir) size_t hashComponent(C)(ref const ecrs.context.Context store, Enti
 ///
 /// Examples:
 /// ---
+/// static import doir.components.query;
 /// static import ecrs.context;
 /// static import ecrs.relation;
 /// struct Spawn {
@@ -647,12 +379,12 @@ package(doir) size_t hashComponent(C)(ref const ecrs.context.Context store, Enti
 /// engine.store = &store;
 /// scope(exit) free(engine);
 /// immutable made = query!Spawn(engine, 1).related[0];
-/// assert(ecrs.context.getComponent!Creates(store, find!Spawn(engine, 1)).related[0] == made);
+/// assert(ecrs.context.getComponent!(doir.components.query.Creates)(store, find!Spawn(engine, 1)).related[0] == made);
 /// ---
 package(doir) EntityId nextCreated(ref QueryEngine engine) {
 	assert(!idle(engine), "doir.query: creating an entity outside a query");
 	auto frame = fp.dynarray.back(engine.stack);
-	auto creates = &ecrs.context.getComponent!Creates(*engine.store, frame.query);
+	auto creates = &ecrs.context.getComponent!(doir.components.query.Creates)(*engine.store, frame.query);
 	immutable sequence = frame.created++;
 	if (sequence < fp.dynarray.length(creates.related)) return creates.related[sequence];
 	immutable e = ecrs.context.addEntity(*engine.store);
@@ -670,7 +402,7 @@ private std.typecons.Nullable!(char*) copyText(const(char)* message) {
 }
 
 // Copies `d` to `engine.diagnostics`, the hint annotating `subject`, or as the closing note if unlocated. Refusal drops it and sets `engine.refused` without failing any query.
-private bool emit(ref QueryEngine engine, ref const QueryDiagnostic d) {
+private bool emit(ref QueryEngine engine, ref const doir.components.query.QueryDiagnostic d) {
 	if (engine.diagnostics is null) return true;
 	diagnose.Diagnostic out_;
 	out_.kind = d.kind;
@@ -712,18 +444,19 @@ private bool emit(ref QueryEngine engine, ref const QueryDiagnostic d) {
 ///
 /// Examples:
 /// ---
+/// static import doir.components.query;
 /// QueryEngine engine;
-/// assert(recordDiagnostic(engine, QueryDiagnostic.init));
+/// assert(recordDiagnostic(engine, doir.components.query.QueryDiagnostic.init));
 /// ---
-package(doir) bool recordDiagnostic(ref QueryEngine engine, QueryDiagnostic d) {
+package(doir) bool recordDiagnostic(ref QueryEngine engine, doir.components.query.QueryDiagnostic d) {
 	immutable q = currentQuery(engine);
 	if (q == invalidEntity) {
 		immutable emitted = emit(engine, d);
-		freeDiagnostic(d);
+		doir.components.query.freeDiagnostic(d);
 		return emitted;
 	}
-	if (fp.dynarray.pushBack(ecrs.context.getComponent!QueryDiagnostics(*engine.store, q).items, d)) return true;
-	freeDiagnostic(d);
+	if (fp.dynarray.pushBack(ecrs.context.getComponent!(doir.components.query.QueryDiagnostics)(*engine.store, q).items, d)) return true;
+	doir.components.query.freeDiagnostic(d);
 	fail(engine);
 	return false;
 }
@@ -732,7 +465,7 @@ package(doir) bool recordDiagnostic(ref QueryEngine engine, QueryDiagnostic d) {
 // --- running and validating queries ------------------------------------------
 
 private void removeProduced(ref QueryEngine engine, EntityId q) {
-	auto produces = &ecrs.context.getComponent!Produces(*engine.store, q);
+	auto produces = &ecrs.context.getComponent!(doir.components.query.Produces)(*engine.store, q);
 	foreach (item; fp.dynarray.slice(produces.items)) item.strip(*engine.store, item.entity, item.component, q);
 	if (produces.items !is null) fp.dynarray.clear(produces.items);
 }
@@ -743,7 +476,7 @@ private size_t mix(size_t h, size_t value) {
 
 private size_t hashProduced(ref QueryEngine engine, EntityId q) {
 	size_t h = 0xcbf29ce484222325;
-	foreach (item; fp.dynarray.slice(ecrs.context.getComponent!Produces(*engine.store, q).items)) {
+	foreach (item; fp.dynarray.slice(ecrs.context.getComponent!(doir.components.query.Produces)(*engine.store, q).items)) {
 		h = mix(h, item.entity);
 		h = mix(h, item.component);
 		h = mix(h, item.hash(*engine.store, item.entity, item.component, q));
@@ -753,19 +486,19 @@ private size_t hashProduced(ref QueryEngine engine, EntityId q) {
 
 // Removes the entities past `keep`, which the latest run no longer created. One the store refuses to free stays listed for later reuse or removal.
 private void removeCreated(ref QueryEngine engine, EntityId q, size_t keep) {
-	auto creates = &ecrs.context.getComponent!Creates(*engine.store, q);
+	auto creates = &ecrs.context.getComponent!(doir.components.query.Creates)(*engine.store, q);
 	while (fp.dynarray.length(creates.related) > keep && ecrs.context.removeEntity(*engine.store, *fp.dynarray.back(creates.related)))
 		cast(void) fp.dynarray.popBack(creates.related);
 }
 
 private void clearDiagnostics(ref QueryEngine engine, EntityId q) {
-	auto list = &ecrs.context.getComponent!QueryDiagnostics(*engine.store, q);
-	foreach (ref d; fp.dynarray.slice(list.items)) freeDiagnostic(d);
+	auto list = &ecrs.context.getComponent!(doir.components.query.QueryDiagnostics)(*engine.store, q);
+	foreach (ref d; fp.dynarray.slice(list.items)) doir.components.query.freeDiagnostic(d);
 	if (list.items !is null) fp.dynarray.clear(list.items);
 }
 
 private void emitAll(ref QueryEngine engine, EntityId q) {
-	foreach (ref d; fp.dynarray.slice(ecrs.context.getComponent!QueryDiagnostics(*engine.store, q).items))
+	foreach (ref d; fp.dynarray.slice(ecrs.context.getComponent!(doir.components.query.QueryDiagnostics)(*engine.store, q).items))
 		cast(void) emit(engine, d); // a lost diagnostic is recorded in engine.refused
 }
 
@@ -843,7 +576,7 @@ private bool index(Q)(ref QueryEngine engine, ref const Q.Key key, EntityId q) @
 
 private bool describe(Q)(ref QueryEngine engine, EntityId q, ref char* out_) @trusted {
 	if (fp.string.concatenate(out_, __traits(identifier, Q)) is null) return false;
-	auto key = &ecrs.context.getComponent!(QueryKey!Q)(*engine.store, q).key;
+	auto key = &ecrs.context.getComponent!(doir.components.query.QueryKey!Q)(*engine.store, q).key;
 	static if (__traits(hasMember, Q, "describeKey")) {
 		return Q.describeKey(*key, out_);
 	} else static if (__traits(isIntegral, Q.Key)) {
@@ -860,17 +593,17 @@ private EntityId add(Q)(ref QueryEngine engine, ref const Q.Key key) {
 	auto store = engine.store;
 	immutable q = ecrs.context.addEntity(*store);
 	if (q == invalidEntity) return invalidEntity;
-	auto k = ecrs.context.addComponent!(QueryKey!Q)(*store, q);
+	auto k = ecrs.context.addComponent!(doir.components.query.QueryKey!Q)(*store, q);
 	if (k !is null) k.key = key;
-	auto info = k is null ? null : ecrs.context.addComponent!QueryInfo(*store, q);
-	if (info !is null) *info = QueryInfo(&refresh!Q, &reset!Q, &describe!Q);
+	auto info = k is null ? null : ecrs.context.addComponent!(doir.components.query.QueryInfo)(*store, q);
+	if (info !is null) *info = doir.components.query.QueryInfo(&refresh!Q, &reset!Q, &describe!Q);
 	if (info !is null
-		&& ecrs.context.addComponent!ChangedAt(*store, q) !is null
-		&& ecrs.context.addComponent!VerifiedAt(*store, q) !is null
-		&& ecrs.context.addComponent!DependsOn(*store, q) !is null
-		&& ecrs.context.addComponent!Produces(*store, q) !is null
-		&& ecrs.context.addComponent!Creates(*store, q) !is null
-		&& ecrs.context.addComponent!QueryDiagnostics(*store, q) !is null
+		&& ecrs.context.addComponent!(doir.components.query.ChangedAt)(*store, q) !is null
+		&& ecrs.context.addComponent!(doir.components.query.VerifiedAt)(*store, q) !is null
+		&& ecrs.context.addComponent!(doir.components.query.DependsOn)(*store, q) !is null
+		&& ecrs.context.addComponent!(doir.components.query.Produces)(*store, q) !is null
+		&& ecrs.context.addComponent!(doir.components.query.Creates)(*store, q) !is null
+		&& ecrs.context.addComponent!(doir.components.query.QueryDiagnostics)(*store, q) !is null
 		&& index!Q(engine, key, q))
 		return q;
 	cast(void) ecrs.context.removeEntity(*store, q); // if refused, an orphan no index reaches
@@ -888,12 +621,12 @@ private bool reportChain(ref QueryEngine engine, const(char)[] headline, size_t 
 	char* message = fp.string.makeDynamic(headline);
 	bool built = message !is null;
 	foreach (frame; engine.stack[from .. fp.dynarray.length(engine.stack)])
-		built = built && ecrs.context.getComponent!QueryInfo(*engine.store, frame.query).describe(engine, frame.query, message)
+		built = built && ecrs.context.getComponent!(doir.components.query.QueryInfo)(*engine.store, frame.query).describe(engine, frame.query, message)
 			&& fp.string.concatenate(message, " -> ") !is null;
 	immutable head = engine.stack[from].query;
-	built = built && ecrs.context.getComponent!QueryInfo(*engine.store, head).describe(engine, head, message);
+	built = built && ecrs.context.getComponent!(doir.components.query.QueryInfo)(*engine.store, head).describe(engine, head, message);
 	char* hint = built ? fp.string.makeDynamic(cycleHint) : null;
-	if (hint !is null) return recordDiagnostic(engine, QueryDiagnostic([invalidEntity], diagnose.Kind.error, message, hint));
+	if (hint !is null) return recordDiagnostic(engine, doir.components.query.QueryDiagnostic([invalidEntity], diagnose.Kind.error, message, hint));
 	fp.string.free(message);
 	fail(engine);
 	return false;
@@ -902,8 +635,8 @@ private bool reportChain(ref QueryEngine engine, const(char)[] headline, size_t 
 // Records a `Q-Cycle` error for demands nested past the depth limit at `q`, failing the running queries on a refused allocation as `reportChain` does.
 private void reportDepth(ref QueryEngine engine, EntityId q) {
 	char* message = fp.string.format("Q-Cycle: queries nest deeper than the limit of %llu at ", cast(ulong) engine.depthLimit);
-	char* hint = message !is null && ecrs.context.getComponent!QueryInfo(*engine.store, q).describe(engine, q, message) ? fp.string.makeDynamic(depthHint) : null;
-	if (hint !is null) cast(void) recordDiagnostic(engine, QueryDiagnostic([invalidEntity], diagnose.Kind.error, message, hint)); // fails the running queries itself
+	char* hint = message !is null && ecrs.context.getComponent!(doir.components.query.QueryInfo)(*engine.store, q).describe(engine, q, message) ? fp.string.makeDynamic(depthHint) : null;
+	if (hint !is null) cast(void) recordDiagnostic(engine, doir.components.query.QueryDiagnostic([invalidEntity], diagnose.Kind.error, message, hint)); // fails the running queries itself
 	else {
 		fp.string.free(message);
 		fail(engine);
@@ -955,20 +688,20 @@ package(doir) bool reportRunning(ref QueryEngine engine, EntityId q) {
 
 // True if no dependency changed after `q` was verified. Dependencies that are queries are refreshed first, which is what lets early cutoff stop a change.
 private bool dependenciesUnchanged(ref QueryEngine engine, EntityId q) {
-	immutable verified = ecrs.context.getComponent!VerifiedAt(*engine.store, q).revision;
-	immutable n = fp.dynarray.length(ecrs.context.getComponent!DependsOn(*engine.store, q).related);
+	immutable verified = ecrs.context.getComponent!(doir.components.query.VerifiedAt)(*engine.store, q).revision;
+	immutable n = fp.dynarray.length(ecrs.context.getComponent!(doir.components.query.DependsOn)(*engine.store, q).related);
 	foreach (i; 0 .. n) {
-		immutable d = ecrs.context.getComponent!DependsOn(*engine.store, q).related[i];
-		auto info = ecrs.context.findComponent!QueryInfo(*engine.store, d);
+		immutable d = ecrs.context.getComponent!(doir.components.query.DependsOn)(*engine.store, q).related[i];
+		auto info = ecrs.context.findComponent!(doir.components.query.QueryInfo)(*engine.store, d);
 		if (info !is null && !info.refresh(engine, d)) return false;
-		auto changed = ecrs.context.findComponent!ChangedAt(*engine.store, d);
+		auto changed = ecrs.context.findComponent!(doir.components.query.ChangedAt)(*engine.store, d);
 		if (changed !is null && changed.revision > verified) return false;
 	}
 	return true;
 }
 
 private void clearProvisional(ref QueryEngine engine, EntityId p) {
-	if (ecrs.context.hasComponent!ProvisionalOn(*engine.store, p)) cast(void) ecrs.context.removeComponent!ProvisionalOn(*engine.store, p);
+	if (ecrs.context.hasComponent!(doir.components.query.ProvisionalOn)(*engine.store, p)) cast(void) ecrs.context.removeComponent!(doir.components.query.ProvisionalOn)(*engine.store, p);
 }
 
 // Settles queries resting on `self`'s fallback, moving those a lower fallback still holds up. Returns false on refusal, discarding any it could not move.
@@ -978,12 +711,12 @@ private bool settleProvisional(ref QueryEngine engine, ref Frame self, size_t in
 	immutable lower = self.head < index;
 	foreach (p; fp.dynarray.slice(self.provisional)) {
 		if (fallbackHeld && lower && moved) {
-			ecrs.context.getComponent!ProvisionalOn(*engine.store, p).head = engine.stack[self.head].query;
+			ecrs.context.getComponent!(doir.components.query.ProvisionalOn)(*engine.store, p).head = engine.stack[self.head].query;
 			if (fp.dynarray.pushBack(engine.stack[self.head].provisional, p)) continue;
 			moved = false;
 		}
 		clearProvisional(engine, p);
-		if (!fallbackHeld || lower) ecrs.context.getComponent!QueryInfo(*engine.store, p).reset(engine, p);
+		if (!fallbackHeld || lower) ecrs.context.getComponent!(doir.components.query.QueryInfo)(*engine.store, p).reset(engine, p);
 	}
 	fp.dynarray.free(self.provisional);
 	return moved;
@@ -993,7 +726,7 @@ private bool settleProvisional(ref QueryEngine engine, ref Frame self, size_t in
 private bool markCycle(ref QueryEngine engine, EntityId q, ref Frame self, size_t index) {
 	if (self.head < index) {
 		auto head = &engine.stack[self.head];
-		auto mark = ecrs.context.getOrAddComponent!ProvisionalOn(*engine.store, q);
+		auto mark = ecrs.context.getOrAddComponent!(doir.components.query.ProvisionalOn)(*engine.store, q);
 		if (mark is null) return false;
 		mark.head = head.query;
 		if (!fp.dynarray.pushBack(head.provisional, q)) {
@@ -1001,9 +734,9 @@ private bool markCycle(ref QueryEngine engine, EntityId q, ref Frame self, size_
 			return false;
 		}
 	}
-	immutable tagged = ecrs.context.hasComponent!InCycle(*engine.store, q);
-	if (self.cycle && !tagged) return ecrs.context.addComponent!InCycle(*engine.store, q) !is null;
-	if (!self.cycle && tagged) cast(void) ecrs.context.removeComponent!InCycle(*engine.store, q);
+	immutable tagged = ecrs.context.hasComponent!(doir.components.query.InCycle)(*engine.store, q);
+	if (self.cycle && !tagged) return ecrs.context.addComponent!(doir.components.query.InCycle)(*engine.store, q) !is null;
+	if (!self.cycle && tagged) cast(void) ecrs.context.removeComponent!(doir.components.query.InCycle)(*engine.store, q);
 	return true;
 }
 
@@ -1013,31 +746,31 @@ private bool execute(Q)(ref QueryEngine engine, EntityId q) {
 	removeProduced(engine, q);
 	clearDiagnostics(engine, q);
 	clearProvisional(engine, q);
-	auto deps = &ecrs.context.getComponent!DependsOn(*store, q);
+	auto deps = &ecrs.context.getComponent!(doir.components.query.DependsOn)(*store, q);
 	if (deps.related !is null) fp.dynarray.clear(deps.related);
 
-	auto running = ecrs.context.addComponent!Running(*store, q);
+	auto running = ecrs.context.addComponent!(doir.components.query.Running)(*store, q);
 	if (running is null || !fp.dynarray.pushBack(engine.stack, Frame(q, 0))) {
-		if (running !is null) cast(void) ecrs.context.removeComponent!Running(*store, q);
+		if (running !is null) cast(void) ecrs.context.removeComponent!(doir.components.query.Running)(*store, q);
 		fail(engine);
 		reset!Q(engine, q);
 		return false;
 	}
 	running.frame = fp.dynarray.length(engine.stack) - 1;
-	auto key = ecrs.context.getComponent!(QueryKey!Q)(*store, q).key;
+	auto key = ecrs.context.getComponent!(doir.components.query.QueryKey!Q)(*store, q).key;
 	auto value = Q.compute(engine, key);
 	auto frame = *fp.dynarray.back(engine.stack);
 	cast(void) fp.dynarray.popBack(engine.stack);
-	cast(void) ecrs.context.removeComponent!Running(*store, q);
+	cast(void) ecrs.context.removeComponent!(doir.components.query.Running)(*store, q);
 	immutable index = fp.dynarray.length(engine.stack);
 
-	QueryValue!Q* stored = null;
+	doir.components.query.QueryValue!Q* stored = null;
 	bool fresh = false;
 	if (!frame.refused) {
 		removeCreated(engine, q, frame.created);
-		stored = ecrs.context.findComponent!(QueryValue!Q)(*store, q);
+		stored = ecrs.context.findComponent!(doir.components.query.QueryValue!Q)(*store, q);
 		fresh = stored is null;
-		if (fresh && (stored = ecrs.context.addComponent!(QueryValue!Q)(*store, q)) is null) fail(engine);
+		if (fresh && (stored = ecrs.context.addComponent!(doir.components.query.QueryValue!Q)(*store, q)) is null) fail(engine);
 	}
 	if (stored is null) {
 		fp.lifecycle.endLifetime(value);
@@ -1047,21 +780,21 @@ private bool execute(Q)(ref QueryEngine engine, EntityId q) {
 	}
 
 	immutable hash = hashProduced(engine, q);
-	auto produces = &ecrs.context.getComponent!Produces(*store, q);
+	auto produces = &ecrs.context.getComponent!(doir.components.query.Produces)(*store, q);
 	bool changed = fresh || produces.hash != hash;
 	produces.hash = hash;
 	if (fresh || !valuesEqual!Q(stored.value, value)) {
 		fp.lifecycle.moveInto(stored.value, value);
 		changed = true;
 	} else fp.lifecycle.endLifetime(value);
-	if (changed) ecrs.context.getComponent!ChangedAt(*store, q).revision = engine.revision;
-	ecrs.context.getComponent!VerifiedAt(*store, q).revision = engine.revision;
+	if (changed) ecrs.context.getComponent!(doir.components.query.ChangedAt)(*store, q).revision = engine.revision;
+	ecrs.context.getComponent!(doir.components.query.VerifiedAt)(*store, q).revision = engine.revision;
 
 	bool fallbackHeld = true;
 	static if (__traits(hasMember, Q, "cycleFallback"))
 		if (frame.usedAsHead) {
 			auto assumed = Q.cycleFallback(engine, key);
-			fallbackHeld = valuesEqual!Q(ecrs.context.getComponent!(QueryValue!Q)(*store, q).value, assumed);
+			fallbackHeld = valuesEqual!Q(ecrs.context.getComponent!(doir.components.query.QueryValue!Q)(*store, q).value, assumed);
 			fp.lifecycle.endLifetime(assumed);
 		}
 	if (!settleProvisional(engine, frame, index, fallbackHeld) || !markCycle(engine, q, frame, index)) {
@@ -1076,16 +809,16 @@ private bool execute(Q)(ref QueryEngine engine, EntityId q) {
 private bool refresh(Q)(ref QueryEngine engine, EntityId q) {
 	if (frameOf(engine, q) != noFrame) return false;
 	auto store = engine.store;
-	immutable hasValue = ecrs.context.hasComponent!(QueryValue!Q)(*store, q);
-	if (hasValue && ecrs.context.getComponent!VerifiedAt(*store, q).revision == engine.revision) return true;
+	immutable hasValue = ecrs.context.hasComponent!(doir.components.query.QueryValue!Q)(*store, q);
+	if (hasValue && ecrs.context.getComponent!(doir.components.query.VerifiedAt)(*store, q).revision == engine.revision) return true;
 	if (engine.depth >= engine.depthLimit) {
 		reportDepth(engine, q);
 		return false;
 	}
 	++engine.depth;
 	scope(exit) --engine.depth;
-	if (!hasValue || ecrs.context.hasComponent!InCycle(*store, q) || !dependenciesUnchanged(engine, q)) return execute!Q(engine, q);
-	ecrs.context.getComponent!VerifiedAt(*store, q).revision = engine.revision;
+	if (!hasValue || ecrs.context.hasComponent!(doir.components.query.InCycle)(*store, q) || !dependenciesUnchanged(engine, q)) return execute!Q(engine, q);
+	ecrs.context.getComponent!(doir.components.query.VerifiedAt)(*store, q).revision = engine.revision;
 	emitAll(engine, q);
 	return true;
 }
@@ -1096,9 +829,9 @@ private void reset(Q)(ref QueryEngine engine, EntityId q) {
 	removeCreated(engine, q, 0);
 	clearDiagnostics(engine, q);
 	clearProvisional(engine, q);
-	if (ecrs.context.hasComponent!(QueryValue!Q)(*engine.store, q))
-		cast(void) ecrs.context.removeComponent!(QueryValue!Q)(*engine.store, q);
-	ecrs.context.getComponent!VerifiedAt(*engine.store, q).revision = 0;
+	if (ecrs.context.hasComponent!(doir.components.query.QueryValue!Q)(*engine.store, q))
+		cast(void) ecrs.context.removeComponent!(doir.components.query.QueryValue!Q)(*engine.store, q);
+	ecrs.context.getComponent!(doir.components.query.VerifiedAt)(*engine.store, q).revision = 0;
 }
 
 // A demand for `q`, which is running in frame `h`: every frame from `h` up is part of the cycle.
@@ -1109,7 +842,7 @@ private const(Q.Value)* cycle(Q)(ref QueryEngine engine, EntityId q, size_t h) {
 	static if (__traits(hasMember, Q, "cycleFallback")) {
 		static Q.Value fallback;
 		fp.lifecycle.endLifetime(fallback);
-		fallback = Q.cycleFallback(engine, ecrs.context.getComponent!(QueryKey!Q)(*engine.store, q).key);
+		fallback = Q.cycleFallback(engine, ecrs.context.getComponent!(doir.components.query.QueryKey!Q)(*engine.store, q).key);
 		engine.stack[h].usedAsHead = true;
 		if (h < top && h < engine.stack[top].head) engine.stack[top].head = h;
 		return &fallback;
@@ -1149,7 +882,7 @@ const(Q.Value)* query(Q)(ref QueryEngine engine, Q.Key key) if (isQuery!Q) {
 	immutable h = frameOf(engine, q);
 	if (h != noFrame) return cycle!Q(engine, q, h);
 	if (!refresh!Q(engine, q) || !read(engine, q)) return null;
-	return &ecrs.context.getComponent!(QueryValue!Q)(*engine.store, q).value;
+	return &ecrs.context.getComponent!(doir.components.query.QueryValue!Q)(*engine.store, q).value;
 }
 
 /// Frees what the query entity of `Q` at `key` holds: its value, diagnostics, the components it produced and the entities it created. The entity keeps its key and `ChangedAt`, so dependents still see it, and the next demand re-runs it. Does nothing if `Q` was never demanded at `key`.

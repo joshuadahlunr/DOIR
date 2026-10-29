@@ -27,7 +27,8 @@ static import ecrs.context;
 
 static import doir.strings;
 static import doir.builders;
-static import doir.components;
+static import doir.components.ast;
+static import doir.components.source;
 static import doir.engine.locations;
 static import doir.syntax.lexer;
 
@@ -707,7 +708,7 @@ private EntityId takePart(ref Parser p) {
 
 private bool setSpan(ref Parser p, EntityId e, uint parentStart, uint start, uint end) {
 	// Set rather than written in place: a reused part keeps its span, and the commit's transaction must be able to restore it.
-	return ecrs.context.setComponent!(doir.engine.locations.SourceSpan)(*p.build.store, e, doir.engine.locations.SourceSpan(start - parentStart, end - start)) || refuse(p);
+	return ecrs.context.setComponent!(doir.components.source.SourceSpan)(*p.build.store, e, doir.components.source.SourceSpan(start - parentStart, end - start)) || refuse(p);
 }
 
 /// A parsed type position: a name, or a function type written in place.
@@ -729,7 +730,7 @@ private bool withType(alias f)(ref Parser p, ParsedType type) {
 
 /// A parsed constant's payload.
 private struct ParsedConstant {
-	doir.components.ConstantVal value;
+	doir.components.ast.ConstantVal value;
 }
 
 // Constant <- FloatConstant / IntegerConstant / RawString / '"' StringChar* '"' / '\'' StringChar '\''
@@ -744,11 +745,11 @@ private std.typecons.Nullable!ParsedConstant constant(ref Parser p) {
 				cast(void) refuse(p);
 				return typeof(return).init;
 			}
-			out_.value = doir.components.ConstantVal.float_(value.get);
+			out_.value = doir.components.ast.ConstantVal.float_(value.get);
 			break;
 		case TokenKind.integer:
 			bool overflow;
-			out_.value = doir.components.ConstantVal.integer(integerValue(spelled, overflow));
+			out_.value = doir.components.ast.ConstantVal.integer(integerValue(spelled, overflow));
 			if (overflow) error(p, SyntaxError.Kind.literal, t.start, cast(uint) p.pos, "V-Literal: an integer literal must fit in 64 bits", "write a value below 2^64");
 			break;
 		case TokenKind.rawString, TokenKind.string_:
@@ -775,12 +776,12 @@ private std.typecons.Nullable!ParsedConstant constant(ref Parser p) {
 				bytes = intern(p, fp.string.slice(decoded));
 			}
 			if (bytes == doir.strings.noName) return typeof(return).init;
-			out_.value = doir.components.ConstantVal.bytes(bytes);
+			out_.value = doir.components.ast.ConstantVal.bytes(bytes);
 			break;
 		case TokenKind.character:
 			size_t i = 1;
 			bool isByte, overflow;
-			out_.value = doir.components.ConstantVal.integer(stringChar(spelled, i, isByte, overflow));
+			out_.value = doir.components.ast.ConstantVal.integer(stringChar(spelled, i, isByte, overflow));
 			if (overflow) error(p, SyntaxError.Kind.literal, t.start, cast(uint) p.pos, "V-Literal: a character literal must be a Unicode scalar value", "use a code point up to U+10FFFF, outside the surrogates U+D800 to U+DFFF");
 			break;
 		default:
@@ -896,7 +897,7 @@ private bool parameter(ref Parser p, EntityId ft, uint ftStart) {
 	if (p.refused) return false;
 	bool ok;
 	if (deduced) {
-		immutable deducedType = intern(p, doir.components.deducedTypeName);
+		immutable deducedType = intern(p, doir.components.ast.deducedTypeName);
 		ok = deducedType != doir.strings.noName && doir.builders.attachParameter(*store, e, ft, named, deducedType);
 	} else ok = withType!(t => doir.builders.attachParameter(*store, e, ft, named, t))(p, paramType);
 	if (ok && hasDefault && defaultName != noToken) {
@@ -965,9 +966,9 @@ private bool functionCall(ref Parser p, ref ParsedCall out_) {
 	immutable start = p.pos;
 	if (p.tokens[p.pos].kind == TokenKind.keyword) {
 		const word = doir.syntax.lexer.text(p.tokens[p.pos], p.source);
-		if (word == "flatten") out_.flags = doir.components.Flags.Flatten;
-		else if (word == "inline") out_.flags = doir.components.Flags.Inline;
-		else if (word == "tail") out_.flags = doir.components.Flags.Tail;
+		if (word == "flatten") out_.flags = doir.components.ast.Flags.Flatten;
+		else if (word == "inline") out_.flags = doir.components.ast.Flags.Inline;
+		else if (word == "tail") out_.flags = doir.components.ast.Flags.Tail;
 		if (out_.flags) {
 			++p.pos;
 			skip_(p);
@@ -1280,7 +1281,7 @@ private bool assignment(ref Parser p) {
 		case Value.functionType:
 			break;
 	}
-	if (!ok || (exported && !doir.builders.addFlags(*store, e, doir.components.Flags.Export))) return refuse(p);
+	if (!ok || (exported && !doir.builders.addFlags(*store, e, doir.components.ast.Flags.Export))) return refuse(p);
 	if (info != noToken) {
 		auto location = annotation(p, info);
 		if (location.isNull) return false;
@@ -1360,7 +1361,7 @@ bool skim(const(char)[] source, ref Syntax out_) {
 /// static import ecrs.context;
 /// static import fp.dynarray;
 /// static import doir.strings;
-/// static import doir.components;
+/// static import doir.components.ast;
 /// Syntax syntax;
 /// scope(exit) free(syntax);
 /// immutable source = "f : (a: T) -> U\n";
@@ -1373,7 +1374,7 @@ bool skim(const(char)[] source, ref Syntax out_) {
 /// scope(exit) fp.dynarray.free(b.parts);
 /// assert(build(syntax, source, 0, b));
 /// assert(fp.dynarray.length(b.parts) == 2); // the function type and its parameter
-/// assert(ecrs.context.getComponent!(doir.components.TypeOf)(store, b.declaration).type == b.parts[0]);
+/// assert(ecrs.context.getComponent!(doir.components.ast.TypeOf)(store, b.declaration).type == b.parts[0]);
 /// ---
 bool build(ref const Syntax syntax, const(char)[] source, size_t r, ref Builder builder) {
 	version(unittest) ++builds;
@@ -1389,7 +1390,7 @@ bool build(ref const Syntax syntax, const(char)[] source, size_t r, ref Builder 
 }
 
 /// The components `build` writes, which a rebuild removes first. `Name` and `Parent` are among them, written by the builders on parts and by the commit on declarations.
-alias ParsedComponents = imported!"std.meta".AliasSeq!(doir.components.Name, doir.components.Parent, doir.components.Block, doir.components.TypeOf, doir.components.TypeDefinition, doir.components.FunctionInputs, doir.components.FunctionReturn, doir.components.ConstantVal, doir.components.Flags, doir.components.LookupTypeOf, doir.components.LookupFunctionReturn, doir.components.LookupCall, doir.components.LookupFunctionInputs, doir.components.LookupAlias, doir.components.LookupValue, doir.engine.locations.SourceAnnotation);
+alias ParsedComponents = imported!"std.meta".AliasSeq!(doir.components.ast.Name, doir.components.ast.Parent, doir.components.ast.Block, doir.components.ast.TypeOf, doir.components.ast.TypeDefinition, doir.components.ast.FunctionInputs, doir.components.ast.FunctionReturn, doir.components.ast.ConstantVal, doir.components.ast.Flags, doir.components.ast.LookupTypeOf, doir.components.ast.LookupFunctionReturn, doir.components.ast.LookupCall, doir.components.ast.LookupFunctionInputs, doir.components.ast.LookupAlias, doir.components.ast.LookupValue, doir.components.source.SourceAnnotation);
 
 /// Removes every component the parse wrote on `e`, leaving what queries produced on it.
 ///
@@ -1398,13 +1399,13 @@ alias ParsedComponents = imported!"std.meta".AliasSeq!(doir.components.Name, doi
 /// Examples:
 /// ---
 /// static import ecrs.context;
-/// static import doir.components;
+/// static import doir.components.ast;
 /// auto store = ecrs.context.create();
 /// scope(exit) ecrs.context.free(store);
 /// immutable e = ecrs.context.addEntity(store);
-/// ecrs.context.addComponent!(doir.components.Flags)(store, e).flags = 1;
+/// ecrs.context.addComponent!(doir.components.ast.Flags)(store, e).flags = 1;
 /// assert(removeParsed(store, e));
-/// assert(!ecrs.context.hasComponent!(doir.components.Flags)(store, e));
+/// assert(!ecrs.context.hasComponent!(doir.components.ast.Flags)(store, e));
 /// ---
 bool removeParsed(ref ecrs.context.Context store, EntityId e) {
 	static foreach (C; ParsedComponents)
@@ -1668,15 +1669,15 @@ unittest { // building: each declaration form writes its builder components
 		Built b;
 		scope(exit) release(b);
 		buildOne(b, "export six : std.u8 = 6\n");
-		assert(ecrs.context.getComponent!(doir.components.ConstantVal)(b.store, b.builder.declaration).integerValue == 6);
-		assert(ecrs.context.getComponent!(doir.components.Flags)(b.store, b.builder.declaration).flags == (doir.components.Flags.Comptime | doir.components.Flags.Export));
-		assert(doir.strings.text(b.strings, ecrs.context.getComponent!(doir.components.LookupTypeOf)(b.store, b.builder.declaration).name) == "std.u8");
+		assert(ecrs.context.getComponent!(doir.components.ast.ConstantVal)(b.store, b.builder.declaration).integerValue == 6);
+		assert(ecrs.context.getComponent!(doir.components.ast.Flags)(b.store, b.builder.declaration).flags == (doir.components.ast.Flags.Comptime | doir.components.ast.Flags.Export));
+		assert(doir.strings.text(b.strings, ecrs.context.getComponent!(doir.components.ast.LookupTypeOf)(b.store, b.builder.declaration).name) == "std.u8");
 	}
 	{
 		Built b;
 		scope(exit) release(b);
 		buildOne(b, "s : p = \"a\\tb\\u00e9\" <\"gen.doir\":3-4:5>\n");
-		auto bytes = ecrs.context.getComponent!(doir.components.ConstantVal)(b.store, b.builder.declaration).bytesValue;
+		auto bytes = ecrs.context.getComponent!(doir.components.ast.ConstantVal)(b.store, b.builder.declaration).bytesValue;
 		assert(doir.strings.text(b.strings, bytes) == "a\tb\xC3\xA9");
 		assert(b.builder.annotated && b.builder.annotation.file == "gen.doir");
 		assert(b.builder.annotation.start == diagnose.Pair(3, 5) && b.builder.annotation.end == diagnose.Pair(4, 5));
@@ -1685,21 +1686,21 @@ unittest { // building: each declaration form writes its builder components
 		Built b;
 		scope(exit) release(b);
 		buildOne(b, "r : p = \"\"\"raw \\n\"\"\" ; c : u = 'x'\n");
-		assert(doir.strings.text(b.strings, ecrs.context.getComponent!(doir.components.ConstantVal)(b.store, b.builder.declaration).bytesValue) == "raw \\n");
+		assert(doir.strings.text(b.strings, ecrs.context.getComponent!(doir.components.ast.ConstantVal)(b.store, b.builder.declaration).bytesValue) == "raw \\n");
 	}
 	{
 		Built b;
 		scope(exit) release(b);
 		buildOne(b, `e : p = "\a\b\f\n\r\v\"\?\\\%"` ~ "\n");
-		assert(doir.strings.text(b.strings, ecrs.context.getComponent!(doir.components.ConstantVal)(b.store, b.builder.declaration).bytesValue) == "\a\b\f\n\r\v\"?\\%");
+		assert(doir.strings.text(b.strings, ecrs.context.getComponent!(doir.components.ast.ConstantVal)(b.store, b.builder.declaration).bytesValue) == "\a\b\f\n\r\v\"?\\%");
 	}
 	{
 		// A float, and an unquoted source annotation.
 		Built b;
 		scope(exit) release(b);
 		buildOne(b, "h : f32 = 1.5 <f.doir:7:2>\n");
-		auto value = ecrs.context.getComponent!(doir.components.ConstantVal)(b.store, b.builder.declaration);
-		assert(value.kind == doir.components.ConstantVal.Kind.float_ && value.floatValue == 1.5);
+		auto value = ecrs.context.getComponent!(doir.components.ast.ConstantVal)(b.store, b.builder.declaration);
+		assert(value.kind == doir.components.ast.ConstantVal.Kind.float_ && value.floatValue == 1.5);
 		assert(b.builder.annotation.file == "f.doir" && b.builder.annotation.start == diagnose.Pair(7, 2));
 	}
 	{
@@ -1707,29 +1708,29 @@ unittest { // building: each declaration form writes its builder components
 		Built b;
 		scope(exit) release(b);
 		buildOne(b, "w : f64 = 2.50000000000000000000000000000000000000000000000000000000000000000000\n");
-		assert(ecrs.context.getComponent!(doir.components.ConstantVal)(b.store, b.builder.declaration).floatValue == 2.5);
+		assert(ecrs.context.getComponent!(doir.components.ast.ConstantVal)(b.store, b.builder.declaration).floatValue == 2.5);
 	}
 	{
 		Built b;
 		scope(exit) release(b);
 		buildOne(b, "sum : std.u8 = tail std.add(a, %\"b c\")\n");
-		assert(doir.strings.text(b.strings, ecrs.context.getComponent!(doir.components.LookupCall)(b.store, b.builder.declaration).name) == "std.add");
-		auto args = ecrs.context.getComponent!(doir.components.LookupFunctionInputs)(b.store, b.builder.declaration).names;
+		assert(doir.strings.text(b.strings, ecrs.context.getComponent!(doir.components.ast.LookupCall)(b.store, b.builder.declaration).name) == "std.add");
+		auto args = ecrs.context.getComponent!(doir.components.ast.LookupFunctionInputs)(b.store, b.builder.declaration).names;
 		assert(fp.dynarray.length(args) == 2 && doir.strings.text(b.strings, args[1]) == "b c");
-		assert(ecrs.context.getComponent!(doir.components.Flags)(b.store, b.builder.declaration).flags == doir.components.Flags.Tail);
+		assert(ecrs.context.getComponent!(doir.components.ast.Flags)(b.store, b.builder.declaration).flags == doir.components.ast.Flags.Tail);
 	}
 	{
 		Built b;
 		scope(exit) release(b);
 		buildOne(b, "color : alias = vec3\n");
-		assert(ecrs.context.hasComponent!(doir.components.LookupAlias)(b.store, b.builder.declaration));
-		assert(!ecrs.context.hasComponent!(doir.components.LookupTypeOf)(b.store, b.builder.declaration));
+		assert(ecrs.context.hasComponent!(doir.components.ast.LookupAlias)(b.store, b.builder.declaration));
+		assert(!ecrs.context.hasComponent!(doir.components.ast.LookupTypeOf)(b.store, b.builder.declaration));
 	}
 	{
 		Built b;
 		scope(exit) release(b);
 		buildOne(b, "x : T = y\n");
-		assert(doir.strings.text(b.strings, ecrs.context.getComponent!(doir.components.LookupValue)(b.store, b.builder.declaration).name) == "y");
+		assert(doir.strings.text(b.strings, ecrs.context.getComponent!(doir.components.ast.LookupValue)(b.store, b.builder.declaration).name) == "y");
 	}
 	{
 		// A named function type: the declaration is the function type; a deduced parameter, a default, and a function-typed parameter.
@@ -1737,18 +1738,18 @@ unittest { // building: each declaration form writes its builder components
 		scope(exit) release(b);
 		buildOne(b, "id_t : type = (T: deduced type, v: T = 0, f: (x: T) -> T, _: u8 = z) -> T\n");
 		immutable e = b.builder.declaration;
-		auto inputs = ecrs.context.getComponent!(doir.components.FunctionInputs)(b.store, b.builder.declaration).related;
+		auto inputs = ecrs.context.getComponent!(doir.components.ast.FunctionInputs)(b.store, b.builder.declaration).related;
 		assert(fp.dynarray.length(inputs) == 4);
-		assert(doir.strings.text(b.strings, ecrs.context.getComponent!(doir.components.LookupTypeOf)(b.store, inputs[0]).name) == doir.components.deducedTypeName);
-		assert(ecrs.context.getComponent!(doir.components.ConstantVal)(b.store, inputs[1]).integerValue == 0);
-		immutable ft = ecrs.context.getComponent!(doir.components.TypeOf)(b.store, inputs[2]).type;
-		assert(ecrs.context.getComponent!(doir.components.Parent)(b.store, ft).parent == e);
-		assert(!ecrs.context.hasComponent!(doir.components.Name)(b.store, inputs[3]));
-		assert(doir.strings.text(b.strings, ecrs.context.getComponent!(doir.components.LookupValue)(b.store, inputs[3]).name) == "z");
-		assert(doir.strings.text(b.strings, ecrs.context.getComponent!(doir.components.LookupFunctionReturn)(b.store, b.builder.declaration).name) == "T");
+		assert(doir.strings.text(b.strings, ecrs.context.getComponent!(doir.components.ast.LookupTypeOf)(b.store, inputs[0]).name) == doir.components.ast.deducedTypeName);
+		assert(ecrs.context.getComponent!(doir.components.ast.ConstantVal)(b.store, inputs[1]).integerValue == 0);
+		immutable ft = ecrs.context.getComponent!(doir.components.ast.TypeOf)(b.store, inputs[2]).type;
+		assert(ecrs.context.getComponent!(doir.components.ast.Parent)(b.store, ft).parent == e);
+		assert(!ecrs.context.hasComponent!(doir.components.ast.Name)(b.store, inputs[3]));
+		assert(doir.strings.text(b.strings, ecrs.context.getComponent!(doir.components.ast.LookupValue)(b.store, inputs[3]).name) == "z");
+		assert(doir.strings.text(b.strings, ecrs.context.getComponent!(doir.components.ast.LookupFunctionReturn)(b.store, b.builder.declaration).name) == "T");
 		// Parts come parents first: the parameters, and the function type before its own parameter.
 		assert(fp.dynarray.length(b.builder.parts) == 6 && b.builder.parts[3] == ft);
-		auto span = ecrs.context.getComponent!(doir.engine.locations.SourceSpan)(b.store, inputs[1]);
+		auto span = ecrs.context.getComponent!(doir.components.source.SourceSpan)(b.store, inputs[1]);
 		assert(b.syntax.tokens !is null);
 		immutable source = "id_t : type = (T: deduced type, v: T = 0, f: (x: T) -> T, _: u8 = z) -> T\n";
 		assert(source[span.offset .. span.offset + span.length] == "v: T = 0");
@@ -1759,23 +1760,23 @@ unittest { // building: each declaration form writes its builder components
 		scope(exit) release(b);
 		buildOne(b, "f : (a: T) -> U = {\n\t_ : _ = std.return(a)\n}\n");
 		immutable e = b.builder.declaration;
-		assert(ecrs.context.hasComponent!(doir.components.Block)(b.store, e));
-		assert(fp.dynarray.length(ecrs.context.getComponent!(doir.components.Block)(b.store, b.builder.declaration).related) == 0);
-		assert(ecrs.context.getComponent!(doir.components.TypeOf)(b.store, b.builder.declaration).type == b.builder.parts[0]);
+		assert(ecrs.context.hasComponent!(doir.components.ast.Block)(b.store, e));
+		assert(fp.dynarray.length(ecrs.context.getComponent!(doir.components.ast.Block)(b.store, b.builder.declaration).related) == 0);
+		assert(ecrs.context.getComponent!(doir.components.ast.TypeOf)(b.store, b.builder.declaration).type == b.builder.parts[0]);
 	}
 	{
 		Built b;
 		scope(exit) release(b);
 		buildOne(b, "vec : type = {\n\tx : f32\n}\n");
-		assert(ecrs.context.hasComponent!(doir.components.TypeDefinition)(b.store, b.builder.declaration));
+		assert(ecrs.context.hasComponent!(doir.components.ast.TypeDefinition)(b.store, b.builder.declaration));
 	}
 	{
 		Built b;
 		scope(exit) release(b);
 		buildOne(b, "m : namespace = {\n}\n");
-		assert(ecrs.context.getComponent!(doir.components.Flags)(b.store, b.builder.declaration).flags == doir.components.Flags.Namespace);
+		assert(ecrs.context.getComponent!(doir.components.ast.Flags)(b.store, b.builder.declaration).flags == doir.components.ast.Flags.Namespace);
 		assert(removeParsed(b.store, b.builder.declaration));
-		assert(!ecrs.context.hasComponent!(doir.components.Flags)(b.store, b.builder.declaration));
+		assert(!ecrs.context.hasComponent!(doir.components.ast.Flags)(b.store, b.builder.declaration));
 	}
 
 	// A refused allocation at any step of any form fails the build, rather than asserting or writing through a missing component.

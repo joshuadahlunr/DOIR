@@ -9,7 +9,7 @@
 /// static import ecrs.context;
 /// static import doir.strings;
 /// static import doir.query;
-/// static import doir.components;
+/// static import doir.components.ast;
 /// auto store = ecrs.context.create();
 /// scope(exit) ecrs.context.free(store);
 /// auto engine = doir.query.create(store);
@@ -18,9 +18,9 @@
 /// scope(exit) doir.strings.free(strings);
 /// immutable file = addFile(engine, strings, "a.doir");
 /// assert(commit(engine, strings, file, "x : std.u8 = 5\n") == 0);
-/// immutable x = ecrs.context.getComponent!(doir.components.Block)(store, rootOf(engine, file)).related[0];
+/// immutable x = ecrs.context.getComponent!(doir.components.ast.Block)(store, rootOf(engine, file)).related[0];
 /// assert(commit(engine, strings, file, "// moved\nx : std.u8 = 5\n") == 0);
-/// assert(ecrs.context.getComponent!(doir.components.Block)(store, rootOf(engine, file)).related[0] == x);
+/// assert(ecrs.context.getComponent!(doir.components.ast.Block)(store, rootOf(engine, file)).related[0] == x);
 /// ---
 module doir.source;
 
@@ -36,11 +36,10 @@ static import fp.string;
 static import diagnose;
 static import ecrs.context;
 static import ecrs.relation;
-static import ecrs.registry;
 
 static import doir.strings;
-static import doir.components;
-static import doir.imports;
+static import doir.components.ast;
+static import doir.components.source;
 static import doir.positions;
 static import doir.query;
 static import doir.engine.locations;
@@ -51,57 +50,6 @@ public import ecrs.registry : EntityId, invalidEntity;
 public import doir.positions : Position;
 
 @nogc nothrow:
-
-
-// --- types and layout --------------------------------------------------------
-
-/// A file's text, owned by its input entity, which every parsed entity's location slices.
-struct SourceText {
-	char* text = null; /// An owned fp string.
-
-	/// Releases the text when the component is removed.
-	///
-	/// Examples:
-	/// ---
-	/// static import fp.string;
-	/// SourceText s = SourceText(fp.string.makeDynamic("x"));
-	/// s.finalize();
-	/// assert(s.text is null);
-	/// ---
-	void finalize() @nogc nothrow {
-		fp.string.free(text);
-		text = null;
-	}
-}
-
-/// A file's root block, which every commit of the file keeps.
-struct FileRoot {
-	mixin ecrs.relation.Relates!"root";
-}
-
-/// A named declaration's key across reparses: its name path, each name with its occurrence index among same-named siblings (`ir-design.md` §4.2).
-struct PathHash {
-	ulong value; /// The hash.
-}
-
-/// The hash of a declaration's non-trivia tokens, each nested declaration a placeholder: equal hashes mean an unchanged declaration.
-struct SyntaxHash {
-	ulong value; /// The hash.
-}
-
-/// A declaration's lexical position, the order key that `C-Order` reads and log entries are positioned by (`M-Lexical`).
-struct LexicalPosition {
-	Position at; /// The key.
-}
-
-/// The entities the parse made for a declaration besides its nested declarations: its function types written in place and their parameters, parents first. A rebuild reuses them in order, so their ids survive it.
-struct ParsedParts {
-	mixin ecrs.relation.Relates;
-}
-
-unittest { // libECRS silently skips a holder whose hook is not `@nogc nothrow`; every holder of an entity id must pass (E-Remap)
-	static assert(ecrs.registry.hasRemapEntities!FileRoot && ecrs.registry.hasRemapEntities!ParsedParts);
-}
 
 
 // --- files -------------------------------------------------------------------
@@ -141,6 +89,7 @@ std.typecons.Nullable!(char*) readFile(const(char)[] path) {
 ///
 /// Examples:
 /// ---
+/// static import doir.components.source;
 /// static import ecrs.context;
 /// static import doir.strings;
 /// static import doir.query;
@@ -152,7 +101,7 @@ std.typecons.Nullable!(char*) readFile(const(char)[] path) {
 /// doir.strings.Strings strings;
 /// scope(exit) doir.strings.free(strings);
 /// immutable file = addFile(engine, strings, "a.doir");
-/// assert(doir.strings.text(strings, ecrs.context.getComponent!(doir.imports.SourceFile)(store, file).path) == "a.doir");
+/// assert(doir.strings.text(strings, ecrs.context.getComponent!(doir.components.source.SourceFile)(store, file).path) == "a.doir");
 /// ---
 EntityId addFile(ref doir.query.QueryEngine engine, ref doir.strings.Strings strings, const(char)[] path) {
 	immutable id = doir.strings.intern(strings, path);
@@ -160,7 +109,7 @@ EntityId addFile(ref doir.query.QueryEngine engine, ref doir.strings.Strings str
 	// A transaction, because removing the entity after a refusal would still leave its id on the freelist.
 	ecrs.context.beginTransaction(*engine.store);
 	immutable e = ecrs.context.addEntity(*engine.store);
-	if (e != invalidEntity && ecrs.context.setComponent!(doir.imports.SourceFile)(*engine.store, e, doir.imports.SourceFile(id))) {
+	if (e != invalidEntity && ecrs.context.setComponent!(doir.components.source.SourceFile)(*engine.store, e, doir.components.source.SourceFile(id))) {
 		ecrs.context.commitTransaction(*engine.store);
 		return e;
 	}
@@ -185,7 +134,7 @@ EntityId addFile(ref doir.query.QueryEngine engine, ref doir.strings.Strings str
 /// assert(rootOf(engine, file) == invalidEntity);
 /// ---
 EntityId rootOf(ref doir.query.QueryEngine engine, EntityId file) {
-	auto root = ecrs.context.findComponent!FileRoot(*engine.store, file);
+	auto root = ecrs.context.findComponent!(doir.components.source.FileRoot)(*engine.store, file);
 	return root is null ? invalidEntity : root.root;
 }
 
@@ -207,7 +156,7 @@ EntityId rootOf(ref doir.query.QueryEngine engine, EntityId file) {
 /// assert(textOf(engine, file) == "x : T\n");
 /// ---
 const(char)[] textOf(ref doir.query.QueryEngine engine, EntityId file) {
-	auto text = ecrs.context.findComponent!SourceText(*engine.store, file);
+	auto text = ecrs.context.findComponent!(doir.components.source.SourceText)(*engine.store, file);
 	return text is null ? null : fp.string.slice(text.text);
 }
 
@@ -231,10 +180,10 @@ private ulong mix(ulong h, ulong value) {
 
 // Removes `e`, its parts and everything nested in it. Returns false on refusal, partway; the commit's transaction undoes it.
 private bool removeTree(ref Commit c, EntityId e) {
-	if (auto block = ecrs.context.findComponent!(doir.components.Block)(*c.store, e))
+	if (auto block = ecrs.context.findComponent!(doir.components.ast.Block)(*c.store, e))
 		foreach (child; fp.dynarray.slice(block.related))
 			if (!removeTree(c, child)) return false;
-	if (auto parts = ecrs.context.findComponent!ParsedParts(*c.store, e))
+	if (auto parts = ecrs.context.findComponent!(doir.components.source.ParsedParts)(*c.store, e))
 		foreach (part; fp.dynarray.slice(parts.related))
 			if (!ecrs.context.removeEntity(*c.store, part)) return false;
 	return ecrs.context.removeEntity(*c.store, e);
@@ -243,16 +192,16 @@ private bool removeTree(ref Commit c, EntityId e) {
 // Builds record `r` into `e`, reusing its old parts in order and removing those left over. Returns false on refusal.
 private bool rebuild(ref Commit c, size_t r, EntityId e) {
 	const(EntityId)[] old = null;
-	if (auto parts = ecrs.context.findComponent!ParsedParts(*c.store, e)) {
+	if (auto parts = ecrs.context.findComponent!(doir.components.source.ParsedParts)(*c.store, e)) {
 		old = fp.dynarray.slice(parts.related);
-		if (!ecrs.context.removeComponent!ParsedParts(*c.store, e)) return false;
+		if (!ecrs.context.removeComponent!(doir.components.source.ParsedParts)(*c.store, e)) return false;
 	}
 	if (!doir.syntax.parser.removeParsed(*c.store, e)) return false;
 	foreach (part; old)
 		if (!doir.syntax.parser.removeParsed(*c.store, part)) return false;
 
 	auto b = doir.syntax.parser.Builder(c.store, c.strings, e, old);
-	ParsedParts built;
+	doir.components.source.ParsedParts built;
 	scope(exit) built.finalize();
 	immutable ok = doir.syntax.parser.build(*c.syntax, c.text, r, b);
 	built.related = b.parts;
@@ -260,11 +209,11 @@ private bool rebuild(ref Commit c, size_t r, EntityId e) {
 	immutable used = fp.dynarray.length(b.parts) < old.length ? fp.dynarray.length(b.parts) : old.length;
 	foreach (part; old[used .. $])
 		if (!ecrs.context.removeEntity(*c.store, part)) return false;
-	if (b.annotated && !ecrs.context.setComponent!(doir.engine.locations.SourceAnnotation)(*c.store, e, doir.engine.locations.SourceAnnotation(b.annotation))) return false;
+	if (b.annotated && !ecrs.context.setComponent!(doir.components.source.SourceAnnotation)(*c.store, e, doir.components.source.SourceAnnotation(b.annotation))) return false;
 	if (built.related is null) return true;
 	auto moved = built;
 	built.related = null;
-	return ecrs.context.setComponent!ParsedParts(*c.store, e, moved);
+	return ecrs.context.setComponent!(doir.components.source.ParsedParts)(*c.store, e, moved);
 }
 
 private enum size_t maxEdits = 1024;
@@ -349,7 +298,7 @@ private bool match(ref Commit c, const(EntityId)[] old, const(uint)[] news, ulon
 	if (byPath is null) return false;
 	scope(exit) fp.hashtable.free(byPath);
 	foreach (e; old)
-		if (auto path = ecrs.context.findComponent!PathHash(*c.store, e))
+		if (auto path = ecrs.context.findComponent!(doir.components.source.PathHash)(*c.store, e))
 			if (fp.hashtable.insert(byPath, Keyed(path.value, e)) is null) return false;
 
 	// Named: the name path, with the occurrence index among same-named siblings.
@@ -371,7 +320,7 @@ private bool match(ref Commit c, const(EntityId)[] old, const(uint)[] news, ulon
 		paths[i] = mix(mix(parentPath, nameHash), occurrence);
 		auto found = fp.hashtable.find(byPath, Keyed(paths[i]));
 		if (found is null) continue;
-		auto oldName = ecrs.context.findComponent!(doir.components.Name)(*c.store, found.e);
+		auto oldName = ecrs.context.findComponent!(doir.components.ast.Name)(*c.store, found.e);
 		if (oldName !is null && oldName.value == name) {
 			matched[i] = found.e;
 			fp.hashtable.remove(byPath, Keyed(paths[i]));
@@ -385,8 +334,8 @@ private bool match(ref Commit c, const(EntityId)[] old, const(uint)[] news, ulon
 	size_t[2]* pairs = null;
 	scope(exit) { fp.dynarray.free(oldHashes); fp.dynarray.free(newHashes); fp.dynarray.free(oldUnnamed); fp.dynarray.free(newIndex); fp.dynarray.free(pairs); }
 	foreach (e; old) {
-		if (ecrs.context.hasComponent!PathHash(*c.store, e)) continue;
-		if (!fp.dynarray.pushBack(oldUnnamed, e) || !fp.dynarray.pushBack(oldHashes, ecrs.context.getComponent!SyntaxHash(*c.store, e).value)) return false;
+		if (ecrs.context.hasComponent!(doir.components.source.PathHash)(*c.store, e)) continue;
+		if (!fp.dynarray.pushBack(oldUnnamed, e) || !fp.dynarray.pushBack(oldHashes, ecrs.context.getComponent!(doir.components.source.SyntaxHash)(*c.store, e).value)) return false;
 	}
 	foreach (i, r; news) {
 		if (records[r].name != doir.syntax.parser.noToken) continue;
@@ -405,7 +354,7 @@ private bool assignPositions(ref Commit c, Position parent, const(EntityId)[] ma
 	bool* keep = null;
 	scope(exit) { fp.dynarray.free(old); fp.dynarray.free(tails); fp.dynarray.free(previous); fp.dynarray.free(keep); }
 	foreach (i; 0 .. n) {
-		auto at = matched[i] == invalidEntity || rekey ? null : ecrs.context.findComponent!LexicalPosition(*c.store, matched[i]);
+		auto at = matched[i] == invalidEntity || rekey ? null : ecrs.context.findComponent!(doir.components.source.LexicalPosition)(*c.store, matched[i]);
 		if (!fp.dynarray.pushBack(old, at is null ? doir.positions.none : at.at)
 			|| !fp.dynarray.pushBack(previous, size_t.max)
 			|| !fp.dynarray.pushBack(keep, false))
@@ -469,22 +418,22 @@ private bool commitBlock(ref Commit c, EntityId block, const(EntityId)[] old, si
 		auto record = records[r];
 		EntityId e = matched[i];
 		if (!fp.dynarray.pushBack(entries, e)) return false;
-		immutable span = doir.engine.locations.SourceSpan(record.spanStart - parentStart, record.spanEnd - record.spanStart);
+		immutable span = doir.components.source.SourceSpan(record.spanStart - parentStart, record.spanEnd - record.spanStart);
 		bool changed = false, built = false;
 		size_t oldStart = 0;
 		const(EntityId)[] oldChildren = null;
 		if (e != invalidEntity) {
-			immutable oldSpan = ecrs.context.getComponent!(doir.engine.locations.SourceSpan)(*c.store, e);
+			immutable oldSpan = ecrs.context.getComponent!(doir.components.source.SourceSpan)(*c.store, e);
 			oldStart = oldBase + oldSpan.offset;
-			immutable kept = ecrs.context.getComponent!LexicalPosition(*c.store, e).at == keys[i];
+			immutable kept = ecrs.context.getComponent!(doir.components.source.LexicalPosition)(*c.store, e).at == keys[i];
 			// Unchanged text, nested declarations included, at an unchanged key: nothing below it can differ but where it starts.
 			if (kept && sameText(c, oldStart, oldSpan.length, record, record.spanEnd, true)) {
-				if (!ecrs.context.setComponent!(doir.engine.locations.SourceSpan)(*c.store, e, span)) return false;
+				if (!ecrs.context.setComponent!(doir.components.source.SourceSpan)(*c.store, e, span)) return false;
 				continue;
 			}
-			if (auto inner = ecrs.context.findComponent!(doir.components.Block)(*c.store, e)) oldChildren = fp.dynarray.slice(inner.related);
+			if (auto inner = ecrs.context.findComponent!(doir.components.ast.Block)(*c.store, e)) oldChildren = fp.dynarray.slice(inner.related);
 			immutable header = record.blockOpen == doir.syntax.parser.noToken ? record.spanEnd : c.syntax.tokens[record.blockOpen].start;
-			if (ecrs.context.getComponent!SyntaxHash(*c.store, e).value != record.hash) changed = built = true;
+			if (ecrs.context.getComponent!(doir.components.source.SyntaxHash)(*c.store, e).value != record.hash) changed = built = true;
 			else if (!sameText(c, oldStart, oldSpan.length, record, header, record.blockOpen == doir.syntax.parser.noToken))
 				built = true; // only trivia moved in its own text: rebuilt for its parts' spans, unchanged
 		} else {
@@ -498,20 +447,20 @@ private bool commitBlock(ref Commit c, EntityId block, const(EntityId)[] old, si
 			if (!rebuild(c, r, e)) return false;
 			if (record.name != doir.syntax.parser.noToken) {
 				immutable name = doir.syntax.parser.nameOf(doir.syntax.lexer.text(c.syntax.tokens[record.name], c.text), *c.strings);
-				if (name == doir.strings.noName || !ecrs.context.setComponent!(doir.components.Name)(*c.store, e, doir.components.Name(name))) return false;
+				if (name == doir.strings.noName || !ecrs.context.setComponent!(doir.components.ast.Name)(*c.store, e, doir.components.ast.Name(name))) return false;
 			}
-			if (!ecrs.context.setComponent!(doir.components.Parent)(*c.store, e, doir.components.Parent([block]))) return false;
+			if (!ecrs.context.setComponent!(doir.components.ast.Parent)(*c.store, e, doir.components.ast.Parent([block]))) return false;
 		}
-		if (record.name != doir.syntax.parser.noToken && !ecrs.context.setComponent!PathHash(*c.store, e, PathHash(paths[i]))) return false;
-		if (!ecrs.context.setComponent!SyntaxHash(*c.store, e, SyntaxHash(record.hash))) return false;
-		if (!ecrs.context.setComponent!(doir.engine.locations.SourceSpan)(*c.store, e, span)) return false;
+		if (record.name != doir.syntax.parser.noToken && !ecrs.context.setComponent!(doir.components.source.PathHash)(*c.store, e, doir.components.source.PathHash(paths[i]))) return false;
+		if (!ecrs.context.setComponent!(doir.components.source.SyntaxHash)(*c.store, e, doir.components.source.SyntaxHash(record.hash))) return false;
+		if (!ecrs.context.setComponent!(doir.components.source.SourceSpan)(*c.store, e, span)) return false;
 
-		auto at = ecrs.context.findComponent!LexicalPosition(*c.store, e);
+		auto at = ecrs.context.findComponent!(doir.components.source.LexicalPosition)(*c.store, e);
 		immutable moved = at is null || at.at != keys[i];
-		if (!ecrs.context.setComponent!LexicalPosition(*c.store, e, LexicalPosition(keys[i]))) return false;
+		if (!ecrs.context.setComponent!(doir.components.source.LexicalPosition)(*c.store, e, doir.components.source.LexicalPosition(keys[i]))) return false;
 		if (changed || moved) {
 			if (!doir.query.markChanged(*c.engine, e)) return false;
-			if (auto all = ecrs.context.findComponent!ParsedParts(*c.store, e))
+			if (auto all = ecrs.context.findComponent!(doir.components.source.ParsedParts)(*c.store, e))
 				foreach (part; fp.dynarray.slice(all.related))
 					if (!doir.query.markChanged(*c.engine, part)) return false;
 		}
@@ -530,10 +479,10 @@ private bool commitBlock(ref Commit c, EntityId block, const(EntityId)[] old, si
 	}
 	// Compared with `old`, not the list in the store, which a rebuild of `block` emptied.
 	immutable differs = old != fp.dynarray.slice(entries);
-	doir.components.Block list;
+	doir.components.ast.Block list;
 	list.related = entries;
 	entries = null;
-	if (!ecrs.context.setComponent!(doir.components.Block)(*c.store, block, list)) return false;
+	if (!ecrs.context.setComponent!(doir.components.ast.Block)(*c.store, block, list)) return false;
 	return !differs || doir.query.markChanged(*c.engine, block);
 }
 
@@ -558,30 +507,30 @@ private bool annotate(ref Commit c, EntityId file, doir.syntax.parser.SyntaxErro
 // Everything `commit` writes to the store, inside its transaction, with the diagnostics it will report gathered into `prepared`. False on refusal.
 private bool apply(ref Commit c, EntityId file, char* copy, ref diagnose.Diagnostic* prepared) {
 	auto store = c.store;
-	auto owned = ecrs.context.findComponent!SourceText(*store, file);
+	auto owned = ecrs.context.findComponent!(doir.components.source.SourceText)(*store, file);
 	c.oldText = owned is null || owned.text is null ? null : fp.string.slice(owned.text);
 	immutable hadText = owned !is null && owned.text !is null;
-	if (!ecrs.context.setComponent!SourceText(*store, file, SourceText(copy))) return false;
+	if (!ecrs.context.setComponent!(doir.components.source.SourceText)(*store, file, doir.components.source.SourceText(copy))) return false;
 	c.text = fp.string.slice(copy);
-	c.path = doir.strings.text(*c.strings, ecrs.context.getComponent!(doir.imports.SourceFile)(*store, file).path);
+	c.path = doir.strings.text(*c.strings, ecrs.context.getComponent!(doir.components.source.SourceFile)(*store, file).path);
 	// Replacing the component drops its line starts, so they are computed again from the new text.
-	if (!ecrs.context.setComponent!(doir.engine.locations.SourceLines)(*store, file, doir.engine.locations.SourceLines(c.path, c.text))) return false;
+	if (!ecrs.context.setComponent!(doir.components.source.SourceLines)(*store, file, doir.components.source.SourceLines(c.path, c.text))) return false;
 	if ((!hadText || c.oldText != c.text) && !doir.query.markChanged(*c.engine, file)) return false;
 
 	EntityId root = rootOf(*c.engine, file);
 	if (root == invalidEntity) {
 		root = ecrs.context.addEntity(*store);
 		if (root == invalidEntity
-			|| ecrs.context.addComponent!(doir.components.Block)(*store, root) is null
-			|| !ecrs.context.setComponent!LexicalPosition(*store, root, LexicalPosition(doir.positions.root))
-			|| !ecrs.context.setComponent!(doir.engine.locations.InFile)(*store, root, doir.engine.locations.InFile([file]))
-			|| !ecrs.context.setComponent!FileRoot(*store, file, FileRoot([root]))
+			|| ecrs.context.addComponent!(doir.components.ast.Block)(*store, root) is null
+			|| !ecrs.context.setComponent!(doir.components.source.LexicalPosition)(*store, root, doir.components.source.LexicalPosition(doir.positions.root))
+			|| !ecrs.context.setComponent!(doir.components.source.InFile)(*store, root, doir.components.source.InFile([file]))
+			|| !ecrs.context.setComponent!(doir.components.source.FileRoot)(*store, file, doir.components.source.FileRoot([root]))
 			|| !doir.query.markChanged(*c.engine, root))
 			return false;
 	}
-	if (!ecrs.context.setComponent!(doir.engine.locations.SourceSpan)(*store, root, doir.engine.locations.SourceSpan(0, cast(uint) c.text.length))) return false;
+	if (!ecrs.context.setComponent!(doir.components.source.SourceSpan)(*store, root, doir.components.source.SourceSpan(0, cast(uint) c.text.length))) return false;
 
-	auto oldEntries = fp.dynarray.slice(ecrs.context.getComponent!(doir.components.Block)(*store, root).related);
+	auto oldEntries = fp.dynarray.slice(ecrs.context.getComponent!(doir.components.ast.Block)(*store, root).related);
 	if (!commitBlock(c, root, oldEntries, 0, fp.dynarray.length(c.syntax.records), fp.fnv1a.hash(c.path), doir.positions.root, 0, 0, false)) return false;
 
 	if (c.engine.diagnostics is null) return true;
@@ -610,7 +559,7 @@ private bool apply(ref Commit c, EntityId file, char* copy, ref diagnose.Diagnos
 /// static import ecrs.context;
 /// static import doir.strings;
 /// static import doir.query;
-/// static import doir.components;
+/// static import doir.components.ast;
 /// auto store = ecrs.context.create();
 /// scope(exit) ecrs.context.free(store);
 /// auto engine = doir.query.create(store);
@@ -619,7 +568,7 @@ private bool apply(ref Commit c, EntityId file, char* copy, ref diagnose.Diagnos
 /// scope(exit) doir.strings.free(strings);
 /// immutable file = addFile(engine, strings, "a.doir");
 /// assert(commit(engine, strings, file, "a : T = 1\nb : = 2\nc : T = 3\n") == 1);
-/// assert(fp.dynarray.length(ecrs.context.getComponent!(doir.components.Block)(store, rootOf(engine, file)).related) == 2);
+/// assert(fp.dynarray.length(ecrs.context.getComponent!(doir.components.ast.Block)(store, rootOf(engine, file)).related) == 2);
 /// ---
 size_t commit(ref doir.query.QueryEngine engine, ref doir.strings.Strings strings, EntityId file, const(char)[] text) {
 	doir.query.beginRevision(engine);
@@ -677,7 +626,7 @@ version(unittest) {
 		static ulong compute(ref doir.query.QueryEngine engine, Key key) @nogc nothrow {
 			++valueRuns;
 			doir.query.read(engine, key.related[0]);
-			auto value = ecrs.context.findComponent!(doir.components.ConstantVal)(*engine.store, key.related[0]);
+			auto value = ecrs.context.findComponent!(doir.components.ast.ConstantVal)(*engine.store, key.related[0]);
 			return value is null ? ulong.max : value.integerValue;
 		}
 	}
@@ -692,11 +641,11 @@ version(unittest) {
 		static Value compute(ref doir.query.QueryEngine engine, Key key) @nogc nothrow {
 			++lookupRuns;
 			doir.query.read(engine, key.block);
-			foreach (e; fp.dynarray.slice(ecrs.context.getComponent!(doir.components.Block)(*engine.store, key.block).related)) {
-				auto name = ecrs.context.findComponent!(doir.components.Name)(*engine.store, e);
+			foreach (e; fp.dynarray.slice(ecrs.context.getComponent!(doir.components.ast.Block)(*engine.store, key.block).related)) {
+				auto name = ecrs.context.findComponent!(doir.components.ast.Name)(*engine.store, e);
 				if (name !is null && name.value == key.name) return Value([e]);
 			}
-			auto parent = ecrs.context.findComponent!(doir.components.Parent)(*engine.store, key.block);
+			auto parent = ecrs.context.findComponent!(doir.components.ast.Parent)(*engine.store, key.block);
 			if (parent is null) return Value([invalidEntity]);
 			return *doir.query.query!Lookup(engine, Key([parent.parent], key.name));
 		}
@@ -727,8 +676,8 @@ version(unittest) {
 	private EntityId named(ref doir.query.QueryEngine engine, ref doir.strings.Strings strings, EntityId block, const(char)[] path) {
 		size_t dot = 0;
 		while (dot < path.length && path[dot] != '.') ++dot;
-		foreach (e; fp.dynarray.slice(ecrs.context.getComponent!(doir.components.Block)(*engine.store, block).related)) {
-			auto name = ecrs.context.findComponent!(doir.components.Name)(*engine.store, e);
+		foreach (e; fp.dynarray.slice(ecrs.context.getComponent!(doir.components.ast.Block)(*engine.store, block).related)) {
+			auto name = ecrs.context.findComponent!(doir.components.ast.Name)(*engine.store, e);
 			if (name is null || doir.strings.text(strings, name.value) != path[0 .. dot]) continue;
 			return dot == path.length ? e : named(engine, strings, e, path[dot + 1 .. $]);
 		}
@@ -737,11 +686,11 @@ version(unittest) {
 
 	// Every parsed entity below `block`, in preorder, parts after their declaration.
 	private void collect(ref doir.query.QueryEngine engine, EntityId block, ref EntityId* out_) {
-		foreach (e; fp.dynarray.slice(ecrs.context.getComponent!(doir.components.Block)(*engine.store, block).related)) {
+		foreach (e; fp.dynarray.slice(ecrs.context.getComponent!(doir.components.ast.Block)(*engine.store, block).related)) {
 			assert(fp.dynarray.pushBack(out_, e));
-			if (auto parts = ecrs.context.findComponent!ParsedParts(*engine.store, e))
+			if (auto parts = ecrs.context.findComponent!(doir.components.source.ParsedParts)(*engine.store, e))
 				foreach (part; fp.dynarray.slice(parts.related)) assert(fp.dynarray.pushBack(out_, part));
-			if (ecrs.context.hasComponent!(doir.components.Block)(*engine.store, e)) collect(engine, e, out_);
+			if (ecrs.context.hasComponent!(doir.components.ast.Block)(*engine.store, e)) collect(engine, e, out_);
 		}
 	}
 
@@ -804,16 +753,16 @@ unittest { // the corpus parses, and every parsed entity's location slices back 
 		size_t r = 0;
 		foreach (e; fp.dynarray.slice(all)) {
 			auto span = located(engine, file, e);
-			if (ecrs.context.hasComponent!SyntaxHash(store, e)) {
+			if (ecrs.context.hasComponent!(doir.components.source.SyntaxHash)(store, e)) {
 				immutable record = syntax.records[r++];
 				assert(span == fp.string.slice(text)[record.spanStart .. record.spanEnd]);
-				if (auto name = ecrs.context.findComponent!(doir.components.Name)(store, e)) {
+				if (auto name = ecrs.context.findComponent!(doir.components.ast.Name)(store, e)) {
 					const spelled = doir.strings.text(strings, name.value);
 					assert(span[0 .. spelled.length] == spelled || span[0 .. 7] == "export ");
 				}
-			} else if (ecrs.context.hasComponent!(doir.components.FunctionInputs)(store, e)) assert(span[0] == '(' && span[$ - 1] != ' ');
+			} else if (ecrs.context.hasComponent!(doir.components.ast.FunctionInputs)(store, e)) assert(span[0] == '(' && span[$ - 1] != ' ');
 			else {
-				const spelled = doir.strings.text(strings, ecrs.context.getComponent!(doir.components.Name)(store, e).value);
+				const spelled = doir.strings.text(strings, ecrs.context.getComponent!(doir.components.ast.Name)(store, e).value);
 				assert(span == "_" || span[0 .. spelled.length] == spelled);
 			}
 		}
@@ -831,7 +780,7 @@ unittest { // the corpus parses, and every parsed entity's location slices back 
 	collect(engine, rootOf(engine, standard), all);
 	Position last = doir.positions.root;
 	foreach (e; fp.dynarray.slice(all)) {
-		auto at = ecrs.context.findComponent!LexicalPosition(store, e);
+		auto at = ecrs.context.findComponent!(doir.components.source.LexicalPosition)(store, e);
 		if (at is null) continue;
 		assert(doir.positions.precedes(engine.positions, last, at.at));
 		last = at.at;
@@ -864,9 +813,9 @@ unittest { // reparsing: what an edit keeps, changes and re-runs
 	immutable root = rootOf(engine, file);
 	immutable a = named(engine, strings, root, "a"), f = named(engine, strings, root, "f"), ns = named(engine, strings, root, "ns");
 	immutable b = named(engine, strings, root, "ns.b"), inner = named(engine, strings, root, "ns.inner"), c = named(engine, strings, root, "ns.inner.c");
-	immutable print = ecrs.context.getComponent!(doir.components.Block)(*engine.store, f).related[0], ret = ecrs.context.getComponent!(doir.components.Block)(*engine.store, f).related[1], yield = ecrs.context.getComponent!(doir.components.Block)(*engine.store, inner).related[1];
-	immutable ft = ecrs.context.getComponent!(doir.components.TypeOf)(store, f).type;
-	immutable x = ecrs.context.getComponent!(doir.components.FunctionInputs)(store, ft).related[0];
+	immutable print = ecrs.context.getComponent!(doir.components.ast.Block)(*engine.store, f).related[0], ret = ecrs.context.getComponent!(doir.components.ast.Block)(*engine.store, f).related[1], yield = ecrs.context.getComponent!(doir.components.ast.Block)(*engine.store, inner).related[1];
+	immutable ft = ecrs.context.getComponent!(doir.components.ast.TypeOf)(store, f).type;
+	immutable x = ecrs.context.getComponent!(doir.components.ast.FunctionInputs)(store, ft).related[0];
 
 	EntityId* all = null;
 	scope(exit) fp.dynarray.free(all);
@@ -895,7 +844,7 @@ unittest { // reparsing: what an edit keeps, changes and re-runs
 		foreach (i, old; fp.dynarray.slice(all)) if (old == e) return before[i];
 		assert(false);
 	}
-	immutable keyOfA = ecrs.context.getComponent!LexicalPosition(store, a).at;
+	immutable keyOfA = ecrs.context.getComponent!(doir.components.source.LexicalPosition)(store, a).at;
 	doir.syntax.parser.builds = 0;
 	assert(commit(engine, strings, file, original) == 0);
 	assert(doir.syntax.parser.builds == 0);
@@ -916,7 +865,7 @@ unittest { // reparsing: what an edit keeps, changes and re-runs
 	doir.syntax.parser.builds = 0;
 	assert(commit(engine, strings, file, moved) == 0);
 	assert(doir.syntax.parser.builds == 0); // every declaration's text is unchanged, so each is skipped whole
-	assert(named(engine, strings, root, "a") == a && ecrs.context.getComponent!LexicalPosition(store, a).at == keyOfA);
+	assert(named(engine, strings, root, "a") == a && ecrs.context.getComponent!(doir.components.source.LexicalPosition)(store, a).at == keyOfA);
 	foreach (i, e; fp.dynarray.slice(all)) assert(doir.query.changedAt(engine, e) == before[i]);
 	assert(located(engine, file, a) == "a : T = 1" && located(engine, file, x) == "x: T");
 	demandAll();
@@ -936,7 +885,7 @@ unittest { // reparsing: what an edit keeps, changes and re-runs
 		collect(engine, root, again);
 		assert(fp.dynarray.slice(again) == fp.dynarray.slice(all));
 		foreach (i, e; fp.dynarray.slice(again)) assert(doir.query.changedAt(engine, e) == before[i]);
-		immutable y = ecrs.context.getComponent!(doir.components.FunctionInputs)(store, ft).related[1];
+		immutable y = ecrs.context.getComponent!(doir.components.ast.FunctionInputs)(store, ft).related[1];
 		assert(located(engine, file, y) == "y: T" && located(engine, file, ft) == "(x: T, /* the second */ y: T) -> T");
 	}
 	demandAll();
@@ -973,7 +922,7 @@ unittest { // reparsing: what an edit keeps, changes and re-runs
 	// Inserting a declaration marks its block: lookups through it re-run, and early cutoff stops them when nothing is shadowed.
 	enum inserted = deeper[0 .. $ - "\t\t_ : _ = std.block_result(b)\n\t}\n}\n".length] ~ "\t\td : T = 9\n\t\t_ : _ = std.block_result(b)\n\t}\n}\n";
 	assert(commit(engine, strings, file, inserted) == 0);
-	assert(fp.dynarray.length(ecrs.context.getComponent!(doir.components.Block)(*engine.store, inner).related) == 3 && ecrs.context.getComponent!(doir.components.Block)(*engine.store, inner).related[2] == yield && doir.query.changedAt(engine, inner) == engine.revision);
+	assert(fp.dynarray.length(ecrs.context.getComponent!(doir.components.ast.Block)(*engine.store, inner).related) == 3 && ecrs.context.getComponent!(doir.components.ast.Block)(*engine.store, inner).related[2] == yield && doir.query.changedAt(engine, inner) == engine.revision);
 	assert(doir.query.query!UsesLookup(engine, UsesLookup.Key([inner], bName)).related[0] == b);
 	counts(0, 1, 0, 0);
 
@@ -988,10 +937,10 @@ unittest { // reparsing: what an edit keeps, changes and re-runs
 	// An inserted `_` declaration between two others matches both of them.
 	enum statements = shadowing[0 .. "a : T = 5\nf : (x: T, y: T) -> T = {\n".length] ~ "\t_ : _ = std.print(x)\n\t_ : _ = std.log(x)\n\t_ : _ = std.return(y)\n}\n" ~ shadowing["a : T = 5\nf : (x: T, y: T) -> T = {\n\t_ : _ = std.print(x)\n\t_ : _ = std.return(y)\n}\n".length .. $];
 	assert(commit(engine, strings, file, statements) == 0);
-	assert(fp.dynarray.length(ecrs.context.getComponent!(doir.components.Block)(*engine.store, f).related) == 3 && ecrs.context.getComponent!(doir.components.Block)(*engine.store, f).related[0] == print && ecrs.context.getComponent!(doir.components.Block)(*engine.store, f).related[2] == ret);
+	assert(fp.dynarray.length(ecrs.context.getComponent!(doir.components.ast.Block)(*engine.store, f).related) == 3 && ecrs.context.getComponent!(doir.components.ast.Block)(*engine.store, f).related[0] == print && ecrs.context.getComponent!(doir.components.ast.Block)(*engine.store, f).related[2] == ret);
 	assert(doir.query.changedAt(engine, print) == was(print) && doir.query.changedAt(engine, ret) == was(ret));
 	assert(doir.query.changedAt(engine, f) == engine.revision);
-	assert(ecrs.context.getComponent!(doir.components.TypeOf)(store, f).type == ft); // f was not rebuilt: its body is not its hash
+	assert(ecrs.context.getComponent!(doir.components.ast.TypeOf)(store, f).type == ft); // f was not rebuilt: its body is not its hash
 
 	// Reordering keeps both ids; one keeps its order key, the moved one gets a new key and is marked changed.
 	enum reordered = statements[0 .. "a : T = 5\n".length] ~ "zz : T = 7\n" ~ statements["a : T = 5\n".length .. $];
@@ -1000,8 +949,8 @@ unittest { // reparsing: what an edit keeps, changes and re-runs
 	enum swapped = "zz : T = 7\n" ~ reordered[0 .. "a : T = 5\n".length] ~ reordered["a : T = 5\nzz : T = 7\n".length .. $];
 	assert(commit(engine, strings, file, swapped) == 0);
 	assert(named(engine, strings, root, "zz") == zz && named(engine, strings, root, "a") == a);
-	assert(ecrs.context.getComponent!(doir.components.Block)(*engine.store, root).related[0] == zz && ecrs.context.getComponent!(doir.components.Block)(*engine.store, root).related[1] == a);
-	assert(doir.positions.precedes(engine.positions, ecrs.context.getComponent!LexicalPosition(store, zz).at, ecrs.context.getComponent!LexicalPosition(store, a).at));
+	assert(ecrs.context.getComponent!(doir.components.ast.Block)(*engine.store, root).related[0] == zz && ecrs.context.getComponent!(doir.components.ast.Block)(*engine.store, root).related[1] == a);
+	assert(doir.positions.precedes(engine.positions, ecrs.context.getComponent!(doir.components.source.LexicalPosition)(store, zz).at, ecrs.context.getComponent!(doir.components.source.LexicalPosition)(store, a).at));
 	assert(doir.query.changedAt(engine, zz) == engine.revision && doir.query.changedAt(engine, a) != engine.revision);
 	assert(doir.query.changedAt(engine, root) == engine.revision);
 
@@ -1011,24 +960,24 @@ unittest { // reparsing: what an edit keeps, changes and re-runs
 	assert(named(engine, strings, root, "a") == invalidEntity && named(engine, strings, root, "alpha") != invalidEntity);
 	enum removed = renamed["zz : T = 7\n".length .. $];
 	assert(commit(engine, strings, file, removed) == 0);
-	assert(named(engine, strings, root, "zz") == invalidEntity && fp.dynarray.length(ecrs.context.getComponent!(doir.components.Block)(*engine.store, root).related) == 3);
+	assert(named(engine, strings, root, "zz") == invalidEntity && fp.dynarray.length(ecrs.context.getComponent!(doir.components.ast.Block)(*engine.store, root).related) == 3);
 
 	// A parameter edit rebuilds the function's type in its old parts, keeping their ids.
 	enum retyped = removed[0 .. "alpha : T = 5\n".length] ~ "f : (x: U, y: T) -> T = {\n" ~ removed["alpha : T = 5\nf : (x: T, y: T) -> T = {\n".length .. $];
 	assert(commit(engine, strings, file, retyped) == 0);
-	assert(named(engine, strings, root, "f") == f && ecrs.context.getComponent!(doir.components.TypeOf)(store, f).type == ft);
-	assert(ecrs.context.getComponent!(doir.components.FunctionInputs)(store, ft).related[0] == x);
-	assert(doir.strings.text(strings, ecrs.context.getComponent!(doir.components.LookupTypeOf)(store, x).name) == "U");
+	assert(named(engine, strings, root, "f") == f && ecrs.context.getComponent!(doir.components.ast.TypeOf)(store, f).type == ft);
+	assert(ecrs.context.getComponent!(doir.components.ast.FunctionInputs)(store, ft).related[0] == x);
+	assert(doir.strings.text(strings, ecrs.context.getComponent!(doir.components.ast.LookupTypeOf)(store, x).name) == "U");
 	assert(doir.query.changedAt(engine, f) == engine.revision && doir.query.changedAt(engine, x) == engine.revision);
-	assert(fp.dynarray.length(ecrs.context.getComponent!(doir.components.Block)(*engine.store, f).related) == 3 && ecrs.context.getComponent!(doir.components.Block)(*engine.store, f).related[0] == print); // the body was matched, not rebuilt
+	assert(fp.dynarray.length(ecrs.context.getComponent!(doir.components.ast.Block)(*engine.store, f).related) == 3 && ecrs.context.getComponent!(doir.components.ast.Block)(*engine.store, f).related[0] == print); // the body was matched, not rebuilt
 
 	// A declaration that changes kind keeps its entity; its new block's contents are new.
 	enum kind = "alpha : namespace = {\n\tk : T\n}\n" ~ retyped["alpha : T = 5\n".length .. $];
 	immutable alpha = named(engine, strings, root, "alpha");
 	assert(commit(engine, strings, file, kind) == 0);
-	assert(named(engine, strings, root, "alpha") == alpha && !ecrs.context.hasComponent!(doir.components.ConstantVal)(store, alpha));
+	assert(named(engine, strings, root, "alpha") == alpha && !ecrs.context.hasComponent!(doir.components.ast.ConstantVal)(store, alpha));
 	assert(named(engine, strings, root, "alpha.k") != invalidEntity);
-	assert(ecrs.context.getComponent!(doir.components.Flags)(store, alpha).flags == doir.components.Flags.Namespace);
+	assert(ecrs.context.getComponent!(doir.components.ast.Flags)(store, alpha).flags == doir.components.ast.Flags.Namespace);
 
 	// A syntax error drops only the broken declaration; fixing it brings it back.
 	enum broken = kind[0 .. $ - "}\n".length] ~ "\toops : = 1\n}\n";
@@ -1038,17 +987,17 @@ unittest { // reparsing: what an edit keeps, changes and re-runs
 	assert(named(engine, strings, root, "ns.b") == b);
 
 	// Dropping a parameter rebuilds the type in fewer parts, removing the one left over.
-	immutable y = ecrs.context.getComponent!(doir.components.FunctionInputs)(store, ft).related[1];
+	immutable y = ecrs.context.getComponent!(doir.components.ast.FunctionInputs)(store, ft).related[1];
 	enum unary = "alpha : namespace = {\n\tk : T\n}\nf : (x: U) -> T = {\n" ~ retyped["alpha : T = 5\nf : (x: U, y: T) -> T = {\n".length .. $];
 	assert(commit(engine, strings, file, unary) == 0);
-	assert(fp.dynarray.length(ecrs.context.getComponent!(doir.components.FunctionInputs)(store, ft).related) == 1);
-	assert(!ecrs.context.hasComponent!(doir.components.Parent)(store, y));
+	assert(fp.dynarray.length(ecrs.context.getComponent!(doir.components.ast.FunctionInputs)(store, ft).related) == 1);
+	assert(!ecrs.context.hasComponent!(doir.components.ast.Parent)(store, y));
 
 	// Removing a declaration removes its parts and everything nested in its block.
 	assert(commit(engine, strings, file, "alpha : namespace = {\n\tk : T\n}\n") == 0);
-	assert(fp.dynarray.length(ecrs.context.getComponent!(doir.components.Block)(*engine.store, root).related) == 1);
+	assert(fp.dynarray.length(ecrs.context.getComponent!(doir.components.ast.Block)(*engine.store, root).related) == 1);
 	immutable EntityId[7] gone = [f, ft, x, ns, b, inner, c];
-	foreach (e; gone) assert(!ecrs.context.hasComponent!SyntaxHash(store, e) && !ecrs.context.hasComponent!(doir.components.Parent)(store, e));
+	foreach (e; gone) assert(!ecrs.context.hasComponent!(doir.components.source.SyntaxHash)(store, e) && !ecrs.context.hasComponent!(doir.components.ast.Parent)(store, e));
 }
 
 unittest { // reopened namespaces match by occurrence, and unnamed declarations by alignment
@@ -1062,10 +1011,10 @@ unittest { // reopened namespaces match by occurrence, and unnamed declarations 
 
 	assert(commit(engine, strings, file, "m : namespace = {\n\tx : T = 1\n}\nm : namespace = {\n\ty : T = 2\n}\n") == 0);
 	immutable root = rootOf(engine, file);
-	immutable first = ecrs.context.getComponent!(doir.components.Block)(*engine.store, root).related[0], second = ecrs.context.getComponent!(doir.components.Block)(*engine.store, root).related[1];
-	immutable y = ecrs.context.getComponent!(doir.components.Block)(*engine.store, second).related[0];
+	immutable first = ecrs.context.getComponent!(doir.components.ast.Block)(*engine.store, root).related[0], second = ecrs.context.getComponent!(doir.components.ast.Block)(*engine.store, root).related[1];
+	immutable y = ecrs.context.getComponent!(doir.components.ast.Block)(*engine.store, second).related[0];
 	assert(commit(engine, strings, file, "m : namespace = {\n\tx : T = 1\n}\nm : namespace = {\n\ty : T = 3\n}\n") == 0);
-	assert(ecrs.context.getComponent!(doir.components.Block)(*engine.store, root).related[0] == first && ecrs.context.getComponent!(doir.components.Block)(*engine.store, root).related[1] == second && ecrs.context.getComponent!(doir.components.Block)(*engine.store, second).related[0] == y);
+	assert(ecrs.context.getComponent!(doir.components.ast.Block)(*engine.store, root).related[0] == first && ecrs.context.getComponent!(doir.components.ast.Block)(*engine.store, root).related[1] == second && ecrs.context.getComponent!(doir.components.ast.Block)(*engine.store, second).related[0] == y);
 	assert(doir.query.changedAt(engine, y) == engine.revision && doir.query.changedAt(engine, first) != engine.revision);
 
 	// Alignment: unchanged runs at both ends, and the longest common run in the middle.
@@ -1143,7 +1092,7 @@ unittest { // diagnostics: syntax errors at their position, query diagnostics at
 
 	// The annotation is the declaration's own: removing it from the text removes it from the entity.
 	assert(commit(engine, strings, file, "a : T = 1\nc : T = 3\n") == 0);
-	assert(!ecrs.context.hasComponent!(doir.engine.locations.SourceAnnotation)(store, named(engine, strings, root, "c")));
+	assert(!ecrs.context.hasComponent!(doir.components.source.SourceAnnotation)(store, named(engine, strings, root, "c")));
 }
 
 unittest { // a refused allocation anywhere in a commit rolls the store back to the previous commit and reports nothing

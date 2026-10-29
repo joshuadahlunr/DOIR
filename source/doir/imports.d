@@ -6,10 +6,11 @@
 /// ---
 /// static import ecrs.context;
 /// static import doir.query;
-/// static import doir.components;
+/// static import doir.components.ast;
+/// static import doir.components.levels;
 /// static EntityId empty(ref doir.query.QueryEngine engine, EntityId file, EntityId level) @nogc nothrow {
 /// 	immutable root = doir.query.createEntity(engine, file);
-/// 	cast(void) doir.query.produce!(doir.components.Block)(engine, root);
+/// 	cast(void) doir.query.produce!(doir.components.ast.Block)(engine, root);
 /// 	return root;
 /// }
 /// auto store = ecrs.context.create();
@@ -17,9 +18,9 @@
 /// auto engine = doir.query.create(store);
 /// scope(exit) doir.query.free(engine);
 /// immutable file = ecrs.context.addEntity(store), level = ecrs.context.addEntity(store);
-/// ecrs.context.addComponent!LevelEvaluator(store, level).evaluate = &empty;
+/// ecrs.context.addComponent!(doir.components.levels.LevelEvaluator)(store, level).evaluate = &empty;
 /// immutable root = doir.query.query!Import(engine, Import.Key([file, level])).root;
-/// assert(ecrs.context.hasComponent!(doir.components.Block)(store, root));
+/// assert(ecrs.context.hasComponent!(doir.components.ast.Block)(store, root));
 /// ---
 module doir.imports;
 
@@ -27,43 +28,20 @@ static import fp.dynarray;
 
 static import diagnose;
 static import ecrs.context;
-static import ecrs.registry;
 static import ecrs.relation;
 
 static import doir.strings;
 static import doir.builders;
-static import doir.components;
+static import doir.components.ast;
+static import doir.components.effects;
+static import doir.components.levels;
+static import doir.components.source;
 static import doir.effects;
 static import doir.query;
 
 public import ecrs.registry : EntityId, invalidEntity;
 
 @nogc nothrow:
-
-
-// --- types and layout --------------------------------------------------------
-
-/// A source file's input entity: its path, interned. The file's contents join it with the parser (`roadmap.md` Phase 2).
-struct SourceFile {
-	doir.strings.StringId path; /// The path, as the build named it.
-}
-
-/// Builds the entities of `file` for `level` through `createEntity` and `produce`, and runs its comptime, inside the import query. Returns its root block, or `invalidEntity` if it cannot be evaluated, having reported why.
-alias EvaluateFunction = EntityId function(ref doir.query.QueryEngine engine, EntityId file, EntityId level) @nogc nothrow;
-
-/// How a level evaluates a file it imports: its parse and its comptime. An input on the level entity, set when the tower is built.
-struct LevelEvaluator {
-	EvaluateFunction evaluate; /// The evaluator.
-}
-
-/// The files a block's `std.import` declarations name, resolved to their input entities, in declaration order. An input, written by the commit that parses them, or by evaluation once paths are comptime values.
-struct Imports {
-	mixin ecrs.relation.Relates;
-}
-
-unittest { // libECRS silently skips a holder whose hook is not `@nogc nothrow`; every holder of an entity id must pass (E-Remap)
-	static assert(ecrs.registry.hasRemapEntities!Imports);
-}
 
 
 // --- queries -----------------------------------------------------------------
@@ -94,7 +72,7 @@ struct Import {
 	/// ---
 	static Value compute(ref doir.query.QueryEngine engine, Key key) @nogc nothrow {
 		if (!doir.query.read(engine, key.file) || !doir.query.read(engine, key.level)) return Value([invalidEntity]);
-		auto evaluator = ecrs.context.findComponent!LevelEvaluator(*engine.store, key.level);
+		auto evaluator = ecrs.context.findComponent!(doir.components.levels.LevelEvaluator)(*engine.store, key.level);
 		if (evaluator is null) {
 			cast(void) doir.query.report(engine, key.file, diagnose.Kind.error, "I-Import: the importing level cannot evaluate files", "import the file from a level that declares an evaluator, or give this level one"); // a refusal fails this query
 			return Value([invalidEntity]);
@@ -121,18 +99,18 @@ struct Import {
 /// ---
 EntityId findImported(ref doir.query.QueryEngine engine, EntityId block, EntityId level, doir.strings.StringId name) {
 	if (!doir.query.read(engine, block)) return invalidEntity;
-	auto imports = ecrs.context.findComponent!Imports(*engine.store, block);
+	auto imports = ecrs.context.findComponent!(doir.components.source.Imports)(*engine.store, block);
 	if (imports is null) return invalidEntity;
 	EntityId found = invalidEntity;
 	immutable n = fp.dynarray.length(imports.related);
 	foreach (i; 0 .. n) {
-		immutable file = ecrs.context.getComponent!Imports(*engine.store, block).related[i];
+		immutable file = ecrs.context.getComponent!(doir.components.source.Imports)(*engine.store, block).related[i];
 		auto root = doir.query.query!Import(engine, Import.Key([file, level]));
 		if (root is null || root.root == invalidEntity) continue;
-		foreach (e; fp.dynarray.slice(ecrs.context.getComponent!(doir.components.Block)(*engine.store, root.root).related)) {
-			auto declared = ecrs.context.findComponent!(doir.components.Name)(*engine.store, e);
+		foreach (e; fp.dynarray.slice(ecrs.context.getComponent!(doir.components.ast.Block)(*engine.store, root.root).related)) {
+			auto declared = ecrs.context.findComponent!(doir.components.ast.Name)(*engine.store, e);
 			if (declared is null || declared.value != name
-				|| !(doir.effects.flags(engine, e) & doir.components.Flags.Export))
+				|| !(doir.effects.flags(engine, e) & doir.components.ast.Flags.Export))
 				continue;
 			if (found == invalidEntity) found = e;
 			else if (found != e) {
@@ -154,7 +132,7 @@ version(unittest) {
 
 	private __gshared doir.strings.Strings strings;
 	private __gshared EntityId fileA, fileB, fileC;
-	private __gshared uint modifier = doir.components.Flags.ReadOnly;
+	private __gshared uint modifier = doir.components.ast.Flags.ReadOnly;
 	private __gshared int evaluations, readerRuns;
 
 	// B and C hold `export t : type = {} ; _ : _ = std.pointers.read_only(t)`; C adds an unexported `u`.
@@ -162,9 +140,9 @@ version(unittest) {
 		++evaluations;
 		assert(doir.query.read(engine, file));
 		immutable root = doir.query.createEntity(engine, file);
-		auto block = doir.query.produce!(doir.components.Block)(engine, root);
+		auto block = doir.query.produce!(doir.components.ast.Block)(engine, root);
 		assert(block !is null);
-		if (auto imports = ecrs.context.findComponent!Imports(*engine.store, file))
+		if (auto imports = ecrs.context.findComponent!(doir.components.source.Imports)(*engine.store, file))
 			foreach (other; fp.dynarray.slice(imports.related)) {
 				auto imported = doir.query.query!Import(engine, Import.Key([other, level]));
 				if (imported is null || imported.root == invalidEntity) return invalidEntity;
@@ -172,15 +150,15 @@ version(unittest) {
 		if (file != fileB && file != fileC) return root;
 
 		immutable t = doir.query.createEntity(engine, file);
-		doir.query.produce!(doir.components.Name)(engine, t).value = doir.strings.intern(strings, "t");
-		doir.query.produce!(doir.components.Parent)(engine, t).parent = root;
-		doir.query.produce!(doir.components.Flags)(engine, t).flags = doir.components.Flags.Export;
+		doir.query.produce!(doir.components.ast.Name)(engine, t).value = doir.strings.intern(strings, "t");
+		doir.query.produce!(doir.components.ast.Parent)(engine, t).parent = root;
+		doir.query.produce!(doir.components.ast.Flags)(engine, t).flags = doir.components.ast.Flags.Export;
 		immutable pushed = fp.dynarray.pushBack(block.related, t);
 		assert(pushed);
 		if (file == fileC) {
 			immutable u = doir.query.createEntity(engine, file);
-			doir.query.produce!(doir.components.Name)(engine, u).value = doir.strings.intern(strings, "u");
-			doir.query.produce!(doir.components.Parent)(engine, u).parent = root;
+			doir.query.produce!(doir.components.ast.Name)(engine, u).value = doir.strings.intern(strings, "u");
+			doir.query.produce!(doir.components.ast.Parent)(engine, u).parent = root;
 			immutable pushedU = fp.dynarray.pushBack(block.related, u);
 			assert(pushedU);
 		}
@@ -188,7 +166,7 @@ version(unittest) {
 		immutable pm = doir.positions.between(engine.positions, doir.positions.root, pt, doir.positions.none);
 		assert(doir.effects.applyFlags(engine, t, pm, modifier));
 		// Inside B, a read on t's own line still sees it unmodified.
-		assert(doir.effects.flagsAt(engine, t, pt).get == doir.components.Flags.Export);
+		assert(doir.effects.flagsAt(engine, t, pt).get == doir.components.ast.Flags.Export);
 		return root;
 	}
 
@@ -218,22 +196,22 @@ unittest { // an imported file arrives finished, once per level, and its edits s
 
 	fileA = doir.testing.addEntity(store);
 	fileB = doir.testing.addEntity(store);
-	doir.testing.addComponent!SourceFile(store, fileA).path = doir.strings.intern(strings, "a.doir");
-	doir.testing.addComponent!SourceFile(store, fileB).path = doir.strings.intern(strings, "b.doir");
+	doir.testing.addComponent!(doir.components.source.SourceFile)(store, fileA).path = doir.strings.intern(strings, "a.doir");
+	doir.testing.addComponent!(doir.components.source.SourceFile)(store, fileB).path = doir.strings.intern(strings, "b.doir");
 	immutable level = doir.testing.addEntity(store), other = doir.testing.addEntity(store);
-	doir.testing.addComponent!LevelEvaluator(store, level).evaluate = &evaluate;
-	doir.testing.addComponent!LevelEvaluator(store, other).evaluate = &evaluate;
+	doir.testing.addComponent!(doir.components.levels.LevelEvaluator)(store, level).evaluate = &evaluate;
+	doir.testing.addComponent!(doir.components.levels.LevelEvaluator)(store, other).evaluate = &evaluate;
 	auto rootA = doir.builders.createRoot(store);
-	immutable pushed = fp.dynarray.pushBack(doir.testing.addComponent!Imports(store, rootA.block).related, fileB);
+	immutable pushed = fp.dynarray.pushBack(doir.testing.addComponent!(doir.components.source.Imports)(store, rootA.block).related, fileB);
 	assert(pushed);
 	immutable EntityId[5] inputs = [fileA, fileB, level, other, rootA.block];
 	foreach (e; inputs) assert(doir.query.markChanged(engine, e));
 
 	// A read of the imported type, whatever line it is on, sees every modifier the imported file applied.
 	evaluations = readerRuns = 0;
-	assert(*doir.query.query!ReadImported(engine, ReadImported.Key([rootA.block, level])) == (doir.components.Flags.Export | doir.components.Flags.ReadOnly));
+	assert(*doir.query.query!ReadImported(engine, ReadImported.Key([rootA.block, level])) == (doir.components.ast.Flags.Export | doir.components.ast.Flags.ReadOnly));
 	assert(evaluations == 1);
-	assert(!ecrs.context.hasComponent!(doir.effects.FlagsLog)(store, rootA.block));
+	assert(!ecrs.context.hasComponent!(doir.components.effects.FlagsLog)(store, rootA.block));
 
 	// Another level importing the same file gets its own copy.
 	immutable here = doir.query.query!Import(engine, Import.Key([fileB, level])).root;
@@ -243,29 +221,29 @@ unittest { // an imported file arrives finished, once per level, and its edits s
 	// Editing the file without changing what it makes re-runs the import, and early cutoff stops at the importer.
 	doir.query.beginRevision(engine);
 	assert(doir.query.markChanged(engine, fileB));
-	assert(*doir.query.query!ReadImported(engine, ReadImported.Key([rootA.block, level])) == (doir.components.Flags.Export | doir.components.Flags.ReadOnly));
+	assert(*doir.query.query!ReadImported(engine, ReadImported.Key([rootA.block, level])) == (doir.components.ast.Flags.Export | doir.components.ast.Flags.ReadOnly));
 	assert(evaluations == 3 && readerRuns == 1);
 	assert(doir.query.query!Import(engine, Import.Key([fileB, level])).root == here);
 
 	// An edit that changes the modifier reaches the importer.
 	doir.query.beginRevision(engine);
-	modifier = doir.components.Flags.Packed;
+	modifier = doir.components.ast.Flags.Packed;
 	assert(doir.query.markChanged(engine, fileB));
-	assert(*doir.query.query!ReadImported(engine, ReadImported.Key([rootA.block, level])) == (doir.components.Flags.Export | doir.components.Flags.Packed));
+	assert(*doir.query.query!ReadImported(engine, ReadImported.Key([rootA.block, level])) == (doir.components.ast.Flags.Export | doir.components.ast.Flags.Packed));
 	assert(readerRuns == 2);
-	modifier = doir.components.Flags.ReadOnly;
+	modifier = doir.components.ast.Flags.ReadOnly;
 
 	// Two imports that make `t` visible as different entities collide (WF-Unique); the first, B's, still Packed from its last edit, wins.
 	assert(diagnose.count(manager) == 0);
 	doir.query.beginRevision(engine);
 	fileC = doir.testing.addEntity(store);
-	doir.testing.addComponent!SourceFile(store, fileC).path = doir.strings.intern(strings, "c.doir");
+	doir.testing.addComponent!(doir.components.source.SourceFile)(store, fileC).path = doir.strings.intern(strings, "c.doir");
 	auto rootD = doir.builders.createRoot(store);
-	auto both = &doir.testing.addComponent!Imports(store, rootD.block).related;
+	auto both = &doir.testing.addComponent!(doir.components.source.Imports)(store, rootD.block).related;
 	assert(fp.dynarray.pushBack(*both, fileB) && fp.dynarray.pushBack(*both, fileC));
 	assert(doir.query.markChanged(engine, fileC));
 	assert(doir.query.markChanged(engine, rootD.block));
-	assert(*doir.query.query!ReadImported(engine, ReadImported.Key([rootD.block, level])) == (doir.components.Flags.Export | doir.components.Flags.Packed));
+	assert(*doir.query.query!ReadImported(engine, ReadImported.Key([rootD.block, level])) == (doir.components.ast.Flags.Export | doir.components.ast.Flags.Packed));
 	assert(diagnose.count(manager) == 1);
 	assert(fp.string.slice(manager.diagnostics[0].message) == "WF-Unique: two imports make the same name visible");
 	assert(fp.string.slice(manager.diagnostics[0].additionalNote) == "rename or stop exporting one of the two, or drop one of the imports"); // the evaluated entities have no location
@@ -282,8 +260,8 @@ unittest { // an imported file arrives finished, once per level, and its edits s
 
 	// Two files that import each other are a cycle.
 	doir.query.beginRevision(engine);
-	immutable bImportsA = fp.dynarray.pushBack(doir.testing.addComponent!Imports(store, fileB).related, fileA);
-	immutable aImportsB = fp.dynarray.pushBack(doir.testing.addComponent!Imports(store, fileA).related, fileB);
+	immutable bImportsA = fp.dynarray.pushBack(doir.testing.addComponent!(doir.components.source.Imports)(store, fileB).related, fileA);
+	immutable aImportsB = fp.dynarray.pushBack(doir.testing.addComponent!(doir.components.source.Imports)(store, fileA).related, fileB);
 	assert(bImportsA && aImportsB);
 	assert(doir.query.markChanged(engine, fileA));
 	assert(doir.query.markChanged(engine, fileB));
