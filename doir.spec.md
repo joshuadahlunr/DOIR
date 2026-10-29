@@ -136,7 +136,7 @@ else : block = { _ : _ = std.block_result(%0) ; }
 
 `then` converts `six` to runtime because the branch is chosen at runtime, so the value it yields must exist at runtime (`C-Term`, `WF-ToRuntime`).
 
-This is not a restriction invented for the spec; it is the shape the store already has. A call entity carries its arguments as names (`LookupFunctionInputs`, [`source/doir/api/components.d`](source/doir/api/components.d)) that resolution turns into the binding entities of `FunctionInputs`. A literal becomes a `ConstantVal` entity made by `pushConstant`, and a block becomes a block entity made by `pushBlock`, before either is named in a call. Naming the argument first is what the builder does anyway — the grammar says the same thing.
+This is not a restriction invented for the spec; it is the shape the store already has. A call entity carries its arguments as names (`LookupFunctionInputs`, [`source/doir/components.d`](source/doir/components.d)) that resolution turns into the binding entities of `FunctionInputs`. A literal becomes a `ConstantVal` entity made by `pushConstant`, and a block becomes a block entity made by `pushBlock`, before either is named in a call. Naming the argument first is what the builder does anyway — the grammar says the same thing.
 
 A call may be prefixed with `inline`, `flatten`, or `tail`, which applies to that call only (`C-Inline`, `B-Tail`).
 

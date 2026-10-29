@@ -22,8 +22,9 @@
 /// scope(exit) free(engine);
 /// assert(*query!Double(engine, 21) == 42);
 /// ---
-module doir.api.query;
+module doir.query;
 
+static import fp.dynarray;
 static import fp.string;
 
 static import diagnose;
@@ -33,7 +34,7 @@ static import ecrs.registry;
 
 static import doir.engine.query;
 
-public import doir.engine.query : EntityId, invalidEntity, Revision, ChangedAt, VerifiedAt, Provenance, QueryDiagnostic, Produced, StripFunction, HashFunction, QueryEngine, defaultDepthLimit, isQuery;
+public import doir.engine.query : EntityId, invalidEntity, Revision, ChangedAt, VerifiedAt, Provenance, QueryDiagnostic, Produced, StripFunction, HashFunction, QueryEngine, defaultDepthLimit, isQuery, free, currentQuery, read, recordProduced, fail, query, evict;
 
 @nogc nothrow:
 
@@ -57,19 +58,6 @@ QueryEngine create(ref ecrs.context.Context store) {
 	return out_;
 }
 
-/// Releases the engine's own memory and its positions. Query entities stay in the store.
-///
-/// Examples:
-/// ---
-/// static import ecrs.context;
-/// auto store = ecrs.context.create();
-/// scope(exit) ecrs.context.free(store);
-/// auto engine = create(store);
-/// free(engine);
-/// ---
-void free(ref QueryEngine engine) {
-	doir.engine.query.release(engine);
-}
 
 
 // --- inputs ------------------------------------------------------------------
@@ -106,10 +94,8 @@ void beginRevision(ref QueryEngine engine) {
 /// ---
 bool markChanged(ref QueryEngine engine, EntityId e) {
 	assert(doir.engine.query.idle(engine));
-	auto changed = ecrs.context.getOrAddComponent!ChangedAt(*engine.store, e);
-	if (changed is null) return false;
-	changed.revision = engine.revision;
-	return true;
+	// Set rather than written in place, so a transaction around an input commit can undo it.
+	return ecrs.context.setComponent!ChangedAt(*engine.store, e, ChangedAt(engine.revision));
 }
 
 /// The revision `e` last changed in; 0 if it never has.
@@ -131,77 +117,8 @@ Revision changedAt(ref QueryEngine engine, EntityId e) {
 
 // --- inside a running query --------------------------------------------------
 
-/// The running query entity whose run is innermost, or `invalidEntity` outside any query.
-///
-/// Examples:
-/// ---
-/// static import ecrs.context;
-/// auto store = ecrs.context.create();
-/// scope(exit) ecrs.context.free(store);
-/// auto engine = create(store);
-/// scope(exit) free(engine);
-/// assert(currentQuery(engine) == invalidEntity);
-/// ---
-EntityId currentQuery(ref QueryEngine engine) {
-	return doir.engine.query.innermost(engine);
-}
 
-/// Records that the running query read entity `e`, so a later change to `e` re-runs it. Reads made outside any query are not recorded. Do not record reads of `SourceSpan` or `SourceLocation`: spans are untracked. Returns false on a refused allocation, which fails the running queries (`fail`).
-///
-/// Examples:
-/// ---
-/// static import ecrs.relation;
-/// static import ecrs.context;
-/// struct Count {
-/// 	alias Key = ecrs.relation.Relation!1;
-/// 	alias Value = int;
-/// 	static int compute(ref QueryEngine engine, Key key) @nogc nothrow {
-/// 		immutable input = key.related[0];
-/// 		if (!read(engine, input)) return 0;
-/// 		return cast(int) changedAt(engine, input);
-/// 	}
-/// }
-/// auto store = ecrs.context.create();
-/// scope(exit) ecrs.context.free(store);
-/// auto engine = create(store);
-/// scope(exit) free(engine);
-/// immutable input = ecrs.context.addEntity(store);
-/// assert(markChanged(engine, input));
-/// assert(*query!Count(engine, Count.Key([input])) == 1);
-/// beginRevision(engine);
-/// assert(markChanged(engine, input));
-/// assert(*query!Count(engine, Count.Key([input])) == 2);
-/// ---
-bool read(ref QueryEngine engine, EntityId e) {
-	return doir.engine.query.recordRead(engine, e);
-}
 
-/// Records that the running query wrote component `component` on `e`, to be removed by `strip` before the query runs again and when it is evicted, and hashed by `hash` for early cutoff. A repeat record of the same pair in one run is ignored. Use `produce` for a whole component; this is for components that several queries write parts of, such as effect logs. Returns false on a refused allocation, which fails the running queries (`fail`).
-///
-/// Examples:
-/// ---
-/// static import ecrs.relation;
-/// static import ecrs.context;
-/// static import ecrs.registry;
-/// static void strip(ref ecrs.context.Context store, EntityId e, size_t c, EntityId owner) @nogc nothrow {}
-/// static size_t hash(ref const ecrs.context.Context store, EntityId e, size_t c, EntityId owner) @nogc nothrow { return 0; }
-/// struct Touch {
-/// 	alias Key = ecrs.relation.Relation!1;
-/// 	alias Value = bool;
-/// 	static bool compute(ref QueryEngine engine, Key key) @nogc nothrow {
-/// 		immutable e = key.related[0];
-/// 		return own(engine, e, ecrs.registry.componentId!int(), &strip, &hash);
-/// 	}
-/// }
-/// auto store = ecrs.context.create();
-/// scope(exit) ecrs.context.free(store);
-/// auto engine = create(store);
-/// scope(exit) free(engine);
-/// assert(*query!Touch(engine, Touch.Key([ecrs.context.addEntity(store)])));
-/// ---
-bool own(ref QueryEngine engine, EntityId e, size_t component, StripFunction strip, HashFunction hash) {
-	return doir.engine.query.recordProduced(engine, Produced([e], component, strip, hash), false);
-}
 
 /// Adds component `C` to `e` on behalf of the running query, which owns it: it is removed before the query runs again and when the query is evicted. `e` must not already have a `C`. Its contents count toward early cutoff, hashed by `C.contentHash(ref const C)` if `C` declares one and by their bytes otherwise, so a component holding pointers should declare one. Returns null on a refused allocation, which fails the running queries (`fail`).
 ///
@@ -265,17 +182,24 @@ EntityId createEntity(ref QueryEngine engine, EntityId origin) {
 	return e;
 }
 
-/// Reports a diagnostic about `subject` (`invalidEntity` for none). Inside a query it is stored on the running query entity and reported again whenever that memo is reused in a later revision, so a cached answer reports what a fresh one does; outside any query it goes straight to `engine.diagnostics`. Returns false on a refused allocation, which loses the diagnostic and fails the running queries (`fail`).
+/// Another entity a reported diagnostic involves, `target`, with what part it plays, such as "first made visible here".
+struct Related {
+	mixin ecrs.relation.Relates!"target";
+	const(char)[] message; /// What part it plays.
+}
+
+/// Reports a diagnostic about `subject` (`invalidEntity` for none), with `hint` saying how to fix it, drawn as an annotation at `subject`, and an annotation at each of the `related` entities. A `subject` without a location gets the hint as its closing note instead (`AGENTS.md`, Diagnostics). Inside a query it is stored on the running query entity and reported again whenever that memo is reused in a later revision, so a cached answer reports what a fresh one does; outside any query it goes straight to `engine.diagnostics`. Returns false on a refused allocation, which loses the diagnostic and fails the running queries (`fail`).
 ///
 /// Examples:
 /// ---
+/// static import fp.string;
 /// static import ecrs.context;
 /// static import diagnose;
 /// struct Warn {
 /// 	alias Key = int;
 /// 	alias Value = int;
 /// 	static int compute(ref QueryEngine engine, int key) @nogc nothrow {
-/// 		if (!report(engine, invalidEntity, diagnose.Kind.warning, "careful")) return 0;
+/// 		if (!report(engine, invalidEntity, diagnose.Kind.warning, "careful", "be less careless")) return 0;
 /// 		return key;
 /// 	}
 /// }
@@ -287,86 +211,23 @@ EntityId createEntity(ref QueryEngine engine, EntityId origin) {
 /// scope(exit) free(engine);
 /// engine.diagnostics = &manager;
 /// assert(*query!Warn(engine, 1) == 1);
-/// assert(diagnose.count(manager) == 1);
+/// assert(diagnose.count(manager) == 1 && fp.string.slice(manager.diagnostics[0].additionalNote) == "be less careless");
 /// ---
-bool report(ref QueryEngine engine, EntityId subject, diagnose.Kind kind, const(char)[] message) {
-	auto copy = fp.string.makeDynamic(message);
-	if (copy !is null || message.length == 0) return doir.engine.query.recordDiagnostic(engine, QueryDiagnostic([subject], kind, copy));
+bool report(ref QueryEngine engine, EntityId subject, diagnose.Kind kind, const(char)[] message, const(char)[] hint, const(Related)[] related = null) {
+	assert(hint.length, "every diagnostic says how to fix it");
+	auto d = QueryDiagnostic([subject], kind, fp.string.makeDynamic(message), fp.string.makeDynamic(hint));
+	bool ok = (d.message !is null || message.length == 0) && d.hint !is null
+		&& (related.length == 0 || fp.dynarray.reserve(d.annotations, related.length) !is null);
+	foreach (r; related) {
+		if (!ok) break;
+		auto a = doir.engine.query.QueryAnnotation([r.target], fp.string.makeDynamic(r.message));
+		ok = (a.message !is null || r.message.length == 0) && fp.dynarray.pushBack(d.annotations, a); // reserved above
+		if (!ok) fp.string.free(a.message);
+	}
+	if (ok) return doir.engine.query.recordDiagnostic(engine, d);
+	doir.engine.query.freeDiagnostic(d);
 	doir.engine.query.fail(engine);
 	return false;
-}
-
-/// Reports a refused allocation the running query met on its own, outside the engine's calls: it and every query below it fail, keeping no value, and `engine.refused` is set. Its `compute` should then return at once; the value it returns is discarded.
-///
-/// Examples:
-/// ---
-/// static import fp.dynarray;
-/// static import ecrs.context;
-/// struct Grow {
-/// 	alias Key = int;
-/// 	alias Value = int;
-/// 	static int compute(ref QueryEngine engine, int key) @nogc nothrow {
-/// 		fail(engine); // as if a pushBack of its own had been refused
-/// 		return key;
-/// 	}
-/// }
-/// auto store = ecrs.context.create();
-/// scope(exit) ecrs.context.free(store);
-/// auto engine = create(store);
-/// scope(exit) free(engine);
-/// assert(query!Grow(engine, 1) is null && engine.refused);
-/// ---
-void fail(ref QueryEngine engine) {
-	doir.engine.query.fail(engine);
-}
-
-
-// --- demanding and evicting queries -------------------------------------------
-
-/// The value of `Q` at `key`, computed on first demand and re-validated against the current revision on every later one. Records the read in the running query, if any.
-///
-/// A demand for a query that is already running is a cycle (`Q-Cycle`). If `Q` declares `cycleFallback`, the demand gets that value, and every query whose value rests on it stays provisional until the running one finishes: if its answer equals the fallback they are kept, and otherwise they are reset, to run again on their next demand. This suits a fallback that assumes the coinductive answer, as structural equivalence assumes a pair under comparison equal (`S-Struct`, `TF-Self`). Without a fallback, the cycle is reported as an error naming the chain of queries that closes it, and the demand returns null. A demand nested deeper than `engine.depthLimit` is reported and returns null too, rather than overflowing the stack. So does a demand whose run, or any run below it, met a refused allocation (`fail`); then `engine.refused` is set.
-///
-/// The pointer is valid until the next structural change to the store, or for a fallback, the next fallback of `Q`.
-///
-/// Examples:
-/// ---
-/// static import ecrs.context;
-/// struct Loop {
-/// 	alias Key = int;
-/// 	alias Value = bool;
-/// 	static bool compute(ref QueryEngine engine, int key) @nogc nothrow { return query!Loop(engine, key) is null; }
-/// }
-/// auto store = ecrs.context.create();
-/// scope(exit) ecrs.context.free(store);
-/// auto engine = create(store);
-/// scope(exit) free(engine);
-/// assert(*query!Loop(engine, 1)); // the inner demand saw the cycle
-/// ---
-const(Q.Value)* query(Q)(ref QueryEngine engine, Q.Key key) if (isQuery!Q) {
-	return doir.engine.query.demand!Q(engine, key);
-}
-
-/// Frees what the query entity of `Q` at `key` holds: its value, diagnostics, the components it produced and the entities it created. The entity keeps its key and `ChangedAt`, so dependents still see it, and the next demand re-runs it. Does nothing if `Q` was never demanded at `key`.
-///
-/// Examples:
-/// ---
-/// static import ecrs.context;
-/// struct Halve {
-/// 	alias Key = int;
-/// 	alias Value = int;
-/// 	static int compute(ref QueryEngine engine, int key) @nogc nothrow { return key / 2; }
-/// }
-/// auto store = ecrs.context.create();
-/// scope(exit) ecrs.context.free(store);
-/// auto engine = create(store);
-/// scope(exit) free(engine);
-/// assert(*query!Halve(engine, 2) == 1);
-/// evict!Halve(engine, 2);
-/// assert(*query!Halve(engine, 2) == 1);
-/// ---
-void evict(Q)(ref QueryEngine engine, Q.Key key) if (isQuery!Q) {
-	doir.engine.query.discard!Q(engine, key);
 }
 
 
@@ -420,6 +281,7 @@ bool compact(ref QueryEngine engine) {
 version(unittest) {
 	static import fp.dynarray;
 
+	static import fp.pointer;
 	static import doir.testing;
 
 	private __gshared int runs;
@@ -447,7 +309,7 @@ version(unittest) {
 			immutable e = key.related[0];
 			++runs;
 			auto amount = query!Input(engine, Input.Key([e]));
-			if (amount is null || (*amount < 0 && !report(engine, e, diagnose.Kind.warning, "negative"))) return false;
+			if (amount is null || (*amount < 0 && !report(engine, e, diagnose.Kind.warning, "negative", "make it positive"))) return false;
 			return *amount > 0;
 		}
 	}
@@ -497,7 +359,7 @@ version(unittest) {
 		alias Key = ecrs.relation.Relation!1;
 		alias Value = bool;
 		static void strip(ref ecrs.context.Context store, EntityId e, size_t component, EntityId owner) @nogc nothrow {
-			ecrs.context.removeComponent!Amount(store, e);
+			assert(ecrs.context.removeComponent!Amount(store, e));
 		}
 		static size_t hash(ref const ecrs.context.Context store, EntityId e, size_t component, EntityId owner) @nogc nothrow {
 			return 0;
@@ -505,8 +367,8 @@ version(unittest) {
 		static bool compute(ref QueryEngine engine, Key key) @nogc nothrow {
 			immutable e = key.related[0];
 			doir.testing.addComponent!Amount(*engine.store, e).value = 9;
-			assert(own(engine, e, ecrs.registry.componentId!Amount(), &strip, &hash));
-			assert(own(engine, e, ecrs.registry.componentId!Amount(), &strip, &hash));
+			assert(recordProduced(engine, Produced([e], ecrs.registry.componentId!Amount(), &strip, &hash), false));
+			assert(recordProduced(engine, Produced([e], ecrs.registry.componentId!Amount(), &strip, &hash), false));
 			return true;
 		}
 	}
@@ -695,10 +557,12 @@ unittest { // re-validation, early cutoff and replayed diagnostics
 	assert(diagnose.count(manager) == 2);
 	assert(fp.string.slice(manager.diagnostics[1].message) == "negative");
 	assert(manager.diagnostics[1].kind == diagnose.Kind.warning);
+	assert(fp.string.slice(manager.diagnostics[1].additionalNote) == "make it positive"); // e has no location, so the hint is the note
 
 	// Outside any query a diagnostic goes straight out, with no memo to replay it.
-	assert(report(engine, e, diagnose.Kind.note, "direct"));
+	assert(report(engine, e, diagnose.Kind.note, "direct", "no fix needed"));
 	assert(diagnose.count(manager) == 3 && fp.string.slice(manager.diagnostics[2].message) == "direct");
+	assert(fp.string.slice(manager.diagnostics[2].additionalNote) == "no fix needed");
 }
 
 unittest { // stable created ids, provenance, ownership and eviction
@@ -842,16 +706,19 @@ unittest { // cycles: reported chains, deep chains and the depth limit
 	assert(diagnose.count(manager) == 1);
 	assert(fp.string.slice(manager.diagnostics[0].message)
 		== "Q-Cycle: a query needs its own answer: Resolve(-1) -> Resolve(-3) -> Resolve(-2) -> Resolve(-1)");
+	assert(fp.string.slice(manager.diagnostics[0].additionalNote) == doir.engine.query.cycleHint);
 	assert(ecrs.context.hasComponent!(doir.engine.query.InCycle)(store, doir.engine.query.find!Resolve(engine, -1)));
 
 	// The cycle is reported again by its memo in a later revision, which re-runs rather than re-validates.
 	beginRevision(engine);
 	assert(*query!Resolve(engine, -1) == -1);
 	assert(diagnose.count(manager) == 2);
+	assert(fp.string.slice(manager.diagnostics[1].additionalNote) == doir.engine.query.cycleHint);
 
 	// An unsigned key is reported as one.
 	assert(*query!Spin(engine, 7) == 0);
 	assert(fp.string.slice(manager.diagnostics[2].message) == "Q-Cycle: a query needs its own answer: Spin(7) -> Spin(7)");
+	assert(fp.string.slice(manager.diagnostics[2].additionalNote) == doir.engine.query.cycleHint);
 
 	// Each running query is marked with its frame, and only while it runs.
 	assert(*query!Depth(engine, 0) == 3);
@@ -867,11 +734,13 @@ unittest { // cycles: reported chains, deep chains and the depth limit
 	assert(diagnose.count(manager) == 1);
 	enum prefix = "Q-Cycle: queries nest deeper than the limit of 64 at Resolve(";
 	assert(fp.string.slice(manager.diagnostics[0].message)[0 .. prefix.length] == prefix);
+	assert(fp.string.slice(manager.diagnostics[0].additionalNote) == doir.engine.query.depthHint);
 
 	// An unsigned key is described as one.
 	diagnose.clear(manager);
 	assert(*query!Unsigned(engine, 3));
 	assert(fp.string.slice(manager.diagnostics[0].message) == "Q-Cycle: a query needs its own answer: Unsigned(3) -> Unsigned(3)");
+	assert(fp.string.slice(manager.diagnostics[0].additionalNote) == doir.engine.query.cycleHint);
 }
 
 unittest { // cycle fallbacks: coinductive equality, and reset of provisional answers
@@ -950,7 +819,7 @@ unittest { // a refused allocation fails every running query, which memoizes not
 		bool rationed(scope bool delegate() @nogc nothrow demand) {
 			auto previous = doir.testing.beginRationedAllocator(n);
 			immutable answered = demand();
-			doir.testing.endRationedAllocator(previous);
+			fp.pointer.allocFunction = previous;
 			assert(answered || engine.refused);
 			refused |= engine.refused;
 			engine.refused = false;
@@ -974,7 +843,7 @@ unittest { // a refused allocation fails every running query, which memoizes not
 			auto previous = doir.testing.beginRationedAllocator(n);
 			auto sign = query!Sign(engine, Sign.Key([e]));
 			immutable answer = sign is null ? 0 : *sign;
-			doir.testing.endRationedAllocator(previous);
+			fp.pointer.allocFunction = previous;
 			assert(sign is null ? engine.refused : answer == expected);
 			refused |= engine.refused;
 			engine.refused = false;
@@ -999,7 +868,7 @@ unittest { // a refused allocation fails every running query, which memoizes not
 		auto previous = doir.testing.beginRationedAllocator(n);
 		auto same = query!Equal(engine, Pair([a, b]));
 		immutable answer = same is null || *same;
-		doir.testing.endRationedAllocator(previous);
+		fp.pointer.allocFunction = previous;
 		assert(same is null ? engine.refused : !answer);
 		refused |= engine.refused;
 		engine.refused = false;
@@ -1022,7 +891,7 @@ unittest { // a refused allocation fails every running query, which memoizes not
 		assert(ecrs.context.swapEntities(store, e, spare));
 		previous = doir.testing.beginRationedAllocator(0);
 		auto moved = query!Sign(engine, Sign.Key([spare]));
-		doir.testing.endRationedAllocator(previous);
+		fp.pointer.allocFunction = previous;
 		assert(moved !is null && *moved == 1 && !engine.refused);
 		finished = !refused;
 	}

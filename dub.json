@@ -12,11 +12,11 @@
 	"dependencies": {
 		"libecrs": {
 			"repository": "git+https://github.com/doir-lang/libECRS.git",
-			"version": "810f2e9717206ceeb0cfc4e4b7aa1e3bd308112f"
+			"version": "cceb48287d643e83882910ad7334d788d2d2f631"
 		},
 		"libdiagnose": {
 			"repository": "git+https://github.com/doir-lang/libdiagnose.git",
-			"version": "717ca8e2af1fb46ebd62691a8bc870bcfd966e4f"
+			"version": "807e273e912a0cb7e3dd9a29b784e236c4bf13c6"
 		},
 		"mizu": {
 			"path": "mizu"

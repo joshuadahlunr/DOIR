@@ -58,22 +58,26 @@ Three reference codebases guide implementation (`rustc-architecture.md` summariz
 
 ## Code Style
 
-The compiler is written in D under `-betterC` on LDC, on libfp. These rules are forwarded from libfp's `AGENTS.md` and apply to every D source in this repository.
+The compiler is written in D under `-betterC` on LDC, on libfp; its tools are Python 3 (`tools/`), and its interfaces, references and tests are DOIR (`standard.doir`, `reference/`, `tests/`). The D rules are forwarded from libfp's `AGENTS.md`; they apply to every D, Python and DOIR source in this repository, except where a rule names the languages it covers.
 
 ### Comments
 
 - Keep comments minimal.
   Write one only where the code does something difficult to follow on its own: a non-obvious invariant, a subtle memory or lifetime rule, a workaround for a compiler bug, or why an apparently simpler approach would be wrong.
   Do not restate what the code already says.
-- Cap every free-standing comment (a `//` or `/* */` block that is not a documentation comment) at 25 words.
+- Cap every free-standing comment (a `//`, `/* */` or `#` comment that is not documentation) at 25 words.
   If it needs more, the code or its documentation should carry the explanation instead.
-- Editors here soft-wrap, so write each comment, and each paragraph of a DDoc comment, on a single line rather than hard-wrapping it at a column.
+- Editors here soft-wrap, so write each comment, and each paragraph of a DDoc comment, docstring or DOIR documentation comment, on a single line rather than hard-wrapping it at a column.
 - Do not leave commented-out code, change logs, or notes about what was changed in a comment; those belong in commit messages.
 - A comment that implements a spec rule carries that rule tag (`M-Flag`, `R-Unqual`, `L-Stage`, `D-Deduce`), which does not count toward the 25-word cap.
 
 ### Documentation
 
-- Put a DDoc comment (`///` or `/** */`) directly above every publicly accessible definition: each public or package-visible function, struct, enum, alias, template, mixin template, and module-level variable.
+- Document every publicly accessible definition, directly where the language puts its documentation:
+  - D: a DDoc comment (`///` or `/** */`) above each public or package-visible function, struct, enum, alias, template, mixin template, and module-level variable.
+  - Python: a docstring on each module, and on each function and class whose name does not start with `_`.
+  - DOIR, which has no documentation comment: a `//` comment directly above a declaration outside every function body and block documents it, and one at the top of each file says what the file is. Give one to each `export`ed declaration, and each declaration of `reference/`'s interfaces, whose use is not plain from its name and type.
+
   Private helpers do not need one.
 - Every DDoc comment on a function or template includes an example of its use in an `Examples:` section, as a `---` code block:
 
@@ -91,37 +95,53 @@ The compiler is written in D under `-betterC` on LDC, on libfp. These rules are 
 - Keep examples short, and make them correct against the current API: they should compile and pass as written under `-betterC`.
   Check them with `python3 tools/doctest.py`, which compiles and runs every example and reports public definitions missing documentation or an example.
   With no arguments it checks `source/**/*.d`; pass files and `-I dir` import paths for the modules those sources import.
-- A DDoc comment is documentation, not a free-standing comment, so the 25-word cap does not apply to it, but keep it as brief as the definition allows.
+- Generate DOIR documentation with `uv run tools/doir_doc.py`, which writes a Markdown page per file to `bin/docs`, and check DOIR comments against these rules with `uv run tools/doir_doc.py --check`.
+- A Python tool's module docstring says how to run it, as a usage line (`uv run tools/parse_diff.py [file.doir...]`).
+- Documentation is not a free-standing comment, so the 25-word cap does not apply to it, but keep it as brief as the definition allows.
 
 ### Style
 
-- Prefer plain-data structs operated on by free functions that take them by `ref` (for example `pushBack(arr, x)`, `free(arr)`), rather than methods.
+- In D, prefer plain-data structs operated on by free functions that take them by `ref` (for example `pushBack(arr, x)`, `free(arr)`), rather than methods, so the code stays close to what a DOIR port of it would be.
   Use member functions only for operator overloads, for `@property` accessors that name part of a field (such as `ecrs.relation.Relates` naming a slot of `related`), and for what a language protocol requires to be a member, such as range primitives (`empty`, `front`, `popFront`) or an `alias this` target.
-- Prefer fully qualified names to aliasing imports: call `fp.string.free(s)` rather than `import fp.string : stringFree = free;` or `alias stringFree = fp.string.free;`.
-  A `static import` keeps a module's names out of scope so every use has to be qualified.
-- One module uses another through a `static import`, so every call names its layer (`fp.dynarray.pushBack`, `fp.pointer.notFound`).
-  The exception is a `public import` that re-exports names as part of the module's own API.
-- Name everything in camelCase.
-  Add a trailing underscore only when the plain name is a D keyword (`out_`, `in_`, `with_`).
-  Names that mirror `standard.doir` or the spec keep their spec spelling (`std.meta.entity`, `compiler.base_type_t`).
+  Python is not ported, so it uses classes and methods where they are idiomatic.
+- Prefer fully qualified names to aliasing imports: call `fp.string.free(s)` rather than `import fp.string : stringFree = free;` or `alias stringFree = fp.string.free;`, and `doir_grammar.parse(…)` rather than `from doir_grammar import parse` or `import doir_grammar as g`.
+  In D, a `static import` keeps a module's names out of scope so every use has to be qualified.
+- One module uses another through a qualified import, so every call names its layer (`fp.dynarray.pushBack`, `fp.pointer.notFound`, `pathlib.Path`): in D a `static import`, in Python a plain `import`.
+  The exceptions are a D `public import` that re-exports names as part of the module's own API, and Python's `from __future__ import …`.
+- Avoid one-line wrappers: a function whose body only forwards to another call, fixing an argument or two or reaching into a field, adds a name to learn and hides the call it stands for.
+  Write the call out at each use, even when it is long; a long call is not a reason to wrap it.
+  Write a function only when it adds something, such as a check, a loop, or a name for an operation the spec or `standard.doir` defines.
+  The exception is a wrapper the spec requires, as `RF-Wrapper` requires each `std.types` and `std.functions` entry to wrap its `std.meta` hook.
+- Name D in camelCase, and Python and DOIR in snake_case, with Python classes in PascalCase and DOIR function and type aliases ending `_t` (`modifier_t`).
+  Add a trailing underscore only when the plain name is a keyword of its language (`out_`, `in_`, `with_`).
+  D names that mirror `standard.doir` or the spec keep their spec spelling (`std.meta.entity`, `compiler.base_type_t`).
 - Indent with tabs.
-- Under a `@nogc nothrow:` label, do not repeat those attributes on the declarations it already covers, including struct members and `version` blocks.
+- In D, under a `@nogc nothrow:` label, do not repeat those attributes on the declarations it already covers, including struct members and `version` blocks.
 
 ### Failure and invariants
 
-- Every function that can fail says in its DDoc how it reports failure (null, `false`, `fp.pointer.notFound`, `fp.pointer.allocationRefused`), and what state it leaves its arguments in; prefer leaving them as they were.
-- Never drop the result of a call that can fail: check it, or discard it explicitly with `cast(void)` when failure is impossible or harmless there.
+- Every function that can fail says in its documentation how it reports failure (null, `false`, `fp.pointer.notFound`, `fp.pointer.allocationRefused`, `None`, the exception it raises), and what state it leaves its arguments in; prefer leaving them as they were.
+- Never drop the result of a call that can fail: check it, or discard it explicitly when failure is impossible or harmless there, with `cast(void)` in D and `_ = …` in Python.
   Tests assert on it.
 - When a limit on one value follows from another (such as a bit position), name the constant once, derive the others from it, and `assert` the limit where the value is accepted.
-- Put test-only code, such as helper functions and globals the tests use, inside `version(unittest)`.
+- Put test-only code, such as helper functions and globals the tests use, inside `version(unittest)` in D, and in the test files rather than the modules they test in Python.
+
+### Diagnostics
+
+- Every diagnostic the compiler reports to the user carries at least one annotation (`diagnose.Diagnostic.Annotation`) pointing at the offending item, and a hint saying how to fix it, as that annotation's message or as the diagnostic's `additionalNote`.
+  "Expected `}`" alone is not enough; "insert `}` here to close the namespace opened above" is.
+- When other items are involved, such as the earlier import in a `WF-Unique` clash or the opening brace of an unclosed block, point an annotation at each, saying what part it plays.
+- A diagnostic with no source location, such as a file that cannot be read, still gives a hint.
+- A Python tool's error names the file and line it is about, the rule tag when there is one, and a hint; it keeps the rule tag first where another tool matches on it (`tools/conformance.py` on `doir_check`).
+- Tests of a diagnostic assert on its annotations and hint, not only on its kind and count.
 
 ### Organization
 
 - Where possible, group related definitions into sections (for example: types and layout, queries, creation and freeing, growth, removal), separated by blank lines, and order them so a reader meets a type before the functions built on it.
-- Whenever possible, define a function before anything that uses it, so a module reads bottom-up from its building blocks.
+- Whenever possible, define a function before anything that uses it, so a module reads bottom-up from its building blocks; a Python tool ends with `main`.
   When functions use each other in a cycle, define first the one that more of the module uses.
-- Keep a module's unittests in the same order as the code they test.
-- Prefer merging a new test case into an existing `unittest` block covering the same section over adding a new block; add one only when no existing block fits.
+- Keep a module's tests in the same order as the code they test.
+- Prefer merging a new test case into an existing test (a D `unittest` block, a Python test function) covering the same section over adding a new one; add one only when no existing test fits. A DOIR test is a file of its own, named as `tools/conformance.py` or `tools/parse_diff.py` describes.
 
 ### Bugs
 

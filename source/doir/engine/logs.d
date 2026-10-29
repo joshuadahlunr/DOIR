@@ -161,13 +161,13 @@ package(doir) size_t hash(L)(ref const ecrs.context.Context store, EntityId e, s
 /// scope(exit) ecrs.context.free(store);
 /// doir.engine.query.QueryEngine engine;
 /// engine.store = &store;
-/// scope(exit) doir.engine.query.release(engine);
+/// scope(exit) doir.engine.query.free(engine);
 /// immutable e = ecrs.context.addEntity(store);
-/// assert(*doir.engine.query.demand!Mark(engine, Mark.Key([e])));
+/// assert(*doir.engine.query.query!Mark(engine, Mark.Key([e])));
 /// assert(ecrs.context.getComponent!Marks(store, e).entries[0].effect == 4);
 /// ---
 package(doir) bool append(L, E)(ref doir.engine.query.QueryEngine engine, EntityId e, doir.engine.positions.Position at, E effect) {
-	immutable q = doir.engine.query.innermost(engine);
+	immutable q = doir.engine.query.currentQuery(engine);
 	assert(q != invalidEntity, "doir.logs: writing an effect outside a query");
 	// Recorded first, so no entry exists that a reset of its owner would not strip.
 	if (!doir.engine.query.recordProduced(engine, doir.engine.query.Produced([e], ecrs.registry.componentId!L(), &strip!L, &hash!L), false)) return false;
@@ -198,27 +198,27 @@ private bool visible(ref doir.engine.query.QueryEngine engine, doir.engine.posit
 /// scope(exit) ecrs.context.free(store);
 /// doir.engine.query.QueryEngine engine;
 /// engine.store = &store;
-/// scope(exit) doir.engine.query.release(engine);
+/// scope(exit) doir.engine.query.free(engine);
 /// uint seen = 0;
 /// assert(fold!(Marks, uint)(engine, ecrs.context.addEntity(store), doir.engine.positions.none, (ref const uint effect) { seen |= effect; }));
 /// assert(seen == 0);
 /// ---
 package(doir) bool fold(L, E)(ref doir.engine.query.QueryEngine engine, EntityId e, doir.engine.positions.Position at, scope void delegate(ref const E effect) @nogc nothrow visit) {
-	bool complete = doir.engine.query.recordRead(engine, e);
+	bool complete = doir.engine.query.read(engine, e);
 	if (!ecrs.context.hasComponent!L(*engine.store, e)) return complete;
-	immutable reader = doir.engine.query.innermost(engine);
+	immutable reader = doir.engine.query.currentQuery(engine);
 	// A refreshed writer may re-run, rewriting this log, so the log is re-fetched after each one.
 	for (size_t i = 0;; ++i) {
 		auto entries = ecrs.context.getComponent!L(*engine.store, e).entries;
 		if (i >= fp.dynarray.length(entries) || !visible(engine, entries[i].at, at)) break;
 		immutable owner = entries[i].owner;
-		if (owner != reader && !doir.engine.query.running(engine, owner)) complete = doir.engine.query.refreshQuery(engine, owner) && complete;
+		if (owner != reader && !doir.engine.query.running(engine, owner)) complete = ecrs.context.getComponent!(doir.engine.query.QueryInfo)(*engine.store, owner).refresh(engine, owner) && complete;
 	}
 	foreach (entry; fp.dynarray.slice(ecrs.context.getComponent!L(*engine.store, e).entries)) {
 		if (!visible(engine, entry.at, at)) break;
 		if (entry.owner != reader) {
 			if (doir.engine.query.running(engine, entry.owner)) complete = doir.engine.query.reportRunning(engine, entry.owner) && complete;
-			else complete = doir.engine.query.recordRead(engine, entry.owner) && complete;
+			else complete = doir.engine.query.read(engine, entry.owner) && complete;
 		}
 		visit(entry.effect);
 	}

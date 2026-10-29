@@ -1,0 +1,4 @@
+%"any text" : T = 1
+%1 : T = %"any text"
+αβγ : T = 2
+_x.y : T = 3

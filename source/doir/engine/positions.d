@@ -201,6 +201,7 @@ void free(ref Positions positions) @trusted {
 }
 
 
+version(unittest) static import fp.pointer;
 version(unittest) static import doir.testing;
 
 unittest {
@@ -248,7 +249,7 @@ unittest {
 		for (size_t budget = 0;; ++budget) {
 			auto allocator = doir.testing.beginRationedAllocator(budget);
 			immutable next = between(rationed, root, previous, none);
-			doir.testing.endRationedAllocator(allocator);
+			fp.pointer.allocFunction = allocator;
 			if (next != none) {
 				assert(next.value == i + 1 && (previous == none || precedes(rationed, previous, next)));
 				previous = next;

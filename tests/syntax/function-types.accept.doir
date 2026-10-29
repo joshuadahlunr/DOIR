@@ -1,0 +1,2 @@
+id_t : type = (T: deduced type, v: T = 0, f: (x: T) -> T, _: u8 = z) -> T
+f : () -> _

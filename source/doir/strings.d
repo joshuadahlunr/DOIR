@@ -51,20 +51,6 @@ struct Strings {
 
 // --- queries -----------------------------------------------------------------
 
-/// The number of strings interned so far; every id below it is valid.
-///
-/// Examples:
-/// ---
-/// Strings strings;
-/// scope(exit) free(strings);
-/// assert(count(strings) == 0);
-/// cast(void) intern(strings, "x");
-/// assert(count(strings) == 1);
-/// ---
-size_t count(ref const Strings strings) {
-	return fp.dynarray.length(strings.texts);
-}
-
 /// The text of `id`, which must be a valid id. The slice stays valid until `free`.
 ///
 /// Examples:
@@ -74,7 +60,7 @@ size_t count(ref const Strings strings) {
 /// assert(text(strings, intern(strings, "std.add")) == "std.add");
 /// ---
 const(char)[] text(ref const Strings strings, StringId id) @trusted {
-	assert(id.value < count(strings));
+	assert(id.value < fp.dynarray.length(strings.texts));
 	return fp.string.slice(strings.texts[id.value]);
 }
 
@@ -118,8 +104,8 @@ StringId intern(ref Strings strings, const(char)[] s) @trusted {
 		strings.table = fp.hashtable.create!Entry(config);
 		if (strings.table is null) return noName;
 	}
-	assert(count(strings) < uint.max, "doir.strings: id space exhausted");
-	immutable id = StringId(cast(uint) count(strings));
+	assert(fp.dynarray.length(strings.texts) < uint.max, "doir.strings: id space exhausted");
+	immutable id = StringId(cast(uint) fp.dynarray.length(strings.texts));
 	// The empty text is a null fp string, so null means refusal only for a non-empty one.
 	char* copy = fp.string.makeDynamic(s);
 	if (copy is null && s.length) return noName;
@@ -142,7 +128,8 @@ StringId intern(ref Strings strings, const(char)[] s) @trusted {
 /// Strings strings;
 /// cast(void) intern(strings, "x");
 /// free(strings);
-/// assert(count(strings) == 0);
+/// assert(find(strings, "x") == noName && intern(strings, "y").value == 0);
+/// free(strings);
 /// ---
 void free(ref Strings strings) @trusted {
 	foreach (t; fp.dynarray.slice(strings.texts)) fp.string.free(t);
@@ -154,6 +141,7 @@ void free(ref Strings strings) @trusted {
 
 version(unittest) {
 	static import core.stdc.stdio;
+	static import fp.pointer;
 	static import doir.testing;
 }
 
@@ -170,7 +158,7 @@ unittest {
 		assert(id.value == i + 1 && text(strings, id) == buffer[0 .. n]);
 	}
 	assert(intern(strings, "n42").value == 43);
-	assert(count(strings) == 101);
+	assert(fp.dynarray.length(strings.texts) == 101);
 
 	// A refused allocation at any step leaves the strings as they were; budgets cover every step at every table size.
 	Strings rationed;
@@ -181,12 +169,12 @@ unittest {
 		for (size_t budget = 0;; ++budget) {
 			auto previous = doir.testing.beginRationedAllocator(budget);
 			immutable id = intern(rationed, buffer[0 .. n]);
-			doir.testing.endRationedAllocator(previous);
+			fp.pointer.allocFunction = previous;
 			if (id != noName) {
 				assert(id.value == i && text(rationed, id) == buffer[0 .. n]);
 				break;
 			}
-			assert(count(rationed) == i && find(rationed, buffer[0 .. n]) == noName);
+			assert(fp.dynarray.length(rationed.texts) == i && find(rationed, buffer[0 .. n]) == noName);
 		}
 	}
 }

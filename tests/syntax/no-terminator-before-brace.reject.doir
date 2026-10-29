@@ -1,0 +1,1 @@
+b : block = { _ : _ = std.return(x) }
