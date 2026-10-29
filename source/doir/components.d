@@ -1,4 +1,4 @@
-/// The binding components of `doir.spec.md` Part II §1, and the `Lookup*` components the parser writes in place of the names it does not resolve (`doir.api.builders` writes them). Every one holding an entity id mixes in `ecrs.relation.Relates` (`E-Remap`).
+/// The binding components of `doir.spec.md` Part II §1, and the `Lookup*` components the parser writes in place of the names it does not resolve (`doir.builders` writes them). Every one holding an entity id mixes in `ecrs.relation.Relates` (`E-Remap`).
 ///
 /// The internal register components are indexed by target (`VirtualReg_τ`, `PhysicalReg_τ`): one libECRS component per target index, so each target's lowering owns its own and independent targets never clobber each other. A single-target build uses index 0.
 ///
@@ -11,7 +11,9 @@
 /// ecrs.context.addComponent!Rank(store, e).value = 2;
 /// assert(ecrs.context.getComponent!Rank(store, e).value == 2);
 /// ---
-module doir.api.components;
+module doir.components;
+
+static import std.typecons;
 
 static import fp.dynarray;
 static import fp.fnv1a;
@@ -61,9 +63,9 @@ struct TypeDefinition {
 	size_t unique = ReservedUnique.structural;
 }
 
-/// The discriminators the builtin types reserve, so `S-Struct` keeps them apart from every structural type of the same layout (`M-Unique`, `S-Numeric`, `FP-Type`). `std.types.unique` and `compiler.comptime_base_type` hand out fresh ones from `firstFresh` up.
+/// The discriminators the builtin types reserve, so `S-Struct` keeps them apart from every structural type of the same layout (`M-Distinct`, `S-Numeric`, `FP-Type`). `std.types.distinct_copy` and `compiler.comptime_base_type` hand out fresh ones from `firstFresh` up.
 enum ReservedUnique : size_t {
-	structural = 0, /// Every type the program defines without `std.types.unique`.
+	structural = 0, /// Every type the program defines without `std.types.distinct_copy`.
 	type = 1, /// `type`.
 	deducedType = 2, /// `deduced type`, a type distinct from `type` (Part I §7).
 	block = 3, /// `block`.
@@ -140,13 +142,13 @@ struct Flags {
 		Comptime = 1 << 3,
 		AlwaysComptime = 1 << 4,
 		NeverComptime = 1 << 5,
-		Immutable = 1 << 6,
+		ReadOnly = 1 << 6,
 		Union = 1 << 7,
 		Pure = 1 << 8,
 		Inline = 1 << 9,
 		Flatten = 1 << 10,
 		Tail = 1 << 11,
-		NeverSpecialize = 1 << 12,
+		SharedBody = 1 << 12,
 		Packed = 1 << 13,
 		Signed = 1 << 14,
 		Float = 1 << 15,
@@ -221,7 +223,7 @@ struct LookupValue {
 
 // --- types and layout --------------------------------------------------------
 
-/// The ABI symbol of a function or static: the `R-Mangle` name unless `M-Rename` set one.
+/// The ABI symbol of a function or static: the `R-Mangle` name unless `M-SymbolName` set one.
 struct SymbolName {
 	StringId value; /// The interned symbol.
 }
@@ -237,7 +239,7 @@ struct Rank {
 	ushort value; /// The rank.
 }
 
-/// The targets `std.targets.live_on` gave a declaration, folded from its positioned log at freeze (`T-Live`); absent means live wherever its parent is.
+/// The targets `std.targets.compile_for` gave a declaration, folded from its positioned log at freeze (`T-Live`); absent means live wherever its parent is.
 struct On {
 	mixin ecrs.relation.Relates;
 }
@@ -284,15 +286,25 @@ unittest { // literal payloads, and unresolved arguments hashed by content and r
 	assert(x.names !is y.names && LookupFunctionInputs.contentHash(*x) == LookupFunctionInputs.contentHash(*y));
 	assert(fp.dynarray.pushBack(y.names, StringId(2)));
 	assert(LookupFunctionInputs.contentHash(*x) != LookupFunctionInputs.contentHash(*y));
-	ecrs.context.removeComponent!LookupFunctionInputs(store, a);
+	assert(ecrs.context.removeComponent!LookupFunctionInputs(store, a));
 	assert(!ecrs.context.hasComponent!LookupFunctionInputs(store, a));
 }
 
 
 // --- per-target components ---------------------------------------------------
 
-// The name is built on the stack, so a lookup of a registered id never allocates and cannot fail.
-private size_t perTarget(C)(size_t target) @trusted {
+private enum isPerTarget(C) = is(C == VirtualReg) || is(C == PhysicalReg);
+
+/// The libECRS component id of per-target component `C` (`VirtualReg_τ` or `PhysicalReg_τ`) for target index `target`, registered on first use. Returns `fp.pointer.notFound` if the registration was refused; no entity can then have the component.
+///
+/// Examples:
+/// ---
+/// assert(perTargetComponent!VirtualReg(0) == perTargetComponent!VirtualReg(0));
+/// assert(perTargetComponent!VirtualReg(0) != perTargetComponent!VirtualReg(1));
+/// assert(perTargetComponent!PhysicalReg(0) != perTargetComponent!VirtualReg(0));
+/// ---
+size_t perTargetComponent(C)(size_t target) @trusted if (isPerTarget!C) {
+	// The name is built on the stack, so a lookup of a registered id never allocates and cannot fail.
 	enum prefix = ecrs.registry.componentName!C ~ "@target";
 	char[20] digits = void; // a 64-bit target has at most 20
 	size_t first = digits.length;
@@ -308,52 +320,51 @@ private size_t perTarget(C)(size_t target) @trusted {
 	return ecrs.registry.registerType(name[0 .. length], ecrs.registry.nextId(), C.sizeof, ecrs.registry.hooksFor!C());
 }
 
-/// The libECRS component id of `VirtualReg_τ` for target index `target`, registered on first use. Returns `fp.pointer.notFound` if the registration was refused; no entity can then have the component.
-///
-/// Examples:
-/// ---
-/// assert(virtualRegComponent(0) == virtualRegComponent(0));
-/// assert(virtualRegComponent(0) != virtualRegComponent(1));
-/// ---
-size_t virtualRegComponent(size_t target) { return perTarget!VirtualReg(target); }
-
-/// The libECRS component id of `PhysicalReg_τ` for target index `target`, registered on first use. Returns `fp.pointer.notFound` if the registration was refused, as `virtualRegComponent` does.
-///
-/// Examples:
-/// ---
-/// assert(physicalRegComponent(0) != virtualRegComponent(0));
-/// ---
-size_t physicalRegComponent(size_t target) { return perTarget!PhysicalReg(target); }
-
-/// `e`'s virtual register for target index `target`, or null if it has none.
+/// `e`'s per-target component `C` (a `VirtualReg` or `PhysicalReg`) for target index `target`, or null if it has none.
 ///
 /// Examples:
 /// ---
 /// static import ecrs.context;
 /// auto store = ecrs.context.create();
 /// scope(exit) ecrs.context.free(store);
-/// assert(virtualReg(store, ecrs.context.addEntity(store), 0) is null);
+/// assert(findPerTarget!VirtualReg(store, ecrs.context.addEntity(store), 0) is null);
 /// ---
-const(VirtualReg)* virtualReg(ref const ecrs.context.Context store, EntityId e, size_t target) @trusted {
-	immutable id = virtualRegComponent(target);
-	return id == fp.pointer.notFound ? null : cast(const(VirtualReg)*) ecrs.context.findComponent(store, e, id, VirtualReg.sizeof);
+const(C)* findPerTarget(C)(ref const ecrs.context.Context store, EntityId e, size_t target) @trusted if (isPerTarget!C) {
+	immutable id = perTargetComponent!C(target);
+	return id == fp.pointer.notFound ? null : cast(const(C)*) ecrs.context.findComponent(store, e, id, C.sizeof);
 }
 
-/// `e`'s physical register for target index `target`, or null if it has none.
+/// Gives `e` per-target component `C` for target index `target` on behalf of the running query, the target's lowering, which owns it: a virtual register, or a physical register or spill slot. `e` must not already have one for that target. Returns null on a refused allocation, which fails the running queries (`doir.query.fail`).
 ///
 /// Examples:
 /// ---
+/// static import ecrs.relation;
 /// static import ecrs.context;
+/// static import doir.query;
+/// struct Assign {
+/// 	alias Key = ecrs.relation.Relation!1;
+/// 	alias Value = bool;
+/// 	static bool compute(ref doir.query.QueryEngine engine, Key key) @nogc nothrow {
+/// 		immutable e = key.related[0];
+/// 		auto reg = producePerTarget!VirtualReg(engine, e, 1);
+/// 		auto slot = producePerTarget!PhysicalReg(engine, e, 0);
+/// 		if (reg is null || slot is null) return false;
+/// 		reg.id = 9;
+/// 		*slot = PhysicalReg(PhysicalReg.Kind.spill, 16);
+/// 		return true;
+/// 	}
+/// }
 /// auto store = ecrs.context.create();
 /// scope(exit) ecrs.context.free(store);
-/// assert(physicalReg(store, ecrs.context.addEntity(store), 0) is null);
+/// auto engine = doir.query.create(store);
+/// scope(exit) doir.query.free(engine);
+/// immutable e = ecrs.context.addEntity(store);
+/// assert(*doir.query.query!Assign(engine, Assign.Key([e])));
+/// assert(findPerTarget!VirtualReg(store, e, 1).id == 9 && findPerTarget!VirtualReg(store, e, 0) is null);
+/// assert(findPerTarget!PhysicalReg(store, e, 0).kind == PhysicalReg.Kind.spill);
 /// ---
-const(PhysicalReg)* physicalReg(ref const ecrs.context.Context store, EntityId e, size_t target) @trusted {
-	immutable id = physicalRegComponent(target);
-	return id == fp.pointer.notFound ? null : cast(const(PhysicalReg)*) ecrs.context.findComponent(store, e, id, PhysicalReg.sizeof);
-}
-
-private C* producePerTarget(C)(ref doir.engine.query.QueryEngine engine, EntityId e, size_t id) @trusted {
+C* producePerTarget(C)(ref doir.engine.query.QueryEngine engine, EntityId e, size_t target) @trusted if (isPerTarget!C) {
+	immutable id = perTargetComponent!C(target);
 	if (id == fp.pointer.notFound) {
 		doir.engine.query.fail(engine);
 		return null;
@@ -364,121 +375,61 @@ private C* producePerTarget(C)(ref doir.engine.query.QueryEngine engine, EntityI
 	return c;
 }
 
-/// Gives `e` a virtual register for target index `target` on behalf of the running query, the target's lowering, which owns it. `e` must not already have one for that target. Returns null on a refused allocation, which fails the running queries (`doir.api.query.fail`).
-///
-/// Examples:
-/// ---
-/// static import ecrs.relation;
-/// static import ecrs.context;
-/// static import doir.api.query;
-/// struct Assign {
-/// 	alias Key = ecrs.relation.Relation!1;
-/// 	alias Value = bool;
-/// 	static bool compute(ref doir.api.query.QueryEngine engine, Key key) @nogc nothrow {
-/// 		immutable e = key.related[0];
-/// 		auto reg = produceVirtualReg(engine, e, 1);
-/// 		if (reg is null) return false;
-/// 		reg.id = 9;
-/// 		return true;
-/// 	}
-/// }
-/// auto store = ecrs.context.create();
-/// scope(exit) ecrs.context.free(store);
-/// auto engine = doir.api.query.create(store);
-/// scope(exit) doir.api.query.free(engine);
-/// immutable e = ecrs.context.addEntity(store);
-/// assert(*doir.api.query.query!Assign(engine, Assign.Key([e])));
-/// assert(virtualReg(store, e, 1).id == 9 && virtualReg(store, e, 0) is null);
-/// ---
-VirtualReg* produceVirtualReg(ref doir.engine.query.QueryEngine engine, EntityId e, size_t target) {
-	return producePerTarget!VirtualReg(engine, e, virtualRegComponent(target));
-}
-
-/// Gives `e` a physical register or spill slot for target index `target` on behalf of the running query, which owns it. `e` must not already have one for that target. Returns null on a refused allocation, as `produceVirtualReg` does.
-///
-/// Examples:
-/// ---
-/// static import ecrs.relation;
-/// static import ecrs.context;
-/// static import doir.api.query;
-/// struct Allocate {
-/// 	alias Key = ecrs.relation.Relation!1;
-/// 	alias Value = bool;
-/// 	static bool compute(ref doir.api.query.QueryEngine engine, Key key) @nogc nothrow {
-/// 		immutable e = key.related[0];
-/// 		auto reg = producePhysicalReg(engine, e, 0);
-/// 		if (reg is null) return false;
-/// 		*reg = PhysicalReg(PhysicalReg.Kind.spill, 16);
-/// 		return true;
-/// 	}
-/// }
-/// auto store = ecrs.context.create();
-/// scope(exit) ecrs.context.free(store);
-/// auto engine = doir.api.query.create(store);
-/// scope(exit) doir.api.query.free(engine);
-/// immutable e = ecrs.context.addEntity(store);
-/// assert(*doir.api.query.query!Allocate(engine, Allocate.Key([e])));
-/// assert(physicalReg(store, e, 0).kind == PhysicalReg.Kind.spill);
-/// ---
-PhysicalReg* producePhysicalReg(ref doir.engine.query.QueryEngine engine, EntityId e, size_t target) {
-	return producePerTarget!PhysicalReg(engine, e, physicalRegComponent(target));
-}
-
-
 // --- retirement --------------------------------------------------------------
 
-/// Records that the running query, `target`'s lowering, retired `e` for `target` (`L-Erase`). The entry is its own, removed when it runs again or is evicted, so the targets of a build retire entities independently. Returns false on a refused allocation, which fails the running queries (`doir.api.query.fail`).
+/// Records that the running query, `target`'s lowering, retired `e` for `target` (`L-Erase`). The entry is its own, removed when it runs again or is evicted, so the targets of a build retire entities independently. Returns false on a refused allocation, which fails the running queries (`doir.query.fail`).
 ///
 /// Examples:
 /// ---
 /// static import ecrs.relation;
 /// static import ecrs.context;
-/// static import doir.api.query;
+/// static import doir.query;
 /// struct Lower {
 /// 	alias Key = ecrs.relation.Relation!1;
 /// 	alias Value = bool;
-/// 	static bool compute(ref doir.api.query.QueryEngine engine, Key key) @nogc nothrow {
+/// 	static bool compute(ref doir.query.QueryEngine engine, Key key) @nogc nothrow {
 /// 		immutable e = key.related[0];
 /// 		return retire(engine, e, e);
 /// 	}
 /// }
 /// auto store = ecrs.context.create();
 /// scope(exit) ecrs.context.free(store);
-/// auto engine = doir.api.query.create(store);
-/// scope(exit) doir.api.query.free(engine);
+/// auto engine = doir.query.create(store);
+/// scope(exit) doir.query.free(engine);
 /// immutable e = ecrs.context.addEntity(store);
-/// assert(*doir.api.query.query!Lower(engine, Lower.Key([e])));
-/// bool retired;
-/// assert(retiredFor(engine, e, e, retired) && retired);
+/// assert(*doir.query.query!Lower(engine, Lower.Key([e])));
+/// assert(retiredFor(engine, e, e).get);
 /// ---
 bool retire(ref doir.engine.query.QueryEngine engine, EntityId e, EntityId target) {
 	return doir.engine.logs.append!(Lowered, ecrs.relation.Relation!1)(engine, e, doir.engine.positions.none, ecrs.relation.Relation!1([target]));
 }
 
-/// Sets `retired` to whether some lowering retired `e` for `target` (`L-Erase`). Inside a query, records the read of `e` and of the lowering that retired it. Returns false if the answer may be incomplete, as `doir.engine.logs.fold` does.
+/// Whether some lowering retired `e` for `target` (`L-Erase`). Inside a query, records the read of `e` and of the lowering that retired it. Returns null if the answer may be incomplete, where `doir.engine.logs.fold` returns false.
 ///
 /// Examples:
 /// ---
 /// static import ecrs.context;
-/// static import doir.api.query;
+/// static import doir.query;
 /// auto store = ecrs.context.create();
 /// scope(exit) ecrs.context.free(store);
-/// auto engine = doir.api.query.create(store);
-/// scope(exit) doir.api.query.free(engine);
+/// auto engine = doir.query.create(store);
+/// scope(exit) doir.query.free(engine);
 /// immutable e = ecrs.context.addEntity(store);
-/// bool retired;
-/// assert(retiredFor(engine, e, e, retired) && !retired);
+/// assert(!retiredFor(engine, e, e).get);
 /// ---
-bool retiredFor(ref doir.engine.query.QueryEngine engine, EntityId e, EntityId target, out bool retired) {
-	return doir.engine.logs.fold!(Lowered, ecrs.relation.Relation!1)(engine, e, doir.engine.positions.none, (ref const ecrs.relation.Relation!1 t) {
+std.typecons.Nullable!bool retiredFor(ref doir.engine.query.QueryEngine engine, EntityId e, EntityId target) {
+	bool retired = false;
+	immutable folded = doir.engine.logs.fold!(Lowered, ecrs.relation.Relation!1)(engine, e, doir.engine.positions.none, (ref const ecrs.relation.Relation!1 t) {
 		if (t.related[0] == target) retired = true;
 	});
+	if (!folded) return typeof(return).init;
+	return typeof(return)(retired);
 }
 
 
 version(unittest) {
 	static import doir.testing;
-	static import doir.api.query;
+	static import doir.query;
 
 	private __gshared uint registerBase;
 
@@ -489,53 +440,47 @@ version(unittest) {
 			size_t target;
 		}
 		alias Value = bool;
-		static bool compute(ref doir.api.query.QueryEngine engine, Key key) @nogc nothrow {
-			auto virtual = produceVirtualReg(engine, key.entity, key.target);
-			auto physical = producePhysicalReg(engine, key.entity, key.target);
+		static bool compute(ref doir.query.QueryEngine engine, Key key) @nogc nothrow {
+			auto virtual = producePerTarget!VirtualReg(engine, key.entity, key.target);
+			auto physical = producePerTarget!PhysicalReg(engine, key.entity, key.target);
 			if (virtual is null || physical is null) return false;
 			virtual.id = registerBase + cast(uint) key.target;
 			*physical = PhysicalReg(PhysicalReg.Kind.register, cast(uint) key.target);
 			return retire(engine, key.entity, cast(EntityId) (key.target + 100));
 		}
 	}
-
-	private bool retiredFor(ref doir.api.query.QueryEngine engine, EntityId e, size_t target) {
-		bool retired;
-		assert(retiredFor(engine, e, cast(EntityId) target, retired));
-		return retired;
-	}
 }
 
 unittest { // targets own their registers and retirement independently
 	auto store = ecrs.context.create();
 	scope(exit) ecrs.context.free(store);
-	auto engine = doir.api.query.create(store);
-	scope(exit) doir.api.query.free(engine);
+	auto engine = doir.query.create(store);
+	scope(exit) doir.query.free(engine);
 
 	immutable e = doir.testing.addEntity(store);
 	registerBase = 10;
-	assert(*doir.api.query.query!LowerFor(engine, LowerFor.Key([e], 0)));
-	assert(*doir.api.query.query!LowerFor(engine, LowerFor.Key([e], 1)));
-	assert(virtualReg(store, e, 0).id == 10 && virtualReg(store, e, 1).id == 11);
-	assert(physicalReg(store, e, 1).value == 1);
-	assert(retiredFor(engine, e, 100) && retiredFor(engine, e, 101) && !retiredFor(engine, e, 102));
+	assert(*doir.query.query!LowerFor(engine, LowerFor.Key([e], 0)));
+	assert(*doir.query.query!LowerFor(engine, LowerFor.Key([e], 1)));
+	assert(findPerTarget!VirtualReg(store, e, 0).id == 10 && findPerTarget!VirtualReg(store, e, 1).id == 11);
+	assert(findPerTarget!PhysicalReg(store, e, 1).value == 1);
+	assert(retiredFor(engine, e, 100).get && retiredFor(engine, e, 101).get && !retiredFor(engine, e, 102).get);
 
 	// Evicting one target's lowering removes only that target's parts.
-	doir.api.query.evict!LowerFor(engine, LowerFor.Key([e], 0));
-	assert(virtualReg(store, e, 0) is null && physicalReg(store, e, 0) is null);
-	assert(virtualReg(store, e, 1).id == 11);
-	assert(!retiredFor(engine, e, 100) && retiredFor(engine, e, 101));
+	doir.query.evict!LowerFor(engine, LowerFor.Key([e], 0));
+	assert(findPerTarget!VirtualReg(store, e, 0) is null && findPerTarget!PhysicalReg(store, e, 0) is null);
+	assert(findPerTarget!VirtualReg(store, e, 1).id == 11);
+	assert(!retiredFor(engine, e, 100).get && retiredFor(engine, e, 101).get);
 	registerBase = 20;
-	assert(*doir.api.query.query!LowerFor(engine, LowerFor.Key([e], 0)));
-	assert(virtualReg(store, e, 0).id == 20 && retiredFor(engine, e, 100));
+	assert(*doir.query.query!LowerFor(engine, LowerFor.Key([e], 0)));
+	assert(findPerTarget!VirtualReg(store, e, 0).id == 20 && retiredFor(engine, e, 100).get);
 
 	// A target whose component ids cannot be registered fails its lowering; each attempt names a fresh target.
 	bool refused = true;
 	for (size_t n = 0; refused; ++n) {
 		assert(n < 100);
 		auto previous = doir.testing.beginRationedAllocator(n);
-		auto lowered = doir.api.query.query!LowerFor(engine, LowerFor.Key([e], 1000 + n));
-		doir.testing.endRationedAllocator(previous);
+		auto lowered = doir.query.query!LowerFor(engine, LowerFor.Key([e], 1000 + n));
+		fp.pointer.allocFunction = previous;
 		assert(lowered is null ? engine.refused : *lowered);
 		refused = engine.refused;
 		engine.refused = false;
@@ -547,7 +492,7 @@ unittest { // targets own their registers and retirement independently
 	immutable ptr = doir.testing.addEntity(store);
 	doir.testing.addComponent!Pointer(store, ptr) = Pointer([pointee], 0);
 	assert(ecrs.context.removeEntity(store, spare));
-	assert(doir.api.query.compact(engine));
+	assert(doir.query.compact(engine));
 	immutable moved = cast(EntityId) (ptr - 1);
 	assert(ecrs.context.getComponent!Pointer(store, moved).pointee == pointee - 1);
 	assert(ecrs.context.getComponent!Pointer(store, moved).length == 0);

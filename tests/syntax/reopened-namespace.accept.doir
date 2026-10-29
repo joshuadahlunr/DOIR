@@ -1,0 +1,6 @@
+ns : namespace = {
+	export x : T = 1
+}
+ns : namespace = {
+	y : T
+}

@@ -1,0 +1,2 @@
+x : T = 1 <"gen.doir":1-2:3-4>
+y : T = 2 <gen.doir:5:6>

@@ -1,0 +1,5 @@
+f : add_t = {
+	_ : _ = inline g(a)
+	_ : _ = flatten h()
+	_ : _ = tail k(a, b)
+}

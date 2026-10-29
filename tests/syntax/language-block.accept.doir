@@ -1,0 +1,2 @@
+language "c" { int f() { return 0; } }
+x : T = 1

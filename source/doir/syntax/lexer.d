@@ -1,0 +1,629 @@
+/// The lexer: a file's text as a token stream, trivia included, that both the parser and the editor's highlighting read (`roadmap.md` Phase 2).
+///
+/// It decides what each token is, following `doir.peg`'s lexical rules and their PEG ordered choice exactly: identifiers and keywords (from the tables `tools/gen_tables.py` generates), constants, comments, and `newline` as a token of its own, so a newline inside a `LongComment` is never one. A `language` body (`matching_braces`) and a `SourceInfo` are single opaque tokens, since neither is made of DOIR tokens. Whether a `newline` is a `Terminator` depends on the production, so the parser decides it.
+///
+/// Lexing reads only the text, so files can be lexed in parallel.
+///
+/// Examples:
+/// ---
+/// static import fp.dynarray;
+/// auto tokens = lex("x : std.u8 = 5\n");
+/// scope(exit) fp.dynarray.free(tokens);
+/// assert(tokens[0].kind == TokenKind.identifier && tokens[1].kind == TokenKind.colon);
+/// assert(text(tokens[fp.dynarray.length(tokens) - 2], "x : std.u8 = 5\n") == "\n");
+/// ---
+module doir.syntax.lexer;
+
+static import fp.dynarray;
+static import fp.string;
+
+static import doir.syntax.tables;
+
+@nogc nothrow:
+
+
+// --- types and layout --------------------------------------------------------
+
+/// What a token is.
+enum TokenKind : ubyte {
+	whitespace, /// A run of `wsc` whitespace: trivia.
+	lineComment, /// `//` or `#` to the end of the line: trivia.
+	longComment, /// `/* ... */`: trivia, newlines included.
+	newline, /// `\n`, `\r\n` or `\r`; a `Terminator` where the grammar has `wsc`, whitespace where it has `_`.
+	identifier, /// `Identifier`, `%"quoted"` included.
+	keyword, /// A word of `Keywords`, which no identifier is.
+	integer, /// `IntegerConstant`.
+	float_, /// `FloatConstant`.
+	string_, /// `'"' StringChar* '"'`.
+	rawString, /// `RawString`.
+	character, /// `'\'' StringChar '\''`.
+	colon, /// `:`.
+	equals, /// `=`.
+	comma, /// `,`.
+	leftParen, /// `(`.
+	rightParen, /// `)`.
+	leftBrace, /// `{`.
+	rightBrace, /// `}`.
+	arrow, /// `->`.
+	semicolon, /// `;`, a `Terminator`.
+	sourceInfo, /// A whole `SourceInfo`, `<"file":1-2:3-4>`.
+	languageBody, /// The `matching_braces` of a `language` block, braces included.
+	invalid, /// A character no token starts with; parsing fails at its start.
+	unterminated, /// A token that started but did not finish, `attempted` saying which; lexing failed at its end.
+	end, /// The end of the text, a `Terminator`; always the last token.
+}
+
+/// A token: its kind and where it is in the text.
+struct Token {
+	TokenKind kind; /// What it is.
+	TokenKind attempted; /// For `unterminated`, the kind it would have been; otherwise `kind`.
+	uint start; /// Its byte offset.
+	uint length; /// Its length in bytes.
+}
+
+/// Whether tokens of `kind` are trivia, which `wsc` skips: whitespace and comments, but not newlines.
+///
+/// Examples:
+/// ---
+/// assert(isTrivia(TokenKind.lineComment) && !isTrivia(TokenKind.newline));
+/// ---
+bool isTrivia(TokenKind kind) {
+	return kind <= TokenKind.longComment;
+}
+
+/// The text of `token` in `source`, the text it was lexed from.
+///
+/// Examples:
+/// ---
+/// assert(text(Token(TokenKind.identifier, TokenKind.identifier, 2, 3), "x abc") == "abc");
+/// ---
+const(char)[] text(Token token, const(char)[] source) {
+	return source[token.start .. token.start + token.length];
+}
+
+
+// --- character classes -------------------------------------------------------
+
+private bool inRanges(const(uint[2])[] table, uint c) {
+	size_t lo = 0, hi = table.length;
+	while (lo < hi) {
+		immutable mid = (lo + hi) / 2;
+		if (c < table[mid][0]) hi = mid;
+		else if (c > table[mid][1]) lo = mid + 1;
+		else return true;
+	}
+	return false;
+}
+
+// The ASCII rows of the tables, one bit per class, so the common case is a single load.
+private enum ubyte startBit = 1, continueBit = 2, spaceBit = 4;
+private immutable ubyte[0x80] ascii = () {
+	ubyte[0x80] t;
+	foreach (c; 0 .. 0x80) {
+		immutable letter = (c | 0x20) >= 'a' && (c | 0x20) <= 'z' || c == '_';
+		if (letter) t[c] |= startBit | continueBit;
+		if (c >= '0' && c <= '9') t[c] |= continueBit;
+		if (c == ' ' || c == '\t' || c == '\v' || c == '\f') t[c] |= spaceBit;
+	}
+	return t;
+}();
+
+/// Whether code point `c` may start an identifier (`UnicodeIdentifierStart`).
+///
+/// Examples:
+/// ---
+/// assert(isIdentifierStart('_') && isIdentifierStart(0x3B1) && !isIdentifierStart('1'));
+/// ---
+bool isIdentifierStart(uint c) {
+	if (c < 0x80) return (ascii[c] & startBit) != 0;
+	return inRanges(doir.syntax.tables.identifierStart[], c);
+}
+
+/// Whether code point `c` may continue an identifier (`UnicodeIdentifierContinue`); `.` may too, but is not in this class.
+///
+/// Examples:
+/// ---
+/// assert(isIdentifierContinue('1') && !isIdentifierContinue('.'));
+/// ---
+bool isIdentifierContinue(uint c) {
+	if (c < 0x80) return (ascii[c] & continueBit) != 0;
+	return inRanges(doir.syntax.tables.identifierContinue[], c);
+}
+
+/// Whether code point `c` is `wsc` whitespace; newlines are not.
+///
+/// Examples:
+/// ---
+/// assert(isWhitespace(' ') && isWhitespace(0x2028) && !isWhitespace('\n'));
+/// ---
+bool isWhitespace(uint c) {
+	if (c < 0x80) return (ascii[c] & spaceBit) != 0;
+	return inRanges(doir.syntax.tables.whitespace[], c);
+}
+
+private enum size_t failed = size_t.max;
+
+// The code point at `i` and the index after it; an invalid byte decodes as one code point no class contains.
+private uint decode(const(char)[] s, ref size_t i) {
+	if (s[i] < 0x80) return s[i++];
+	bool valid;
+	immutable start = i;
+	immutable c = fp.string.decodeUtf8(s, i, valid);
+	if (!valid) {
+		i = start + 1;
+		return uint.max;
+	}
+	return c;
+}
+
+private bool isDigit(const(char)[] s, size_t i) { return i < s.length && fp.string.isDigit(s[i]); }
+private bool isHex(const(char)[] s, size_t i) { return i < s.length && fp.string.isHexDigit(s[i]); }
+private bool isChar(const(char)[] s, size_t i, char c) { return i < s.length && s[i] == c; }
+
+private size_t skipDigits(const(char)[] s, size_t i) { while (isDigit(s, i)) ++i; return i; }
+private size_t skipHex(const(char)[] s, size_t i) { while (isHex(s, i)) ++i; return i; }
+
+private bool startsWith(const(char)[] s, size_t i, const(char)[] prefix) {
+	return s.length - i >= prefix.length && s[i .. i + prefix.length] == prefix;
+}
+
+
+// --- lexical rules -----------------------------------------------------------
+
+/// `IntegerConstant <- ('0x' HexDigit+) / ('0b' [01]+) / ('0' [0-7]*) / ([1-9][0-9]*)`: the index after the integer at `i`, or `size_t.max`.
+///
+/// Examples:
+/// ---
+/// assert(integerAt("0x1F;", 0) == 4 && integerAt("09", 0) == 1 && integerAt("x", 0) == size_t.max);
+/// ---
+size_t integerAt(const(char)[] s, size_t i) {
+	if (startsWith(s, i, "0x") && isHex(s, i + 2)) return skipHex(s, i + 2);
+	if (startsWith(s, i, "0b") && (isChar(s, i + 2, '0') || isChar(s, i + 2, '1'))) {
+		i += 2;
+		while (isChar(s, i, '0') || isChar(s, i, '1')) ++i;
+		return i;
+	}
+	if (isChar(s, i, '0')) {
+		++i;
+		while (i < s.length && s[i] >= '0' && s[i] <= '7') ++i;
+		return i;
+	}
+	if (i < s.length && s[i] >= '1' && s[i] <= '9') return skipDigits(s, i + 1);
+	return failed;
+}
+
+// `[pP][-+]? [0-9]+` or `[eE][-+]? [0-9]+`, or `i` itself when it is absent, as `?` makes it.
+private size_t exponentAt(const(char)[] s, size_t i, char lower, char upper) {
+	if (!isChar(s, i, lower) && !isChar(s, i, upper)) return i;
+	size_t j = i + 1;
+	if (isChar(s, j, '+') || isChar(s, j, '-')) ++j;
+	return isDigit(s, j) ? skipDigits(s, j) : i;
+}
+
+/// `FloatConstant`, hexadecimal or decimal: the index after the float at `i`, or `size_t.max`.
+///
+/// Examples:
+/// ---
+/// assert(floatAt("1.5e3 ", 0) == 5 && floatAt(".5", 0) == 2 && floatAt("0x1p4", 0) == 5 && floatAt("12", 0) == size_t.max);
+/// ---
+size_t floatAt(const(char)[] s, size_t i) {
+	if (startsWith(s, i, "0x")) {
+		immutable m = i + 2;
+		// HexDigit* '.' HexDigit+ / HexDigit+ '.' HexDigit*
+		immutable lead = skipHex(s, m);
+		if (isChar(s, lead, '.') && (isHex(s, lead + 1) || lead > m))
+			return exponentAt(s, skipHex(s, lead + 1), 'p', 'P');
+		// '0x' HexDigit+ HexExponent
+		if (lead > m) {
+			immutable e = exponentAt(s, lead, 'p', 'P');
+			if (e > lead) return e;
+		}
+	}
+	immutable lead = skipDigits(s, i);
+	if (isChar(s, lead, '.') && (isDigit(s, lead + 1) || lead > i))
+		return exponentAt(s, skipDigits(s, lead + 1), 'e', 'E');
+	if (lead > i) {
+		immutable e = exponentAt(s, lead, 'e', 'E');
+		if (e > lead) return e;
+	}
+	return failed;
+}
+
+/// `StringChar`: the index after the character or escape at `i`, or `size_t.max`.
+///
+/// Examples:
+/// ---
+/// assert(stringCharAt(`\x41"`, 0) == 4 && stringCharAt(`"`, 0) == size_t.max && stringCharAt("é", 0) == 2);
+/// ---
+size_t stringCharAt(const(char)[] s, size_t i) {
+	if (i >= s.length || s[i] == '"' || s[i] == '\n') return failed;
+	if (s[i] != '\\') {
+		cast(void) decode(s, i);
+		return i;
+	}
+	if (i + 1 >= s.length) return failed;
+	immutable e = s[i + 1];
+	switch (e) {
+		case '\'', '"', '?', '\\', '%', 'a', 'b', 'f', 'n', 'r', 't', 'v': return i + 2;
+		case '0': .. case '7':
+			size_t j = i + 1;
+			while (j < s.length && s[j] >= '0' && s[j] <= '7') ++j;
+			return j;
+		case 'x': return isHex(s, i + 2) ? skipHex(s, i + 2) : failed;
+		case 'u', 'U':
+			immutable want = e == 'u' ? 4 : 8;
+			foreach (k; 0 .. want) if (!isHex(s, i + 2 + k)) return failed;
+			return i + 2 + want;
+		default: return failed;
+	}
+}
+
+// `'"' StringChar* '"'` from `i`, at its opening quote: its end, or the negated position it failed at.
+private size_t quotedAt(const(char)[] s, size_t i, ref size_t failedAt) {
+	size_t j = i + 1;
+	for (;;) {
+		immutable next = stringCharAt(s, j);
+		if (next == failed) break;
+		j = next;
+	}
+	if (isChar(s, j, '"')) return j + 1;
+	failedAt = j;
+	return failed;
+}
+
+// RawString: an opening run of n >= 3 quotes, closed by the first run of n quotes not followed by another.
+private size_t rawStringAt(const(char)[] s, size_t i) {
+	size_t n = 0;
+	while (isChar(s, i + n, '"')) ++n;
+	if (n < 3) return failed;
+	for (size_t j = i + n; j < s.length; ++j) {
+		if (s[j] != '"') continue;
+		size_t run = 0;
+		while (isChar(s, j + run, '"')) ++run;
+		if (run >= n) return j + run;
+		j += run - 1;
+	}
+	return failed;
+}
+
+// SourceInfo from `i`, at its `<`: its end, or `failed` with `failedAt` set to where it stopped.
+private size_t sourceInfoAt(const(char)[] s, size_t i, ref size_t failedAt) {
+	size_t p = failed;
+	if (isChar(s, i + 1, '"')) {
+		size_t j = i + 2;
+		while (j < s.length && s[j] != '"') ++j;
+		if (startsWith(s, j, "\":")) p = j + 2;
+	}
+	if (p == failed) {
+		size_t j = i + 1;
+		while (j < s.length && s[j] != ':') ++j;
+		if (j >= s.length) {
+			failedAt = j;
+			return failed;
+		}
+		p = j + 1;
+	}
+	foreach (part; 0 .. 2) {
+		immutable first = integerAt(s, p);
+		if (first == failed) {
+			failedAt = p;
+			return failed;
+		}
+		p = first;
+		if (isChar(s, p, '-')) {
+			immutable second = integerAt(s, p + 1);
+			if (second != failed) p = second;
+		}
+		immutable want = part == 0 ? ':' : '>';
+		if (!isChar(s, p, want)) {
+			failedAt = p;
+			return failed;
+		}
+		++p;
+	}
+	return p;
+}
+
+// `matching_braces` from `i`, at its `{`; braces inside it count whatever surrounds them.
+private size_t matchingBracesAt(const(char)[] s, size_t i) {
+	size_t depth = 0;
+	foreach (j; i .. s.length) {
+		if (s[j] == '{') ++depth;
+		else if (s[j] == '}' && --depth == 0) return j + 1;
+	}
+	return failed;
+}
+
+// The end of the identifier characters from `i`, whose first qualifies: `.` is not one, so `tail.x` starts with the keyword `tail`.
+private size_t wordEnd(const(char)[] s, size_t i) {
+	cast(void) decode(s, i);
+	while (i < s.length) {
+		immutable b = s[i];
+		if (b < 0x80) {
+			if (!(ascii[b] & continueBit)) break;
+			++i;
+			continue;
+		}
+		size_t j = i;
+		if (!isIdentifierContinue(decode(s, j))) break;
+		i = j;
+	}
+	return i;
+}
+
+// `([.] / UnicodeIdentifierContinue)*` from `i`.
+private size_t dottedEnd(const(char)[] s, size_t i) {
+	while (i < s.length) {
+		immutable b = s[i];
+		if (b < 0x80) {
+			if (b != '.' && !(ascii[b] & continueBit)) break;
+			++i;
+			continue;
+		}
+		size_t j = i;
+		if (!isIdentifierContinue(decode(s, j))) break;
+		i = j;
+	}
+	return i;
+}
+
+// `Keywords`: a whole word, which no identifier character follows.
+private bool isKeyword(const(char)[] word) {
+	foreach (k; doir.syntax.tables.keywords) if (word == k) return true;
+	return false;
+}
+
+// `([%] / UnicodeIdentifierStart) ([.] / UnicodeIdentifierContinue)*` from `i`, whose first character qualifies.
+private size_t plainIdentifierAt(const(char)[] s, size_t i) {
+	cast(void) decode(s, i);
+	return dottedEnd(s, i);
+}
+
+
+// --- lexing ------------------------------------------------------------------
+
+/// Whether `lex` emits trivia tokens. The parser needs none, since trivia is the gap between the tokens around it; highlighting asks for them.
+enum Trivia : bool {
+	skip = false, /// Whitespace and comments are left out; an unclosed `/*` is still an `unterminated` token.
+	keep = true, /// Every byte belongs to a token.
+}
+
+// About one token per this many bytes of DOIR without trivia, as `standard.doir` measures: the first guess at the array's size.
+private enum size_t bytesPerToken = 6;
+
+/// Lexes `source` into a new fp dynarray of tokens in order, ending with one `end` token; with `Trivia.keep` they cover every byte. A character no rule matches becomes an `invalid` token, and a token that does not finish an `unterminated` one, so lexing always reaches the end.
+///
+/// Returns null if allocation fails.
+///
+/// Examples:
+/// ---
+/// static import fp.dynarray;
+/// auto tokens = lex("a /* x */ -> b", Trivia.keep);
+/// scope(exit) fp.dynarray.free(tokens);
+/// assert(tokens[2].kind == TokenKind.longComment && tokens[4].kind == TokenKind.arrow);
+/// auto bare = lex("a /* x */ -> b");
+/// scope(exit) fp.dynarray.free(bare);
+/// assert(bare[1].kind == TokenKind.arrow && fp.dynarray.length(bare) == 4);
+/// ---
+Token* lex(const(char)[] source, Trivia trivia = Trivia.skip) @trusted {
+	assert(source.length < uint.max, "doir.lexer: source too long");
+	// Written by index: growing initializes every new slot, so the array grows by doubling from a close guess.
+	size_t count = 0, capacity = source.length / bytesPerToken + 16;
+	Token* out_ = null;
+	if (fp.dynarray.growToSize(out_, capacity) is null) return null;
+	pragma(inline, true) bool emit(Token t) {
+		if (count == capacity) {
+			capacity *= 2;
+			if (fp.dynarray.growToSize(out_, capacity) is null) {
+				fp.dynarray.free(out_);
+				return false;
+			}
+		}
+		out_[count++] = t;
+		return true;
+	}
+
+	// `language` _ string _ `{`: 1 after the keyword, 2 after the name, so the next `{` opens a body.
+	int language = 0;
+	size_t i = 0;
+	while (i < source.length) {
+		immutable start = i;
+		TokenKind kind = TokenKind.invalid, attempted;
+		bool unterminated = false;
+		immutable c = source[i];
+
+		if (c == ' ' || c == '\t') {
+			kind = TokenKind.whitespace;
+			while (i < source.length && (source[i] == ' ' || source[i] == '\t')) ++i;
+		} else if (c == '\n') { kind = TokenKind.newline; ++i; }
+		else if (c == '\r') { kind = TokenKind.newline; i += isChar(source, i + 1, '\n') ? 2 : 1; }
+		else if ((c == '/' && isChar(source, i + 1, '/')) || c == '#') {
+			kind = TokenKind.lineComment;
+			while (i < source.length && source[i] != '\n') ++i;
+		} else if (c == '/' && isChar(source, i + 1, '*')) {
+			kind = TokenKind.longComment;
+			i += 2;
+			while (i < source.length && !startsWith(source, i, "*/")) ++i;
+			if (i < source.length) i += 2;
+			else unterminated = true;
+		} else if (c == '{' && language == 2) {
+			kind = TokenKind.languageBody;
+			immutable e = matchingBracesAt(source, i);
+			if (e == failed) { i = source.length; unterminated = true; }
+			else i = e;
+		} else if (c == ':') { kind = TokenKind.colon; ++i; }
+		else if (c == '=') { kind = TokenKind.equals; ++i; }
+		else if (c == ',') { kind = TokenKind.comma; ++i; }
+		else if (c == '(') { kind = TokenKind.leftParen; ++i; }
+		else if (c == ')') { kind = TokenKind.rightParen; ++i; }
+		else if (c == '{') { kind = TokenKind.leftBrace; ++i; }
+		else if (c == '}') { kind = TokenKind.rightBrace; ++i; }
+		else if (c == ';') { kind = TokenKind.semicolon; ++i; }
+		else if (c == '-' && isChar(source, i + 1, '>')) { kind = TokenKind.arrow; i += 2; }
+		else if (c == '<') {
+			kind = TokenKind.sourceInfo;
+			size_t at;
+			immutable e = sourceInfoAt(source, i, at);
+			if (e == failed) { i = at; unterminated = true; }
+			else i = e;
+		} else if (fp.string.isDigit(c) || c == '.') {
+			immutable f = floatAt(source, i);
+			immutable n = f == failed ? integerAt(source, i) : failed;
+			if (f != failed) { kind = TokenKind.float_; i = f; }
+			else if (n != failed) { kind = TokenKind.integer; i = n; }
+			else ++i;
+		} else if (c == '"') {
+			immutable raw = rawStringAt(source, i);
+			size_t at;
+			if (raw != failed) { kind = TokenKind.rawString; i = raw; }
+			else {
+				kind = TokenKind.string_;
+				immutable e = quotedAt(source, i, at);
+				if (e == failed) { i = at; unterminated = true; }
+				else i = e;
+			}
+		} else if (c == '\'') {
+			kind = TokenKind.character;
+			immutable e = stringCharAt(source, i + 1);
+			if (e != failed && isChar(source, e, '\'')) i = e + 1;
+			else { i = e == failed ? i + 1 : e; unterminated = true; }
+		} else if (c == '%') {
+			kind = TokenKind.identifier;
+			size_t at;
+			immutable quoted = isChar(source, i + 1, '"') ? quotedAt(source, i + 1, at) : failed;
+			i = quoted != failed ? quoted : plainIdentifierAt(source, i);
+		} else {
+			size_t j = i;
+			immutable cp = decode(source, j);
+			if (isWhitespace(cp)) {
+				kind = TokenKind.whitespace;
+				i = j;
+				while (i < source.length) {
+					size_t k = i;
+					if (!isWhitespace(decode(source, k))) break;
+					i = k;
+				}
+			} else if (isIdentifierStart(cp)) {
+				immutable end = wordEnd(source, i);
+				// Keywords are 4 to 8 bytes; anything else is an identifier without comparing.
+				if (end - i >= 4 && end - i <= 8 && isKeyword(source[i .. end])) {
+					kind = TokenKind.keyword;
+					i = end;
+				} else {
+					kind = TokenKind.identifier;
+					i = dottedEnd(source, end);
+				}
+			} else i = j;
+		}
+
+		attempted = kind;
+		if (unterminated) kind = TokenKind.unterminated;
+		if ((trivia || !isTrivia(kind)) && !emit(Token(kind, attempted, cast(uint) start, cast(uint) (i - start)))) return null;
+
+		if (kind == TokenKind.keyword && source[start .. i] == "language") language = 1;
+		else if (kind == TokenKind.string_ && language == 1) language = 2;
+		else if (!isTrivia(kind) && kind != TokenKind.newline) language = 0;
+	}
+	if (!emit(Token(TokenKind.end, TokenKind.end, cast(uint) source.length, 0))) return null;
+	cast(void) fp.dynarray.popBackCount(out_, capacity - count);
+	return out_;
+}
+
+
+version(unittest) {
+	static import fp.pointer;
+	static import doir.testing;
+
+	// The kinds of `source`'s tokens, trivia left out, `end` included; lexing without trivia must give the same tokens.
+	private bool kindsAre(const(char)[] source, const(TokenKind)[] expected...) {
+		auto all = lex(source, Trivia.keep), bare = lex(source);
+		scope(exit) { fp.dynarray.free(all); fp.dynarray.free(bare); }
+		size_t n = 0;
+		foreach (t; fp.dynarray.slice(all)) {
+			if (isTrivia(t.kind)) continue;
+			if (n >= expected.length || expected[n] != t.kind || n >= fp.dynarray.length(bare) || bare[n] != t) return false;
+			++n;
+		}
+		return n == expected.length && fp.dynarray.length(bare) == n;
+	}
+}
+
+unittest { // the ASCII fast paths classify as the generated tables do
+	foreach (uint c; 0 .. 0x80) {
+		assert(isIdentifierStart(c) == inRanges(doir.syntax.tables.identifierStart[], c));
+		assert(isIdentifierContinue(c) == inRanges(doir.syntax.tables.identifierContinue[], c));
+		assert(isWhitespace(c) == inRanges(doir.syntax.tables.whitespace[], c));
+	}
+}
+
+unittest { // tokens cover the text, and follow the grammar's ordered choices
+	with (TokenKind) {
+		assert(kindsAre("x : std.u8 = 5\n", identifier, colon, identifier, equals, integer, newline, end));
+		assert(kindsAre("a;b\r\nc\rd", identifier, semicolon, identifier, newline, identifier, newline, identifier, end));
+
+		// Numbers: floats first, then integers, each rule possessive as PEG is.
+		assert(kindsAre("1.5 .5 1. 0x1.8p3 0x1p4 1e5", float_, float_, float_, float_, float_, float_, end));
+		assert(kindsAre("0x1F 0b101 017 42", integer, integer, integer, integer, end));
+		assert(kindsAre("09", integer, integer, end)); // '0' [0-7]* stops before 9
+		assert(kindsAre("1e", integer, identifier, end)); // an exponent needs digits
+		assert(kindsAre("0x", integer, identifier, end));
+		assert(kindsAre(".", invalid, end));
+
+		// Strings: a raw string first, then a quoted one; `""""""` with no close is two empty strings and a third.
+		assert(kindsAre(`"a\n\x41" 'c' '\'' """r"aw"""`, string_, character, character, rawString, end));
+		assert(kindsAre(`""""""`, string_, string_, string_, end));
+		assert(kindsAre("\"abc\nx", unterminated, newline, identifier, end));
+		assert(kindsAre(`"\101\0"`, string_, end));
+		assert(kindsAre(`"\q"`, unterminated, invalid, identifier, unterminated, end)); // no such escape
+		assert(kindsAre(`'ab'`, unterminated, identifier, unterminated, end));
+
+		// Identifiers: dots continue one, keywords are whole words, `%` starts one or quotes it.
+		assert(kindsAre("std.types.pointer a. %1 %\"any text\" %", identifier, identifier, identifier, identifier, identifier, end));
+		assert(kindsAre("export exported tail.x deduced type", keyword, identifier, keyword, invalid, identifier, keyword, identifier, end));
+		assert(kindsAre("αβ _x a.β", identifier, identifier, identifier, end));
+		assert(kindsAre("\xFF", invalid, end)); // invalid UTF-8 is one code point no class contains
+
+		// Comments: a long one swallows its newlines; a line comment keeps a `\r` and stops at `\n`.
+		assert(kindsAre("a /* \n */ b // c\r\nd # e", identifier, identifier, newline, identifier, end));
+		assert(kindsAre("/* open", unterminated, end));
+
+		// Opaque tokens.
+		assert(kindsAre(`x : T = 1 <"f.doir":1-2:3-4>`, identifier, colon, identifier, equals, integer, sourceInfo, end));
+		assert(kindsAre("x : T <f:1:2>", identifier, colon, identifier, sourceInfo, end));
+		assert(kindsAre("x : T <f:1:", identifier, colon, identifier, unterminated, end));
+		assert(kindsAre("<f", unterminated, end));
+		assert(kindsAre("<f:1x", unterminated, identifier, end));
+		assert(kindsAre("language \"c\" { open", keyword, string_, unterminated, end));
+		assert(kindsAre("language \"c\" /* */ {int f() { \"}\" }\n}", keyword, string_, languageBody, newline, rightBrace, end)); // a brace in foreign code counts even inside its strings
+		assert(kindsAre("language \"c\" { if (a) { b; } }\nx", keyword, string_, languageBody, newline, identifier, end));
+		assert(kindsAre("{ }", leftBrace, rightBrace, end));
+		assert(kindsAre("@", invalid, end));
+	}
+
+	// Unicode whitespace is trivia, and U+2028 is not a newline.
+	auto tokens = lex("a\xE2\x80\xA8\xE3\x80\x80b", Trivia.keep);
+	scope(exit) fp.dynarray.free(tokens);
+	assert(fp.dynarray.length(tokens) == 4 && tokens[1].kind == TokenKind.whitespace && tokens[1].length == 6);
+
+	// Input denser than the first guess grows the array: a token per byte.
+	char[1000] dense = ';';
+	auto many = lex(dense[]);
+	scope(exit) fp.dynarray.free(many);
+	assert(fp.dynarray.length(many) == dense.length + 1 && many[999].kind == TokenKind.semicolon && many[999].start == 999);
+
+	// A refused allocation while growing frees what was lexed and returns null.
+	auto previous = doir.testing.beginRationedAllocator(1);
+	assert(lex(dense[]) is null);
+	fp.pointer.allocFunction = previous;
+
+	// Every byte belongs to exactly one token, in order.
+	static immutable source = "x : (a: T, b: deduced type) -> U = {\n\t_ : _ = tail f(a, b) <g:1:1>; # c\n}\n";
+	auto all = lex(source, Trivia.keep);
+	scope(exit) fp.dynarray.free(all);
+	size_t at = 0;
+	foreach (t; fp.dynarray.slice(all)) {
+		assert(t.start == at);
+		at += t.length;
+	}
+	assert(at == source.length);
+}

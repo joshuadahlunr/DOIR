@@ -1,0 +1,4 @@
+r : p = """raw "quoted" \n"""
+s : p = "a\tb\x41\u00e9\101"
+c : u = '\''
+q : u = 'é'

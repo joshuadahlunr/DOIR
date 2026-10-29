@@ -7,7 +7,7 @@ A module defining `main` is checked but not compiled into the doctest binary, wh
 
 Import paths and libraries for the dub dependencies (libECRS, libdiagnose, Mizu and theirs) come from `dub describe`.
 
-Usage: tools/doctest.py [-I dir]... [file.d]...   (default sources: source/**/*.d; -I adds further import paths; set DC to use a compiler other than ldc2)
+Usage: python3 tools/doctest.py [-I dir]... [file.d]...   (default sources: source/**/*.d; -I adds further import paths; set DC to use a compiler other than ldc2)
 """
 import glob, os, re, subprocess, sys
 
@@ -49,7 +49,16 @@ def ddoc_blocks(lines):
 			i += 1
 
 
+literal = re.compile(r'"(?:[^"\\]|\\.)*"|`[^`]*`|\'(?:[^\'\\]|\\.)\'')
+
+
+def code_of(line):
+	"""`line` without its string and character literals and its `//` comment, whose braces are not code."""
+	return literal.sub('""', line).split('//')[0]
+
+
 def is_function(decl):
+	"""Whether the declaration line `decl` declares a function or template, which needs an example."""
 	if decl.startswith(('struct', 'enum', 'alias', 'module', 'package struct', 'package enum')):
 		return decl.startswith('struct') and '(' in decl.split('{')[0]
 	if '=' in decl.split('(')[0]:
@@ -59,6 +68,7 @@ def is_function(decl):
 
 
 def check(path, lines, problems, examples):
+	"""Appends each documentation problem in the file `lines` to `problems`, and each of its examples to `examples` as `(line, code, package)`."""
 	documented = set()
 	for end, body in ddoc_blocks(lines):
 		j = end
@@ -83,7 +93,7 @@ def check(path, lines, problems, examples):
 				code[1].append(text)
 		ditto = any(t.strip().lower().startswith('ditto') for _, t in body)
 		if is_function(decl) and not found and not ditto and not entry.match(decl):
-			problems.append(f'{path}:{j + 1}: documented without an example: {decl}')
+			problems.append(f'{path}:{j + 1}: documented without an example: {decl}; add an `Examples:` section with a `---` block')
 		examples += found
 
 	# A top-level declaration with no DDoc directly above it (past any pragma).
@@ -98,8 +108,10 @@ def check(path, lines, problems, examples):
 				prev -= 1
 			above = lines[prev].strip() if prev >= 0 else ''
 			if not (above.startswith('///') or above.endswith('*/')):
-				problems.append(f'{path}:{k + 1}: undocumented: {s}')
-		depth += line.count('{') - line.count('}')
+				problems.append(f'{path}:{k + 1}: undocumented: {s}; add a DDoc comment above it')
+		code = code_of(line)
+		# Brackets too, so the entries of a multi-line array initializer are not taken for declarations.
+		depth += code.count('{') + code.count('[') - code.count('}') - code.count(']')
 
 
 def dub_describe(data):
@@ -107,11 +119,17 @@ def dub_describe(data):
 	result = subprocess.run(['dub', 'describe', '--compiler=' + compiler, '--data=' + data, '--data-list'], cwd=root,
 		capture_output=True, text=True)
 	if result.returncode != 0:
-		sys.exit(f'doctest: dub describe failed:\n{result.stderr}')
+		sys.exit(f'doctest: dub describe failed; fix the dub error below, then run again:\n{result.stderr}')
 	return [line for line in result.stdout.split('\n') if line]
 
 
+def modules_in(sources):
+	"""The module name each file of `sources` declares."""
+	return [re.search(r'^module\s+([\w.]+);', open(p, encoding='utf-8').read(), re.M).group(1) for p in sources]
+
+
 def main(argv):
+	"""Checks the sources named in `argv`, or `source/**/*.d`; returns 0 if every example passes and nothing is undocumented, 1 otherwise."""
 	includes, sources = [], []
 	i = 1
 	while i < len(argv):
@@ -180,10 +198,6 @@ def main(argv):
 		print(f'doctest: {len(problems)} documentation problems')
 		return 1
 	return 0
-
-
-def modules_in(sources):
-	return [re.search(r'^module\s+([\w.]+);', open(p, encoding='utf-8').read(), re.M).group(1) for p in sources]
 
 
 if __name__ == '__main__':
