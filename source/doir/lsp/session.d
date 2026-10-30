@@ -315,6 +315,20 @@ version (unittest) {
 		return bc.json.root(f.requestId);
 	}
 
+	/// Reads the next message the session sent, which must have been sent; it lasts until the next read.
+	///
+	/// Examples:
+	/// ---
+	/// Fixture f;
+	/// assert(open(f, ""));
+	/// scope(exit) free(f);
+	/// respondNull(f.s, id(f));
+	/// assert(message(f) == `{"jsonrpc":"2.0","id":1,"result":null}`);
+	/// ---
+	package(doir) const(char)[] message(ref Fixture f) {
+		return bc.jsonrpc.next(f.reader);
+	}
+
 	/// Reads the next message the session sent, which must have been sent, and whether it contains `expected`.
 	///
 	/// Examples:
@@ -326,7 +340,7 @@ version (unittest) {
 	/// assert(responds(f, `"id":1`));
 	/// ---
 	package(doir) bool responds(ref Fixture f, const(char)[] expected) {
-		return fp.string.contains(bc.jsonrpc.next(f.reader), expected);
+		return fp.string.contains(message(f), expected);
 	}
 
 	/// Releases everything `f` holds, set up or not.
