@@ -154,7 +154,7 @@ def decode(data):
 
 
 def test_features(server):
-    """Highlighting by range agrees with the whole file's; outline and folding read the store; comments fold."""
+    """Highlighting by range agrees with the whole file's; outline, folding and definition read the store; comments fold."""
     client = Client(server, ["utf-16"])
     uri = "file:///tmp/features.doir"
     text = "// a comment\nmath : namespace = {\n\tpi : f64 = 3.14 // the circle constant\n\ttwice : (x: f64) -> f64\n\tuse : f64 = pi\n\tdoubled : f64 = twice(pi)\n}\nouter : f64 = math.pi\n"
@@ -170,6 +170,10 @@ def test_features(server):
     check([c["name"] for c in symbols[0]["children"]] == ["pi", "twice", "use", "doubled"] and symbols[0]["children"][1]["kind"] == 12, "math's children are wrong", "twice is a function")
     folds = client.request("textDocument/foldingRange", {"textDocument": {"uri": uri}})
     check(folds == [{"startLine": 1, "endLine": 6}], f"folding ranges {folds}", "the namespace folds from its first line to its `}`")
+    target = client.request("textDocument/definition", {"textDocument": {"uri": uri}, "position": {"line": 4, "character": 14}})
+    check(target and target["range"]["start"] == {"line": 2, "character": 1}, f"pi at use resolved to {target}", "a read inside math finds math's pi")
+    target = client.request("textDocument/definition", {"textDocument": {"uri": uri}, "position": {"line": 7, "character": 18}})
+    check(target and target["range"]["start"] == {"line": 2, "character": 1}, f"math.pi resolved to {target}", "a dotted name descends into math")
     comments_uri = "file:///tmp/comments.doir"
     open_document(client, comments_uri, "// one\n// two\n# three\nx : T = 1 // trailing\n// four\n/* a\nb */\ny : T = 2\n")
     folds = client.request("textDocument/foldingRange", {"textDocument": {"uri": comments_uri}})
