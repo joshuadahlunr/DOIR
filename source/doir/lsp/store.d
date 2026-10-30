@@ -100,3 +100,25 @@ package(doir) Found* enclosingAt(ref doir.lsp.session.Session s, EntityId file, 
 		base = child.start;
 	}
 }
+
+/// The LSP SymbolKind of declaration `e`.
+///
+/// Examples:
+/// ---
+/// doir.lsp.session.Fixture f;
+/// assert(doir.lsp.session.open(f, "n : namespace = {}\n"));
+/// scope(exit) doir.lsp.session.free(f);
+/// assert(symbolKind(f.s, childrenOf(f.s, doir.source.rootOf(f.engine, f.s.opened[0].file))[0]) == 3);
+/// ---
+package(doir) long symbolKind(ref doir.lsp.session.Session s, EntityId e) {
+	auto store = s.engine.store;
+	auto flags = ecrs.context.findComponent!(doir.components.ast.Flags)(*store, e);
+	if (flags !is null && (flags.flags & doir.components.ast.Flags.Namespace)) return 3; // Namespace
+	immutable block = ecrs.context.hasComponent!(doir.components.ast.Block)(*store, e);
+	if (block && ecrs.context.hasComponent!(doir.components.ast.TypeDefinition)(*store, e)) return 23; // Struct
+	if (auto type = ecrs.context.findComponent!(doir.components.ast.TypeOf)(*store, e))
+		if (ecrs.context.hasComponent!(doir.components.ast.FunctionInputs)(*store, type.type)) return 12; // Function
+	if (block) return 19; // Object
+	if (ecrs.context.hasComponent!(doir.components.ast.ConstantVal)(*store, e)) return 14; // Constant
+	return 13; // Variable
+}
