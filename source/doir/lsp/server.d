@@ -29,6 +29,7 @@ static import diagnose;
 static import ecrs.context;
 
 static import doir.checks;
+static import doir.lsp.features.definition;
 static import doir.lsp.features.folding;
 static import doir.lsp.features.semantic;
 static import doir.lsp.features.symbols;
@@ -156,6 +157,7 @@ private void initialize(ref doir.lsp.session.Session s, bc.json.Value params, bc
 	bc.json.set(semantic, "range", true);
 	bc.json.set(capabilities, "documentSymbolProvider", true);
 	bc.json.set(capabilities, "foldingRangeProvider", true);
+	bc.json.set(capabilities, "definitionProvider", true);
 	bc.json.set(bc.json.setObject(result, "serverInfo"), "name", "doir");
 	doir.lsp.session.send(s, d);
 }
@@ -265,6 +267,7 @@ private void handle(ref doir.lsp.session.Session s, const(char)[] message, ref b
 		case "textDocument/semanticTokens/range": doir.lsp.features.semantic.semanticTokens(s, params, id, true); break;
 		case "textDocument/documentSymbol": doir.lsp.features.symbols.documentSymbol(s, params, id); break;
 		case "textDocument/foldingRange": doir.lsp.features.folding.foldingRange(s, params, id); break;
+		case "textDocument/definition": doir.lsp.features.definition.definition(s, params, id); break;
 		default:
 			// Notifications it does not know, `initialized` and `$/cancelRequest` among them, need nothing; requests get an error.
 			if (bc.json.exists(id)) doir.lsp.session.respondError(s, id, -32_601, "the DOIR server does not handle this method");
@@ -335,6 +338,24 @@ unittest { // a `file://` URI's path is percent-decoded; any other URI is its ow
 	char* refused = pathOf("file:///x");
 	fp.testing.restoreAllocator(previous);
 	assert(refused is null);
+}
+
+unittest { // the test fixture: set up under a refused allocation it reports failure and still frees; a handler reads its params and answers its id
+	static import fp.testing;
+	for (size_t budget = 0;; ++budget) {
+		doir.lsp.session.Fixture f;
+		scope(exit) doir.lsp.session.free(f);
+		auto allocator = fp.testing.limitAllocations(budget);
+		immutable opened = doir.lsp.session.open(f, "x : T = 1\ny : T = x\n");
+		fp.testing.restoreAllocator(allocator);
+		if (!opened) continue;
+		assert(!doir.lsp.session.parse(f, "{") && doir.lsp.session.parse(f, `{"textDocument":{"uri":"file:///t.doir"},"position":{"line":1,"character":8}}`));
+		doir.lsp.features.definition.definition(f.s, doir.lsp.session.params(f), doir.lsp.session.id(f));
+		assert(doir.lsp.session.responds(f, `"range":{"start":{"line":0,"character":0}`));
+		doir.lsp.session.respondNull(f.s, doir.lsp.session.id(f));
+		assert(!doir.lsp.session.responds(f, `"error"`));
+		break;
+	}
 }
 
 unittest { // the server exits 0 when input ends after a shutdown, and 1 when it ends before one

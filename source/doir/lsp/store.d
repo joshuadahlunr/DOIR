@@ -3,13 +3,19 @@ module doir.lsp.store;
 
 static import fp.algorithms;
 static import fp.dynarray;
+static import fp.pointer;
+static import fp.rope;
+static import fp.string;
 
 static import ecrs.context;
 
 static import doir.components.ast;
 static import doir.components.source;
 static import doir.lsp.session;
+static import doir.names;
 static import doir.source;
+static import doir.strings;
+static import doir.syntax.lexer;
 
 public import ecrs.registry : EntityId, invalidEntity;
 
@@ -121,4 +127,99 @@ package(doir) long symbolKind(ref doir.lsp.session.Session s, EntityId e) {
 	if (block) return 19; // Object
 	if (ecrs.context.hasComponent!(doir.components.ast.ConstantVal)(*store, e)) return 14; // Constant
 	return 13; // Variable
+}
+
+
+// --- names -------------------------------------------------------------------
+
+// The entry of `block`, starting at `base`, named `id`, or a null `Found`.
+private Found entryNamed(ref doir.lsp.session.Session s, EntityId block, size_t base, doir.strings.StringId id) {
+	immutable child = doir.names.entryNamed(*s.engine, block, id);
+	if (child == invalidEntity) return Found(invalidEntity);
+	immutable span = ecrs.context.getComponent!(doir.components.source.SourceSpan)(*s.engine.store, child);
+	return Found(child, base + span.offset, base + span.offset + span.length);
+}
+
+/// The declaration named `name` that a read at byte `at` of `file` finds: the first segment looked up outward through the enclosing blocks, the rest through each found block's own entries. A null `Found` if none is.
+///
+/// Examples:
+/// ---
+/// doir.lsp.session.Fixture f;
+/// assert(doir.lsp.session.open(f, "n : namespace = {\n\tx : T = 1\n}\ny : T = n.x\n"));
+/// scope(exit) doir.lsp.session.free(f);
+/// assert(resolve(f.s, f.s.opened[0].file, 40, "n.x").start == 19);
+/// ---
+package(doir) Found resolve(ref doir.lsp.session.Session s, EntityId file, size_t at, const(char)[] name) {
+	size_t boundary;
+	Found* chain = enclosingAt(s, file, at, boundary);
+	scope(exit) fp.dynarray.free(chain);
+	size_t dot = fp.string.find(name, '.');
+	if (dot == fp.pointer.notFound) dot = name.length;
+	immutable first = doir.strings.find(*s.strings, name[0 .. dot]);
+	if (first == doir.strings.unnamed) return Found(invalidEntity);
+	Found found = Found(invalidEntity);
+	for (size_t level = fp.dynarray.length(chain) + 1; level-- > 0 && found.e == invalidEntity;)
+		found = level == 0 ? entryNamed(s, doir.source.rootOf(*s.engine, file), 0, first) : entryNamed(s, chain[level - 1].e, chain[level - 1].start, first);
+	while (found.e != invalidEntity && dot < name.length) {
+		name = name[dot + 1 .. $];
+		dot = fp.string.find(name, '.');
+		if (dot == fp.pointer.notFound) dot = name.length;
+		immutable next = doir.strings.find(*s.strings, name[0 .. dot]);
+		found = next == doir.strings.unnamed ? Found(invalidEntity) : entryNamed(s, found.e, found.start, next);
+	}
+	return found;
+}
+
+/// The identifier, dotted names included, that byte `at` of `text` is in, as a new fp string, and where it starts; null if there is none, or on refusal.
+///
+/// Examples:
+/// ---
+/// static import fp.string;
+/// doir.lsp.session.Fixture f;
+/// assert(doir.lsp.session.open(f, "y : T = n.x\n"));
+/// scope(exit) doir.lsp.session.free(f);
+/// size_t start;
+/// char* name = identifierAt(doir.source.textOf(f.engine, f.s.opened[0].file), 9, start);
+/// scope(exit) fp.string.free(name);
+/// assert(fp.string.slice(name) == "n.x" && start == 8);
+/// ---
+package(doir) char* identifierAt(const fp.rope.Rope text, size_t at, out size_t start) {
+	immutable lineStart = fp.rope.lineStart(text, fp.rope.lineOf(text, at));
+	immutable lineEnd = fp.rope.lineEnd(text, at);
+	char* bytes = fp.rope.text(text, lineStart, lineEnd).get(null);
+	scope(exit) fp.string.free(bytes);
+	if (bytes is null) return null;
+	auto source = bytes[0 .. lineEnd - lineStart];
+	auto cursor = doir.syntax.lexer.Cursor(source);
+	while (cursor.at < source.length) {
+		immutable t = doir.syntax.lexer.next(cursor);
+		if (t.kind != doir.syntax.lexer.TokenKind.identifier || lineStart + t.start > at || lineStart + t.start + t.length < at) continue;
+		start = lineStart + t.start;
+		return fp.string.clone(doir.syntax.lexer.text(t, source)).get(null);
+	}
+	return null;
+}
+
+/// A declaration `declarationAt` found, and the identifier naming it: bytes `start` to `end`.
+package(doir) struct Named {
+	Found declaration; ///
+	size_t start, end; ///
+}
+
+/// The declaration the whole identifier at byte `at` of `file` names, as `resolve` finds it, and where that identifier is; a null `declaration` if there is none there, or on refusal.
+///
+/// Examples:
+/// ---
+/// doir.lsp.session.Fixture f;
+/// assert(doir.lsp.session.open(f, "x : T = 1\ny : T = x\n"));
+/// scope(exit) doir.lsp.session.free(f);
+/// immutable named = declarationAt(f.s, f.s.opened[0].file, 18);
+/// assert(named.declaration.start == 0 && named.start == 18 && named.end == 19);
+/// ---
+package(doir) Named declarationAt(ref doir.lsp.session.Session s, EntityId file, size_t at) {
+	size_t start;
+	char* name = identifierAt(doir.source.textOf(*s.engine, file), at, start);
+	scope(exit) fp.string.free(name);
+	if (name is null) return Named(Found(invalidEntity));
+	return Named(resolve(s, file, at, fp.string.slice(name)), start, start + fp.string.length(name));
 }
