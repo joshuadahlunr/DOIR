@@ -1,0 +1,71 @@
+{
+	"$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
+	"name": "DOIR",
+	"scopeName": "source.doir",
+	"fileTypes": [
+		"doir"
+	],
+	"patterns": [
+		{
+			"name": "comment.line.double-slash.doir",
+			"match": "(//|#).*$"
+		},
+		{
+			"name": "comment.block.doir",
+			"begin": "/\\*",
+			"end": "\\*/"
+		},
+		{
+			"name": "string.quoted.triple.doir",
+			"begin": "(\\\"{3,})",
+			"end": "\\1"
+		},
+		{
+			"name": "string.quoted.double.doir",
+			"begin": "\"",
+			"end": "\"",
+			"patterns": [
+				{
+					"name": "constant.character.escape.doir",
+					"match": "\\\\."
+				}
+			]
+		},
+		{
+			"name": "string.quoted.single.doir",
+			"match": "'(\\\\.|[^'\\\\])'"
+		},
+		{
+			"name": "meta.preprocessor.source-annotation.doir",
+			"match": "<\\\"[^\\\"]*\\\":[^>]*>"
+		},
+		{
+			"name": "keyword.other.doir",
+			"match": "\\b(deduced|export|flatten|inline|language|tail)\\b"
+		},
+		{
+			"name": "constant.numeric.doir",
+			"match": "\\b(0[xX][0-9a-fA-F_]+|0[bB][01_]+|[0-9][0-9_]*(\\.[0-9_]+)?([eE][+-]?[0-9]+)?)\\b"
+		},
+		{
+			"match": "^\\s*(?:export\\s+)?((?:%\\\"[^\\\"]*\\\"|[A-Za-z_\\u0080-￿][\\w.\\u0080-￿]*))\\s*(?=:)",
+			"captures": {
+				"1": {
+					"name": "variable.other.definition.doir"
+				}
+			}
+		},
+		{
+			"match": "(?:(?<=:)|(?<=->))\\s*((?:%\\\"[^\\\"]*\\\"|[A-Za-z_\\u0080-￿][\\w.\\u0080-￿]*))",
+			"captures": {
+				"1": {
+					"name": "entity.name.type.doir"
+				}
+			}
+		},
+		{
+			"name": "keyword.operator.doir",
+			"match": "->|[:=,;]"
+		}
+	]
+}

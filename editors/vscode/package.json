@@ -1,0 +1,36 @@
+{
+	"name": "doir",
+	"displayName": "DOIR",
+	"description": "DOIR language support through the compiler's language server, `doir --lsp`",
+	"version": "0.1.0",
+	"publisher": "doir-lang",
+	"license": "MIT",
+	"repository": { "type": "git", "url": "https://github.com/doir-lang/DOIR" },
+	"engines": { "vscode": "^1.90.0" },
+	"categories": ["Programming Languages"],
+	"main": "./out/extension.js",
+	"activationEvents": [],
+	"contributes": {
+		"languages": [{ "id": "doir", "aliases": ["DOIR"], "extensions": [".doir"], "configuration": "./language-configuration.json" }],
+		"grammars": [{ "language": "doir", "scopeName": "source.doir", "path": "./syntaxes/doir.tmLanguage.json" }],
+		"configuration": {
+			"title": "DOIR",
+			"properties": {
+				"doir.serverPath": { "type": "string", "default": "doir", "description": "The doir executable the extension runs as `doir --lsp`." }
+			}
+		}
+	},
+	"scripts": {
+		"build": "esbuild src/extension.ts --bundle --platform=node --format=cjs --external:vscode --outfile=out/extension.js",
+		"check": "tsc --noEmit",
+		"package": "npm run build && vsce package"
+	},
+	"dependencies": { "vscode-languageclient": "^9.0.1" },
+	"devDependencies": {
+		"@types/node": "^20.0.0",
+		"@types/vscode": "^1.90.0",
+		"@vscode/vsce": "^3.2.0",
+		"esbuild": "^0.24.0",
+		"typescript": "^5.6.0"
+	}
+}
