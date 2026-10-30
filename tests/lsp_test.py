@@ -1,0 +1,173 @@
+"""Drives `bin/doir --lsp` over the Language Server Protocol and checks what it answers (roadmap.md Phase 3): position encodings, diagnostics on open and after incremental edits, lifecycle and errors.
+
+    uv run tests/lsp_test.py [path/to/doir]    # default bin/doir; exits 1 on the first failure
+"""
+
+import json
+import pathlib
+import subprocess
+import sys
+
+ROOT = pathlib.Path(__file__).resolve().parent.parent
+
+
+class Client:
+    """One `doir --lsp` process and the messages it sent that no check has consumed yet."""
+
+    def __init__(self, server, encodings):
+        self.process = subprocess.Popen([str(server), "--lsp"], stdin=subprocess.PIPE, stdout=subprocess.PIPE)
+        self.pending = []
+        self.next_id = 1
+        result = self.request("initialize", {"processId": None, "rootUri": None, "capabilities": {"general": {"positionEncodings": encodings}}})
+        self.encoding = result["capabilities"]["positionEncoding"]
+        self.capabilities = result["capabilities"]
+        self.notify("initialized", {})
+
+    def send(self, message):
+        """Writes `message`, a dict or already-encoded bytes, framed."""
+        body = message if isinstance(message, bytes) else json.dumps(message).encode()
+        self.process.stdin.write(b"Content-Length: %d\r\n\r\n" % len(body) + body)
+        self.process.stdin.flush()
+
+    def receive(self):
+        """Reads the next message the server sent."""
+        length = None
+        while True:
+            line = self.process.stdout.readline()
+            if not line:
+                raise AssertionError("the server closed its output; check its stderr for why")
+            if line in (b"\r\n", b"\n"):
+                break
+            name, _, value = line.decode().partition(":")
+            if name.strip().lower() == "content-length":
+                length = int(value)
+        return json.loads(self.process.stdout.read(length))
+
+    def wait(self, predicate):
+        """The first message, pending or new, that `predicate` accepts; messages it skips stay pending."""
+        for i, message in enumerate(self.pending):
+            if predicate(message):
+                return self.pending.pop(i)
+        while True:
+            message = self.receive()
+            if predicate(message):
+                return message
+            self.pending.append(message)
+
+    def request(self, method, params):
+        """Sends a request and returns its result, failing on an error response."""
+        id_ = self.next_id
+        self.next_id += 1
+        self.send({"jsonrpc": "2.0", "id": id_, "method": method, "params": params})
+        response = self.wait(lambda m: m.get("id") == id_)
+        if "error" in response:
+            raise AssertionError(f"{method} failed: {response['error']}")
+        return response["result"]
+
+    def notify(self, method, params):
+        """Sends a notification."""
+        self.send({"jsonrpc": "2.0", "method": method, "params": params})
+
+    def diagnostics(self, uri, version=None):
+        """The next diagnostics published for `uri`, at `version` if given."""
+        message = self.wait(lambda m: m.get("method") == "textDocument/publishDiagnostics" and m["params"]["uri"] == uri and (version is None or m["params"].get("version") == version))
+        return message["params"]["diagnostics"]
+
+    def close(self):
+        """Shuts down and exits; returns the server's exit code."""
+        self.request("shutdown", None)
+        self.notify("exit", None)
+        return self.process.wait(timeout=10)
+
+
+def check(condition, what, hint):
+    """Fails with what went wrong and how to look into it."""
+    if not condition:
+        raise AssertionError(f"{what}; {hint}")
+
+
+def open_document(client, uri, text, version=1):
+    """Opens `text` as `uri` and returns its first diagnostics."""
+    client.notify("textDocument/didOpen", {"textDocument": {"uri": uri, "languageId": "doir", "version": version, "text": text}})
+    return client.diagnostics(uri, version)
+
+
+def change(client, uri, version, start, end, text):
+    """Sends one incremental change replacing `start` to `end`, each (line, character), with `text`."""
+    client.notify("textDocument/didChange", {"textDocument": {"uri": uri, "version": version}, "contentChanges": [{"range": {"start": {"line": start[0], "character": start[1]}, "end": {"line": end[0], "character": end[1]}}, "text": text}]})
+
+
+def test_encodings_and_diagnostics(server):
+    """The error after an astral character is at the column its encoding counts, with the parser's hint in the message."""
+    text = 'ok : T = 1\ns : T = "\U0001F600"; bad : = 2\n'
+    for offered, expected, column in ((["utf-16"], "utf-16", 20), (["utf-8", "utf-16"], "utf-8", 22)):
+        client = Client(server, offered)
+        check(client.encoding == expected, f"offered {offered}, the server chose {client.encoding}", "it should take utf-8 when offered and fall back to utf-16")
+        check(client.capabilities["textDocumentSync"]["change"] == 2, "sync is not incremental", "initialize should answer textDocumentSync.change 2")
+        diagnostics = open_document(client, "file:///tmp/enc.doir", text)
+        check(len(diagnostics) == 1, f"expected one diagnostic, got {diagnostics}", "the second statement has no type")
+        d = diagnostics[0]
+        check(d["range"]["start"] == {"line": 1, "character": column}, f"{expected}: the error is at {d['range']['start']}, not line 1 character {column}", "positions after the emoji must count it as the encoding does")
+        check(d["source"] == "doir" and d["severity"] == 1 and "\n" in d["message"], f"diagnostic lacks its source, severity or hint: {d}", "publish should append the parser's hint to the message")
+        check(client.close() == 0, "the server did not exit cleanly after shutdown", "exit after shutdown should return 0")
+
+
+def test_incremental_edits(server):
+    """Incremental edits fix and break a file as committing its whole text would."""
+    client = Client(server, ["utf-16"])
+    uri = "file:///tmp/edit.doir"
+    text = "ns : namespace = {\n\tx : = 1\n\ty : T = 2\n}\nz : T = 3\n"
+    check(len(open_document(client, uri, text)) == 1, "the missing type was not reported", "x has no type")
+    change(client, uri, 2, (1, 5), (1, 5), "T ")
+    check(client.diagnostics(uri, 2) == [], "fixing the type left a diagnostic", "commitEdit must replace the block's errors")
+    # The checks publish too: a value read above its binding is WF-Order, which reordering fixes.
+    order_uri = "file:///tmp/order.doir"
+    order = open_document(client, order_uri, "y : std.u8 = std.copy(std.u8, v)\nv : std.u8 = 5\n")
+    check(len(order) == 1 and order[0].get("code") == "WF-Order" and order[0]["range"]["start"]["line"] == 0, f"the read above its binding published {order}", "WF-Order should be reported at the reading declaration, its tag as the code")
+    change(client, order_uri, 2, (0, 0), (0, 0), "v : std.u8 = 5\n")
+    change(client, order_uri, 3, (2, 0), (3, 0), "")
+    check(client.diagnostics(order_uri, 3) == [], "moving the binding up left a diagnostic", "the checks must re-run when the block's entries change")
+    change(client, uri, 3, (2, 4), (2, 6), "")
+    after = client.diagnostics(uri, 3)
+    fresh = open_document(client, "file:///tmp/fresh.doir", "ns : namespace = {\n\tx : T = 1\n\ty : = 2\n}\nz : T = 3\n")
+    check(after == fresh, f"an edit published {after}, opening the same text {fresh}", "incremental and whole commits must agree")
+    # A burst of edits ends on the last version's diagnostics.
+    for version, at in ((4, 0), (5, 1), (6, 2)):
+        change(client, uri, version, (4, at), (4, at), "q")
+    check(client.diagnostics(uri, 6) is not None, "no diagnostics for the burst's last version", "publish once the burst is drained")
+    client.notify("textDocument/didClose", {"textDocument": {"uri": uri}})
+    # A closed document's diagnostics carry no version, which tells them from any the burst left pending.
+    closed = client.wait(lambda m: m.get("method") == "textDocument/publishDiagnostics" and m["params"]["uri"] == uri and "version" not in m["params"])
+    check(closed["params"]["diagnostics"] == [], "closing did not clear the document's diagnostics", "didClose should publish an empty list")
+    check(client.close() == 0, "the server did not exit cleanly", "exit after shutdown should return 0")
+
+
+def test_errors(server):
+    """Unknown requests and malformed messages get JSON-RPC errors; exiting without shutdown exits 1."""
+    client = Client(server, [])
+    client.send({"jsonrpc": "2.0", "id": 99, "method": "textDocument/unknown", "params": {}})
+    response = client.wait(lambda m: m.get("id") == 99)
+    check(response.get("error", {}).get("code") == -32601, f"unknown method answered {response}", "requests the server does not handle get MethodNotFound")
+    client.send(b"{not json")
+    response = client.wait(lambda m: "error" in m and m.get("id") is None)
+    check(response["error"]["code"] == -32700, f"malformed JSON answered {response}", "a message that does not parse gets ParseError")
+    client.notify("exit", None)
+    check(client.process.wait(timeout=10) == 1, "exit without shutdown did not return 1", "LSP's exit returns 1 unless shutdown came first")
+
+
+def main():
+    """Runs every check; returns 0 if all pass."""
+    server = pathlib.Path(sys.argv[1]) if len(sys.argv) > 1 else ROOT / "bin" / "doir"
+    tests = [test_encodings_and_diagnostics, test_incremental_edits, test_errors]
+    for test in tests:
+        try:
+            test(server)
+        except AssertionError as e:
+            print(f"tests/lsp_test.py: {test.__name__}: {e}", file=sys.stderr)
+            return 1
+    print(f"lsp_test: all {len(tests)} checks passed")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

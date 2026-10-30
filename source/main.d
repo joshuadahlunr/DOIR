@@ -6,6 +6,7 @@
 ///     doir --syntax file.doir...    print each file's first syntax error, as `tests/parse_diff.py` compares with `doir.peg`
 ///     doir --check [-g grammar] file.doir... [-p program.doir...]
 ///                                   check each file, printing `path: ok` or `path: FAIL` and its diagnostics, as `tests/doir_check.py` does (`tests/conformance.py --checker`)
+///     doir --lsp                    serve the Language Server Protocol on stdin and stdout (`doir.lsp.server`)
 ///     doir --bench file.doir [n]    time n one-line edits to the file (200 by default), committed whole and as edits, and the checks before and after them (`roadmap.md` Phases 2-3)
 module main;
 
@@ -21,6 +22,7 @@ static import ecrs.schedules;
 
 static import doir.bench;
 static import doir.checks;
+static import doir.lsp.server;
 static import doir.strings;
 static import doir.printer;
 static import doir.query;
@@ -101,10 +103,11 @@ private int checkFiles(int argc, char** argv) {
 /// An unreadable file is reported as a diagnostic, and the other files are still parsed.
 extern(C) int main(int argc, char** argv) {
 	if (argc < 2) {
-		cast(void) fp.io.print(fp.io.Console.error, "usage: doir [--syntax | --print] file.doir...\n       doir --check [-g grammar] file.doir... [-p program.doir...]\n       doir --bench file.doir [rounds]\n"); // failing either way
+		cast(void) fp.io.print(fp.io.Console.error, "usage: doir [--syntax | --print] file.doir...\n       doir --check [-g grammar] file.doir... [-p program.doir...]\n       doir --bench file.doir [rounds]\n       doir --lsp\n"); // failing either way
 		return 1;
 	}
 	const mode = fp.string.slice(argv[1]);
+	if (mode == "--lsp") return doir.lsp.server.run(0, 1);
 	if (mode == "--check") return checkFiles(argc, argv);
 	if (mode == "--syntax") {
 		foreach (i; 2 .. argc)

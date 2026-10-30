@@ -26,6 +26,8 @@ private alias modules = imported!"std.meta".AliasSeq!(
 	"doir.schedules",
 	"doir.printer",
 	"doir.bench",
+	"doir.lsp.positions",
+	"doir.lsp.server",
 );
 
 private int runEveryTest() {
