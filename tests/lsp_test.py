@@ -154,7 +154,7 @@ def decode(data):
 
 
 def test_features(server):
-    """Highlighting by range agrees with the whole file's; the outline reads the store."""
+    """Highlighting by range agrees with the whole file's; outline and folding read the store; comments fold."""
     client = Client(server, ["utf-16"])
     uri = "file:///tmp/features.doir"
     text = "// a comment\nmath : namespace = {\n\tpi : f64 = 3.14 // the circle constant\n\ttwice : (x: f64) -> f64\n\tuse : f64 = pi\n\tdoubled : f64 = twice(pi)\n}\nouter : f64 = math.pi\n"
@@ -168,6 +168,12 @@ def test_features(server):
     symbols = client.request("textDocument/documentSymbol", {"textDocument": {"uri": uri}})
     check([s["name"] for s in symbols] == ["math", "outer"] and symbols[0]["kind"] == 3, f"outline {symbols}", "math is a namespace with outer after it")
     check([c["name"] for c in symbols[0]["children"]] == ["pi", "twice", "use", "doubled"] and symbols[0]["children"][1]["kind"] == 12, "math's children are wrong", "twice is a function")
+    folds = client.request("textDocument/foldingRange", {"textDocument": {"uri": uri}})
+    check(folds == [{"startLine": 1, "endLine": 6}], f"folding ranges {folds}", "the namespace folds from its first line to its `}`")
+    comments_uri = "file:///tmp/comments.doir"
+    open_document(client, comments_uri, "// one\n// two\n# three\nx : T = 1 // trailing\n// four\n/* a\nb */\ny : T = 2\n")
+    folds = client.request("textDocument/foldingRange", {"textDocument": {"uri": comments_uri}})
+    check([(f["startLine"], f["endLine"], f.get("kind")) for f in folds] == [(0, 2, "comment"), (5, 6, "comment")], f"comment folds {folds}", "a run of comment lines and a block comment over two lines; a lone or trailing comment does not fold")
     check(client.close() == 0, "the server did not exit cleanly", "exit after shutdown should return 0")
 
 
