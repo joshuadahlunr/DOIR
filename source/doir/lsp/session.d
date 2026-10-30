@@ -40,11 +40,12 @@ package(doir) struct Session {
 	doir.lsp.positions.LineCache lines; /// Reset before each message, since an edit may free the text it describes.
 	Opened* opened; /// An fp dynarray.
 	bool shutdown; ///
+	bool refused; /// A lookup for the current message met a refused allocation, so its result may be incomplete; `send` answers an internal error instead. Cleared before each message with the engine's `refused`.
 }
 
 // --- messages ----------------------------------------------------------------
 
-/// Sends message `d` to the client and frees it; a message an edit could not finish, or the client cannot take, is logged and dropped.
+/// Sends message `d` to the client and frees it; a message an edit could not finish, or the client cannot take, is logged and dropped. A result built while a lookup was refused (`s.refused`, or the engine's `refused`) may be incomplete, so the request is answered with an internal error instead.
 ///
 /// Examples:
 /// ---
@@ -56,11 +57,21 @@ package(doir) struct Session {
 /// cast(void) bc.json.setObject(d);
 /// send(f.s, d);
 /// assert(responds(f, "{}"));
+/// f.s.refused = true;
+/// respondNull(f.s, id(f));
+/// assert(responds(f, `"code":-32603`));
 /// ---
 package(doir) void send(ref Session s, ref bc.json.Document d) {
 	scope(exit) bc.json.free(d);
 	if (d.refused) cast(void) fp.io.print(fp.io.Console.error, "doir --lsp: out of memory writing a message; it was dropped\n");
-	else if (!bc.jsonrpc.send(s.output, bc.json.json(d))) cast(void) fp.io.print(fp.io.Console.error, "doir --lsp: cannot write to the client\n");
+	else if ((s.refused || s.engine.refused) && bc.json.exists(bc.json.root(d)["result"])) {
+		auto id = bc.json.root(d)["id"];
+		bc.json.Document error;
+		auto body = bc.json.setObject(response(error, id), "error");
+		bc.json.set(body, "code", -32_603);
+		bc.json.set(body, "message", "out of memory answering the request; close some documents, then send it again");
+		send(s, error);
+	} else if (!bc.jsonrpc.send(s.output, bc.json.json(d))) cast(void) fp.io.print(fp.io.Console.error, "doir --lsp: cannot write to the client\n");
 }
 
 /// Makes `d` a response to the request `id`, `null` if it is missing, and returns it for the caller to set its `"result"` and `send` it.
@@ -133,6 +144,39 @@ package(doir) Opened* find(ref Session s, const(char)[] uri) {
 	foreach (ref o; fp.dynarray.slice(s.opened))
 		if (fp.string.slice(o.uri) == uri) return &o;
 	return null;
+}
+
+/// The open document a request's `params.textDocument.uri` names, or null after answering the request with an error.
+///
+/// Examples:
+/// ---
+/// Fixture f;
+/// assert(open(f, ""));
+/// scope(exit) free(f);
+/// assert(parse(f, `{"textDocument":{"uri":"file:///t.doir"}}`));
+/// assert(documentOf(f.s, params(f), id(f)) !is null);
+/// assert(parse(f, `{"textDocument":{"uri":"file:///u.doir"}}`));
+/// assert(documentOf(f.s, params(f), id(f)) is null && responds(f, `"code":-32602`));
+/// ---
+package(doir) Opened* documentOf(ref Session s, bc.json.Value params, bc.json.Value id) {
+	auto o = find(s, bc.json.view(params["textDocument"]["uri"]));
+	if (o !is null && o.open) return o;
+	respondError(s, id, -32_602, "the document is not open; send textDocument/didOpen first");
+	return null;
+}
+
+/// The byte offset in `text` of the LSP position `p`, counted in the session's encoding.
+///
+/// Examples:
+/// ---
+/// Fixture f;
+/// assert(open(f, "x : T = 1\ny : T = 2\n"));
+/// scope(exit) free(f);
+/// assert(parse(f, `{"line":1,"character":4}`));
+/// assert(offsetAt(f.s, params(f), doir.source.textOf(f.engine, f.s.opened[0].file)) == 14);
+/// ---
+package(doir) size_t offsetAt(ref Session s, bc.json.Value p, const fp.rope.Rope text) {
+	return doir.lsp.positions.offsetOf(text, s.encoding, bc.json.integer(p["line"]).get(0), bc.json.integer(p["character"]).get(0));
 }
 
 

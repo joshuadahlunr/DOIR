@@ -44,7 +44,7 @@ private size_t walk(alias f)(const fp.rope.Rope text, size_t start, size_t end) 
 			immutable size = fp.string.utf.sequenceLength(chunk[i]);
 			// A code point split across chunks is read whole from the next one.
 			if (i + size > n && at + n < end) break;
-			if (!f(at + i, fp.string.utf.utf16Length(chunk[i .. i + size]))) return at + i;
+			if (!f(at + i, fp.string.utf.utf16Units(chunk[i]))) return at + i;
 			i += size;
 		}
 		at += i;

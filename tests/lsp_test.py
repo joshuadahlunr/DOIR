@@ -1,4 +1,4 @@
-"""Drives `bin/doir --lsp` over the Language Server Protocol and checks what it answers (roadmap.md Phase 3): position encodings, diagnostics on open and after incremental edits, lifecycle and errors.
+"""Drives `bin/doir --lsp` over the Language Server Protocol and checks what it answers (roadmap.md Phase 3): position encodings, diagnostics on open and after incremental edits, the store-backed requests, lifecycle and errors.
 
     uv run tests/lsp_test.py [path/to/doir]    # default bin/doir; exits 1 on the first failure
 """
@@ -142,6 +142,32 @@ def test_incremental_edits(server):
     check(client.close() == 0, "the server did not exit cleanly", "exit after shutdown should return 0")
 
 
+def decode(data):
+    """LSP's relative semantic-token integers as absolute (line, character, length, type) tuples."""
+    tokens, line, character = [], 0, 0
+    for i in range(0, len(data), 5):
+        delta_line, delta_start, length, kind = data[i:i + 4]
+        character = delta_start if delta_line else character + delta_start
+        line += delta_line
+        tokens.append((line, character, length, kind))
+    return tokens
+
+
+def test_features(server):
+    """Highlighting by range agrees with the whole file's."""
+    client = Client(server, ["utf-16"])
+    uri = "file:///tmp/features.doir"
+    text = "// a comment\nmath : namespace = {\n\tpi : f64 = 3.14 // the circle constant\n\ttwice : (x: f64) -> f64\n\tuse : f64 = pi\n\tdoubled : f64 = twice(pi)\n}\nouter : f64 = math.pi\n"
+    check(open_document(client, uri, text) == [], "the sample has errors", "it should parse cleanly")
+    legend = client.capabilities["semanticTokensProvider"]["legend"]["tokenTypes"]
+    full = decode(client.request("textDocument/semanticTokens/full", {"textDocument": {"uri": uri}})["data"])
+    ranged = decode(client.request("textDocument/semanticTokens/range", {"textDocument": {"uri": uri}, "range": {"start": {"line": 2, "character": 0}, "end": {"line": 4, "character": 0}}})["data"])
+    check(ranged == [t for t in full if 2 <= t[0] <= 4], f"range tokens {ranged} differ from the full file's on lines 2-4", "range highlighting must lex from a token boundary")
+    kinds = {(t[0], t[1]): legend[t[3]] for t in full}
+    check(kinds[(0, 0)] == "comment" and kinds[(2, 1)] == "variable" and kinds[(2, 6)] == "type" and kinds[(2, 12)] == "number", f"tokens classified wrong: {kinds}", "names before `:`, types after it")
+    check(client.close() == 0, "the server did not exit cleanly", "exit after shutdown should return 0")
+
+
 def test_errors(server):
     """Unknown requests and malformed messages get JSON-RPC errors; exiting without shutdown exits 1."""
     client = Client(server, [])
@@ -158,7 +184,7 @@ def test_errors(server):
 def main():
     """Runs every check; returns 0 if all pass."""
     server = pathlib.Path(sys.argv[1]) if len(sys.argv) > 1 else ROOT / "bin" / "doir"
-    tests = [test_encodings_and_diagnostics, test_incremental_edits, test_errors]
+    tests = [test_encodings_and_diagnostics, test_incremental_edits, test_features, test_errors]
     for test in tests:
         try:
             test(server)
