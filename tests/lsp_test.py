@@ -166,7 +166,7 @@ def apply_edits(text, edits):
 
 
 def test_features(server):
-    """Highlighting by range agrees with the whole file's; outline, folding, definition, hover, selection ranges, signature help, completion, inlay hints and highlights read the store; comments fold; formatting lays out the whole file, a range or a line, as the doir.format settings say."""
+    """Highlighting by range agrees with the whole file's; outline, folding, definition, hover, selection ranges, signature help, completion, inlay hints, highlights and type definitions read the store; comments fold; formatting lays out the whole file, a range or a line, as the doir.format settings say."""
     client = Client(server, ["utf-16"])
     uri = "file:///tmp/features.doir"
     text = "// a comment\nmath : namespace = {\n\tpi : f64 = 3.14 // the circle constant\n\ttwice : (x: f64) -> f64\n\tuse : f64 = pi\n\tdoubled : f64 = twice(pi)\n}\nouter : f64 = math.pi\n"
@@ -218,6 +218,10 @@ def test_features(server):
     check(spots(marks) == [(2, 1, 3), (4, 13, 2), (5, 23, 2), (7, 19, 2)], f"highlights of pi {spots(marks)}", "pi's declaration as the write, its reads inside math and math.pi outside it")
     marks = client.request("textDocument/documentHighlight", {"textDocument": {"uri": uri}, "position": {"line": 7, "character": 15}})
     check(spots(marks) == [(1, 0, 3), (7, 14, 2)], f"highlights of math {spots(marks)}", "the cursor's segment of a dotted name is the one meant")
+    typed_uri = "file:///tmp/typed.doir"
+    open_document(client, typed_uri, "point : type = { x : f64 ; }\np : point = 1\nq : f64 = p\n")
+    target = client.request("textDocument/typeDefinition", {"textDocument": {"uri": typed_uri}, "position": {"line": 2, "character": 10}})
+    check(target and target["range"]["start"] == {"line": 0, "character": 0}, f"type definition of p {target}", "p is declared a point")
     comments_uri = "file:///tmp/comments.doir"
     open_document(client, comments_uri, "// one\n// two\n# three\nx : T = 1 // trailing\n// four\n/* a\nb */\ny : T = 2\n")
     folds = client.request("textDocument/foldingRange", {"textDocument": {"uri": comments_uri}})

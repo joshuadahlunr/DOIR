@@ -41,6 +41,7 @@ static import doir.lsp.features.selection;
 static import doir.lsp.features.semantic;
 static import doir.lsp.features.signature;
 static import doir.lsp.features.symbols;
+static import doir.lsp.features.typedefinition;
 static import doir.lsp.positions;
 static import doir.lsp.session;
 static import doir.lsp.tokens;
@@ -181,6 +182,7 @@ private void initialize(ref doir.lsp.session.Session s, bc.json.Value params, bc
 	bc.json.append(bc.json.setArray(bc.json.setObject(capabilities, "completionProvider"), "triggerCharacters"), ".");
 	bc.json.set(capabilities, "inlayHintProvider", true);
 	bc.json.set(capabilities, "documentHighlightProvider", true);
+	bc.json.set(capabilities, "typeDefinitionProvider", true);
 	bc.json.set(bc.json.setObject(result, "serverInfo"), "name", "doir");
 	doir.lsp.session.send(s, d);
 }
@@ -292,6 +294,7 @@ private void handle(ref doir.lsp.session.Session s, const(char)[] message, ref b
 		case "textDocument/documentSymbol": doir.lsp.features.symbols.documentSymbol(s, params, id); break;
 		case "textDocument/foldingRange": doir.lsp.features.folding.foldingRange(s, params, id); break;
 		case "textDocument/definition": doir.lsp.features.definition.definition(s, params, id); break;
+		case "textDocument/typeDefinition": doir.lsp.features.typedefinition.typeDefinition(s, params, id); break;
 		case "textDocument/hover": doir.lsp.features.hover.hover(s, params, id); break;
 		case "textDocument/selectionRange": doir.lsp.features.selection.selectionRange(s, params, id); break;
 		case "textDocument/signatureHelp": doir.lsp.features.signature.signatureHelp(s, params, id); break;
