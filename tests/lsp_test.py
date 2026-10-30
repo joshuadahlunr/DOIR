@@ -260,6 +260,30 @@ def test_features(server):
     check(client.request("textDocument/formatting", {"textDocument": {"uri": broken_uri}, "options": options}) == [], "formatting a file with an unclosed string made edits", "it cannot trust the brackets")
     shown = client.wait(lambda m: m.get("method") == "window/showMessage")
     check(shown["params"]["type"] == 2 and "line 2" in shown["params"]["message"] and "fix it" in shown["params"]["message"], f"the refusal said {shown}", "a warning naming the line and how to fix it")
+    # A missing closer's hint is an exact insertion, offered as a quick fix where the diagnostic starts.
+    open_uri = "file:///tmp/open.doir"
+    unclosed = open_document(client, open_uri, "f : (a: T\n")
+    actions = client.request("textDocument/codeAction", {"textDocument": {"uri": open_uri}, "range": unclosed[0]["range"], "context": {"diagnostics": unclosed}})
+    edits = actions[0]["edit"]["changes"][open_uri] if actions else []
+    check(len(actions) == 1 and actions[0]["kind"] == "quickfix" and apply_edits("f : (a: T\n", edits) == "f : (a: T\n)", f"code actions {actions}", "insert the `)` the hint names, where the error is")
+    # A hint that names one token to insert, or a space to remove, is a preferred quick fix.
+    fixes = [
+        ("stack : namespace {\n}\n", ["stack : namespace = {\n}\n"]),
+        ("f : (a: T b: T)\n", ["f : (a: T, b: T)\n"]),
+        ("x = 5\n", ["x : _ = 5\n"]),
+        ("_ := types.never_comptime(reallocate_t)\n", ["_ : _ = types.never_comptime(reallocate_t)\n"]),
+        ("allocate_t : type = (T: type) - > T\n", ["allocate_t : type = (T: type) -> T\n"]),
+        ("x : T :\n", ["x : T = :\n"]),
+    ]
+    for number, (broken, fixed) in enumerate(fixes):
+        fix_uri = f"file:///tmp/fix{number}.doir"
+        diagnostics = open_document(client, fix_uri, broken)
+        actions = client.request("textDocument/codeAction", {"textDocument": {"uri": fix_uri}, "range": diagnostics[0]["range"], "context": {"diagnostics": diagnostics[:1]}})
+        results = [apply_edits(broken, a["edit"]["changes"][fix_uri]) for a in actions]
+        preferred = [a.get("isPreferred", False) for a in actions]
+        check(results == fixed and preferred == [len(fixed) == 1] * len(fixed), f"code actions on {broken!r} gave {results} (preferred {preferred})", "offer one quick fix per token the hint names, preferred when it is the only one")
+    explained = open_document(client, "file:///tmp/explained.doir", "stack : namespace {\n}\n")
+    check(explained[0]["message"].split("\n")[1:] == ["insert `=` here", "A block in braces is a value, and a declaration's value comes after `=`: write `stack : namespace = {`."], f"message {explained[0]['message']!r}", "the message's second line is the hint and its third the explanation")
     settings = Client(server, ["utf-16"], {"format": {"semicolons": "newlines"}})
     open_document(settings, semis_uri, semis)
     lines = settings.request("textDocument/formatting", {"textDocument": {"uri": semis_uri}, "options": options})

@@ -30,6 +30,7 @@ private alias modules = imported!"std.meta".AliasSeq!(
 	"doir.lsp.positions",
 	"doir.lsp.tokens",
 	"doir.lsp.server",
+	"doir.lsp.features.actions",
 );
 
 private int runEveryTest() {
