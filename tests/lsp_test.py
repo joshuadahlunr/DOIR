@@ -154,7 +154,7 @@ def decode(data):
 
 
 def test_features(server):
-    """Highlighting by range agrees with the whole file's."""
+    """Highlighting by range agrees with the whole file's; the outline reads the store."""
     client = Client(server, ["utf-16"])
     uri = "file:///tmp/features.doir"
     text = "// a comment\nmath : namespace = {\n\tpi : f64 = 3.14 // the circle constant\n\ttwice : (x: f64) -> f64\n\tuse : f64 = pi\n\tdoubled : f64 = twice(pi)\n}\nouter : f64 = math.pi\n"
@@ -165,6 +165,9 @@ def test_features(server):
     check(ranged == [t for t in full if 2 <= t[0] <= 4], f"range tokens {ranged} differ from the full file's on lines 2-4", "range highlighting must lex from a token boundary")
     kinds = {(t[0], t[1]): legend[t[3]] for t in full}
     check(kinds[(0, 0)] == "comment" and kinds[(2, 1)] == "variable" and kinds[(2, 6)] == "type" and kinds[(2, 12)] == "number", f"tokens classified wrong: {kinds}", "names before `:`, types after it")
+    symbols = client.request("textDocument/documentSymbol", {"textDocument": {"uri": uri}})
+    check([s["name"] for s in symbols] == ["math", "outer"] and symbols[0]["kind"] == 3, f"outline {symbols}", "math is a namespace with outer after it")
+    check([c["name"] for c in symbols[0]["children"]] == ["pi", "twice", "use", "doubled"] and symbols[0]["children"][1]["kind"] == 12, "math's children are wrong", "twice is a function")
     check(client.close() == 0, "the server did not exit cleanly", "exit after shutdown should return 0")
 
 

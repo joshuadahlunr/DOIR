@@ -18,7 +18,6 @@ static import fp.pointer;
 static import fp.rope;
 static import fp.string.utf;
 
-
 @nogc nothrow:
 
 
