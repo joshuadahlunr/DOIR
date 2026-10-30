@@ -10,6 +10,7 @@ static import bc.json;
 static import bc.jsonrpc;
 static import ecrs.context;
 
+static import doir.format;
 static import doir.lsp.positions;
 static import doir.query;
 static import doir.source;
@@ -40,6 +41,7 @@ package(doir) struct Session {
 	doir.lsp.positions.LineCache lines; /// Reset before each message, since an edit may free the text it describes.
 	Opened* opened; /// An fp dynarray.
 	bool shutdown; ///
+	doir.format.Options format; /// From the client's `doir.format` settings.
 	bool refused; /// A lookup for the current message met a refused allocation, so its result may be incomplete; `send` answers an internal error instead. Cleared before each message with the engine's `refused`.
 }
 

@@ -16,7 +16,36 @@
 		"configuration": {
 			"title": "DOIR",
 			"properties": {
-				"doir.serverPath": { "type": "string", "default": "doir", "description": "The doir executable the extension runs as `doir --lsp`." }
+				"doir.serverPath": { "type": "string", "default": "doir", "description": "The doir executable the extension runs as `doir --lsp`." },
+				"doir.format.minify": { "type": "boolean", "default": false, "description": "Format Document writes the file on one line: comments, indentation and blank lines go, and a newline that ends a statement becomes `;`. Range and on-type formatting ignore it." },
+				"doir.format.semicolons": {
+					"type": "string",
+					"enum": ["kept", "newlines", "newlinesAfterBraces"],
+					"enumDescriptions": ["Leave each `;` as it is.", "Replace a `;` that ends a statement with a line break.", "As `newlines`, and break the line after a `{` that has a statement after it on its line."],
+					"default": "kept",
+					"description": "What formatting does with a `;` that ends a statement."
+				},
+				"doir.format.definitionColons": {
+					"type": "string",
+					"enum": ["spaced", "attached"],
+					"enumDescriptions": ["`name : type = value`.", "`name: type = value`."],
+					"default": "spaced",
+					"description": "Whether a definition's `:` has a space before it."
+				},
+				"doir.format.parameterColons": {
+					"type": "string",
+					"enum": ["spaced", "attached"],
+					"enumDescriptions": ["`(a : T, b : U)`.", "`(a: T, b: U)`."],
+					"default": "attached",
+					"description": "Whether a function parameter's `:` has a space before it."
+				},
+				"doir.format.braces": {
+					"type": "string",
+					"enum": ["kept", "sameLine", "nextLine"],
+					"enumDescriptions": ["Leave each `{` where it is.", "Put the `{` on the line of the `=` that opens its block.", "Put the `{` on a line of its own below the `=`."],
+					"default": "kept",
+					"description": "Where formatting puts the `{` of a block that spans lines. A block on one line, such as `{}`, stays as it is."
+				}
 			}
 		}
 	},

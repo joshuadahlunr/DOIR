@@ -29,8 +29,10 @@ static import diagnose;
 static import ecrs.context;
 
 static import doir.checks;
+static import doir.components.source;
 static import doir.lsp.features.definition;
 static import doir.lsp.features.folding;
+static import doir.lsp.features.formatting;
 static import doir.lsp.features.hover;
 static import doir.lsp.features.selection;
 static import doir.lsp.features.semantic;
@@ -96,7 +98,10 @@ private void publish(ref doir.lsp.session.Session s, ref doir.lsp.session.Opened
 	bc.json.set(params, "uri", fp.string.slice(o.uri));
 	if (o.open) bc.json.set(params, "version", o.version_);
 	auto diagnostics = bc.json.setArray(params, "diagnostics");
+	// The checks replay every file's memoized diagnostics, so only this document's are kept.
+	const path = doir.strings.text(*s.strings, ecrs.context.getComponent!(doir.components.source.SourceFile)(*s.engine.store, o.file).path);
 	foreach (ref d; fp.dynarray.slice(manager.diagnostics)) {
+		if (d.location.file != path) continue;
 		const text_ = fp.string.slice(d.message);
 		auto annotations = fp.dynarray.slice(d.annotations);
 		auto diagnostic = bc.json.appendObject(diagnostics);
@@ -141,6 +146,7 @@ private void publish(ref doir.lsp.session.Session s, ref doir.lsp.session.Opened
 // --- handlers ----------------------------------------------------------------
 
 private void initialize(ref doir.lsp.session.Session s, bc.json.Value params, bc.json.Value id) {
+	doir.lsp.features.formatting.readFormatSettings(s, params["initializationOptions"]["format"]);
 	foreach (offered; bc.json.elements(params["capabilities"]["general"]["positionEncodings"]))
 		if (bc.json.view(offered) == "utf-8") s.encoding = doir.lsp.positions.Encoding.utf8;
 	bc.json.Document d;
@@ -166,6 +172,9 @@ private void initialize(ref doir.lsp.session.Session s, bc.json.Value params, bc
 	auto signature = bc.json.setArray(bc.json.setObject(capabilities, "signatureHelpProvider"), "triggerCharacters");
 	bc.json.append(signature, "(");
 	bc.json.append(signature, ",");
+	bc.json.set(capabilities, "documentFormattingProvider", true);
+	bc.json.set(capabilities, "documentRangeFormattingProvider", true);
+	bc.json.set(bc.json.setObject(capabilities, "documentOnTypeFormattingProvider"), "firstTriggerCharacter", "}");
 	bc.json.set(bc.json.setObject(result, "serverInfo"), "name", "doir");
 	doir.lsp.session.send(s, d);
 }
@@ -271,6 +280,7 @@ private void handle(ref doir.lsp.session.Session s, const(char)[] message, ref b
 		case "textDocument/didOpen": didOpen(s, params); break;
 		case "textDocument/didChange": didChange(s, params); break;
 		case "textDocument/didClose": didClose(s, params); break;
+		case "workspace/didChangeConfiguration": doir.lsp.features.formatting.readFormatSettings(s, params["settings"]["doir"]["format"]); break;
 		case "textDocument/semanticTokens/full": doir.lsp.features.semantic.semanticTokens(s, params, id, false); break;
 		case "textDocument/semanticTokens/range": doir.lsp.features.semantic.semanticTokens(s, params, id, true); break;
 		case "textDocument/documentSymbol": doir.lsp.features.symbols.documentSymbol(s, params, id); break;
@@ -279,6 +289,7 @@ private void handle(ref doir.lsp.session.Session s, const(char)[] message, ref b
 		case "textDocument/hover": doir.lsp.features.hover.hover(s, params, id); break;
 		case "textDocument/selectionRange": doir.lsp.features.selection.selectionRange(s, params, id); break;
 		case "textDocument/signatureHelp": doir.lsp.features.signature.signatureHelp(s, params, id); break;
+		case "textDocument/formatting", "textDocument/rangeFormatting", "textDocument/onTypeFormatting": doir.lsp.features.formatting.formatting(s, params, id); break;
 		default:
 			// Notifications it does not know, `initialized` and `$/cancelRequest` among them, need nothing; requests get an error.
 			if (bc.json.exists(id)) doir.lsp.session.respondError(s, id, -32_601, "the DOIR server does not handle this method");

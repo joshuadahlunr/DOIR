@@ -14,11 +14,11 @@ ROOT = pathlib.Path(__file__).resolve().parent.parent
 class Client:
     """One `doir --lsp` process and the messages it sent that no check has consumed yet."""
 
-    def __init__(self, server, encodings):
+    def __init__(self, server, encodings, initialization_options=None):
         self.process = subprocess.Popen([str(server), "--lsp"], stdin=subprocess.PIPE, stdout=subprocess.PIPE)
         self.pending = []
         self.next_id = 1
-        result = self.request("initialize", {"processId": None, "rootUri": None, "capabilities": {"general": {"positionEncodings": encodings}}})
+        result = self.request("initialize", {"processId": None, "rootUri": None, "capabilities": {"general": {"positionEncodings": encodings}}, "initializationOptions": initialization_options})
         self.encoding = result["capabilities"]["positionEncoding"]
         self.capabilities = result["capabilities"]
         self.notify("initialized", {})
@@ -153,8 +153,20 @@ def decode(data):
     return tokens
 
 
+def apply_edits(text, edits):
+    """`text`, ASCII, with LSP text edits applied, last first so earlier ranges stay put."""
+    lines = text.split("\n")
+    starts = [0]
+    for line in lines:
+        starts.append(starts[-1] + len(line) + 1)
+    offset = lambda p: starts[p["line"]] + p["character"]
+    for edit in sorted(edits, key=lambda e: offset(e["range"]["start"]), reverse=True):
+        text = text[:offset(edit["range"]["start"])] + edit["newText"] + text[offset(edit["range"]["end"]):]
+    return text
+
+
 def test_features(server):
-    """Highlighting by range agrees with the whole file's; outline, folding, definition, hover, selection ranges and signature help read the store; comments fold."""
+    """Highlighting by range agrees with the whole file's; outline, folding, definition, hover, selection ranges and signature help read the store; comments fold; formatting lays out the whole file, a range or a line, as the doir.format settings say."""
     client = Client(server, ["utf-16"])
     uri = "file:///tmp/features.doir"
     text = "// a comment\nmath : namespace = {\n\tpi : f64 = 3.14 // the circle constant\n\ttwice : (x: f64) -> f64\n\tuse : f64 = pi\n\tdoubled : f64 = twice(pi)\n}\nouter : f64 = math.pi\n"
@@ -196,6 +208,43 @@ def test_features(server):
     open_document(client, comments_uri, "// one\n// two\n# three\nx : T = 1 // trailing\n// four\n/* a\nb */\ny : T = 2\n")
     folds = client.request("textDocument/foldingRange", {"textDocument": {"uri": comments_uri}})
     check([(f["startLine"], f["endLine"], f.get("kind")) for f in folds] == [(0, 2, "comment"), (5, 6, "comment")], f"comment folds {folds}", "a run of comment lines and a block comment over two lines; a lone or trailing comment does not fold")
+    messy_uri = "file:///tmp/messy.doir"
+    messy = "n:namespace={\n  x:T=1\n\n\n  y : T = f( x )\n}\nm : namespace = {\n}\n"
+    open_document(client, messy_uri, messy)
+    whole = client.request("textDocument/formatting", {"textDocument": {"uri": messy_uri}, "options": {"tabSize": 4, "insertSpaces": False}})
+    check(apply_edits(messy, whole) == "n : namespace = {\n\tx : T = 1\n\n\ty : T = f(x)\n}\nm : namespace = {\n}\n", f"formatting gave {apply_edits(messy, whole)!r}", "indent by braces, space punctuation as the corpus does, keep one blank line")
+    ranged = client.request("textDocument/rangeFormatting", {"textDocument": {"uri": messy_uri}, "range": {"start": {"line": 4, "character": 0}, "end": {"line": 4, "character": 3}}, "options": {"tabSize": 4, "insertSpaces": False}})
+    check(apply_edits(messy, ranged) == messy.replace("  y : T = f( x )", "\ty : T = f(x)"), f"range formatting gave {apply_edits(messy, ranged)!r}", "only the lines in the range change")
+    typed = client.request("textDocument/onTypeFormatting", {"textDocument": {"uri": messy_uri}, "position": {"line": 1, "character": 7}, "ch": "}", "options": {"tabSize": 4, "insertSpaces": False}})
+    check(apply_edits(messy, typed) == messy.replace("  x:T=1", "\tx : T = 1"), f"on-type formatting gave {apply_edits(messy, typed)!r}", "typing formats only the position's line")
+    # The doir.format settings: semicolons become line breaks, and minifying applies to the whole file only.
+    semis_uri = "file:///tmp/semis.doir"
+    semis = "v : type = { x : f32 ; y : f32 ; }\nf : (a: T) -> T\n"
+    open_document(client, semis_uri, semis)
+    options = {"tabSize": 4, "insertSpaces": False}
+    client.notify("workspace/didChangeConfiguration", {"settings": {"doir": {"format": {"semicolons": "newlinesAfterBraces"}}}})
+    braces = client.request("textDocument/formatting", {"textDocument": {"uri": semis_uri}, "options": options})
+    check(apply_edits(semis, braces) == "v : type = {\n\tx : f32\n\ty : f32\n}\nf : (a: T) -> T\n", f"newlinesAfterBraces gave {apply_edits(semis, braces)!r}", "each `;` and the `{` with a statement after it end their lines")
+    client.notify("workspace/didChangeConfiguration", {"settings": {"doir": {"format": {"definitionColons": "attached", "parameterColons": "spaced", "braces": "nextLine"}}}})
+    allman = client.request("textDocument/formatting", {"textDocument": {"uri": semis_uri}, "options": options})
+    check(apply_edits(semis, allman) == "v: type =\n{\n\tx: f32\n\ty: f32\n}\nf: (a : T) -> T\n", f"attached definition colons, spaced parameter colons and nextLine braces gave {apply_edits(semis, allman)!r}", "no space before a definition's `:`, one before a parameter's, and the block's `{` on a line of its own")
+    client.notify("workspace/didChangeConfiguration", {"settings": {"doir": {"format": {"definitionColons": "spaced", "parameterColons": "attached", "braces": "kept"}}}})
+    client.notify("workspace/didChangeConfiguration", {"settings": {"doir": {"format": {"minify": True}}}})
+    minified = client.request("textDocument/formatting", {"textDocument": {"uri": messy_uri}, "options": options})
+    check(apply_edits(messy, minified) == "n:namespace={x:T=1;y:T=f(x);};m:namespace={};", f"minify gave {apply_edits(messy, minified)!r}", "one line, a `;` for each newline that ends a statement")
+    ranged = client.request("textDocument/rangeFormatting", {"textDocument": {"uri": messy_uri}, "range": {"start": {"line": 4, "character": 0}, "end": {"line": 4, "character": 3}}, "options": options})
+    check(apply_edits(messy, ranged) == messy.replace("  y : T = f( x )", "\ty : T = f(x)"), f"range formatting while minifying gave {apply_edits(messy, ranged)!r}", "minify applies to the whole document only")
+    # A file the lexer cannot finish is not formatted, and the user is told why and where.
+    broken_uri = "file:///tmp/broken.doir"
+    open_document(client, broken_uri, "x : T = 1\ny : T = \"open\n")
+    check(client.request("textDocument/formatting", {"textDocument": {"uri": broken_uri}, "options": options}) == [], "formatting a file with an unclosed string made edits", "it cannot trust the brackets")
+    shown = client.wait(lambda m: m.get("method") == "window/showMessage")
+    check(shown["params"]["type"] == 2 and "line 2" in shown["params"]["message"] and "fix it" in shown["params"]["message"], f"the refusal said {shown}", "a warning naming the line and how to fix it")
+    settings = Client(server, ["utf-16"], {"format": {"semicolons": "newlines"}})
+    open_document(settings, semis_uri, semis)
+    lines = settings.request("textDocument/formatting", {"textDocument": {"uri": semis_uri}, "options": options})
+    check(apply_edits(semis, lines) == "v : type = { x : f32\n\ty : f32\n}\nf : (a: T) -> T\n", f"initializationOptions newlines gave {apply_edits(semis, lines)!r}", "the server reads doir.format from initializationOptions too")
+    check(settings.close() == 0, "the server did not exit cleanly", "exit after shutdown should return 0")
     check(client.close() == 0, "the server did not exit cleanly", "exit after shutdown should return 0")
 
 
