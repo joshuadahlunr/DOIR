@@ -42,6 +42,7 @@ static import doir.lsp.features.semantic;
 static import doir.lsp.features.signature;
 static import doir.lsp.features.symbols;
 static import doir.lsp.features.typedefinition;
+static import doir.lsp.features.workspace;
 static import doir.lsp.positions;
 static import doir.lsp.session;
 static import doir.lsp.tokens;
@@ -183,6 +184,7 @@ private void initialize(ref doir.lsp.session.Session s, bc.json.Value params, bc
 	bc.json.set(capabilities, "inlayHintProvider", true);
 	bc.json.set(capabilities, "documentHighlightProvider", true);
 	bc.json.set(capabilities, "typeDefinitionProvider", true);
+	bc.json.set(capabilities, "workspaceSymbolProvider", true);
 	bc.json.set(bc.json.setObject(result, "serverInfo"), "name", "doir");
 	doir.lsp.session.send(s, d);
 }
@@ -300,6 +302,7 @@ private void handle(ref doir.lsp.session.Session s, const(char)[] message, ref b
 		case "textDocument/signatureHelp": doir.lsp.features.signature.signatureHelp(s, params, id); break;
 		case "textDocument/completion": doir.lsp.features.completion.completion(s, params, id); break;
 		case "textDocument/documentHighlight": doir.lsp.features.highlights.documentHighlight(s, params, id); break;
+		case "workspace/symbol": doir.lsp.features.workspace.workspaceSymbol(s, params, id); break;
 		case "textDocument/inlayHint": doir.lsp.features.inlay.inlayHint(s, params, id); break;
 		case "textDocument/formatting", "textDocument/rangeFormatting", "textDocument/onTypeFormatting": doir.lsp.features.formatting.formatting(s, params, id); break;
 		default:
@@ -372,6 +375,121 @@ unittest { // a `file://` URI's path is percent-decoded; any other URI is its ow
 	char* refused = pathOf("file:///x");
 	fp.testing.restoreAllocator(previous);
 	assert(refused is null);
+}
+
+unittest { // every message, under a refused allocation anywhere, answers as it would with none, answers an internal error, or sends nothing, and leaves each document's text before or after it
+	static import fp.testing;
+	static immutable sample = "// a comment\nmath : namespace = {\n\tpi : f64 = 3.14 // the circle constant\n\ttwice : (x: f64) -> f64\n\tuse : f64 = pi\n\tdoubled : f64 = twice(twice(pi))\n\tx : f64 = 1\n\ty : f64 = x\n}\nx : f64 = 2\nouter : f64 = math.pi\npoint : type = { px : f64 ; }\np : point = 1\npp : f64 = p\nexport s : string = \"text\" <\"gen.doir\":1:1>\ntwice_t : type = (x: f64) -> f64\nagain : twice_t\nh : unknown_t\nr : f64 = again(math.twice(math.pi), math.x, x)\nq : f64 = h(x, x)\nf : () -> void = {\n\tv : f64 = 1\n\tw : f64 = v\n\t_ : _ = std.return(w)\n}\n";
+	enum request(string method, string params) = `{"jsonrpc":"2.0","id":2,"method":"` ~ method ~ `","params":` ~ params ~ `}`;
+	enum at(string line, string character) = `{"textDocument":{"uri":"file:///t.doir"},"position":{"line":` ~ line ~ `,"character":` ~ character ~ `}}`;
+	enum whole = `{"textDocument":{"uri":"file:///t.doir"},"range":{"start":{"line":0,"character":0},"end":{"line":26,"character":0}},"options":{"tabSize":4,"insertSpaces":false}}`;
+	static struct Step {
+		string message;
+		string uri; // a document whose text the message may change, or null
+		string after; // that text once it has
+		string before = null; // its text before, for a document that is not `sample`
+		string shows = null; // what the answer contains, when the step tests it
+	}
+	enum diagnosed(string data) = `{"textDocument":{"uri":"file:///t.doir"},"range":{"start":{"line":0,"character":0},"end":{"line":0,"character":0}},"context":{"diagnostics":[{"range":{"start":{"line":0,"character":0},"end":{"line":0,"character":0}},"message":"m"` ~ data ~ `}]}}`;
+	static immutable Step[] steps = [
+		Step(request!("textDocument/semanticTokens/full", `{"textDocument":{"uri":"file:///t.doir"}}`)),
+		Step(request!("textDocument/semanticTokens/range", `{"textDocument":{"uri":"file:///t.doir"},"range":{"start":{"line":2,"character":0},"end":{"line":15,"character":0}}}`)),
+		Step(request!("textDocument/documentSymbol", `{"textDocument":{"uri":"file:///t.doir"}}`)),
+		Step(request!("textDocument/foldingRange", `{"textDocument":{"uri":"file:///t.doir"}}`)),
+		Step(request!("textDocument/definition", at!("4", "13"))),
+		Step(request!("textDocument/typeDefinition", at!("13", "11"))),
+		Step(request!("textDocument/hover", at!("4", "13"))),
+		Step(request!("textDocument/hover", at!("2", "13"))), // a number names nothing
+		Step(request!("textDocument/selectionRange", `{"textDocument":{"uri":"file:///t.doir"},"positions":[{"line":4,"character":13}]}`)),
+		Step(request!("textDocument/signatureHelp", at!("18", "37"))), // after a closed call, through a function type alias
+		Step(request!("textDocument/signatureHelp", at!("19", "12"))), // a function type that does not resolve
+		Step(request!("textDocument/completion", at!("7", "12"))), // `x` both inside math and at the root
+		Step(request!("textDocument/completion", at!("12", "6"))), // `po`, a type
+		Step(request!("textDocument/documentHighlight", at!("22", "11"))), // inside a function's block
+		Step(request!("workspace/symbol", `{"query":"PI"}`)),
+		Step(request!("textDocument/inlayHint", whole)), // a nested call, and arguments past the parameters
+		Step(request!("textDocument/formatting", whole)),
+		Step(request!("textDocument/rangeFormatting", whole)),
+		Step(`{"jsonrpc":"2.0","method":"workspace/didChangeConfiguration","params":{"settings":{"doir":{"format":{"semicolons":"kept","braces":"sameLine"}}}}}`),
+		Step(request!("textDocument/hover", `{"textDocument":{"uri":"file:///none.doir"},"position":{"line":0,"character":0}}`)), // not open
+		Step(`{"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"file:///a%20b.doir","version":1,"text":"x : T = 1\n"}}}`, "file:///a%20b.doir", "x : T = 1\n", ""),
+		Step(`{"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"file:///t.doir","version":2,"text":"y : T = 2\n"}}}`, "file:///t.doir", "y : T = 2\n"),
+		Step(`{"jsonrpc":"2.0","method":"textDocument/didChange","params":{"textDocument":{"uri":"file:///t.doir","version":2},"contentChanges":[{"text":"z : T = 3\n"}]}}`, "file:///t.doir", "z : T = 3\n"),
+		Step(`{"jsonrpc":"2.0","method":"textDocument/didChange","params":{"textDocument":{"uri":"file:///t.doir","version":3},"contentChanges":[{"range":{"start":{"line":9,"character":10},"end":{"line":9,"character":11}},"text":"5"}]}}`, "file:///t.doir", "// a comment\nmath : namespace = {\n\tpi : f64 = 3.14 // the circle constant\n\ttwice : (x: f64) -> f64\n\tuse : f64 = pi\n\tdoubled : f64 = twice(twice(pi))\n\tx : f64 = 1\n\ty : f64 = x\n}\nx : f64 = 5\nouter : f64 = math.pi\npoint : type = { px : f64 ; }\np : point = 1\npp : f64 = p\nexport s : string = \"text\" <\"gen.doir\":1:1>\ntwice_t : type = (x: f64) -> f64\nagain : twice_t\nh : unknown_t\nr : f64 = again(math.twice(math.pi), math.x, x)\nq : f64 = h(x, x)\nf : () -> void = {\n\tv : f64 = 1\n\tw : f64 = v\n\t_ : _ = std.return(w)\n}\n"),
+		Step(request!("textDocument/codeAction", diagnosed!(`,"data":{"fixes":[{"title":"Insert","range":{"start":{"line":0,"character":2},"end":{"line":0,"character":2}},"newText":"="},{"title":"Torn"}]}`)), null, null, null, `"result":[{"title":"Insert","kind":"quickfix","diagnostics":`), // a fix missing its edit is skipped
+		Step(request!("textDocument/codeAction", diagnosed!(``)), null, null, null, `"result":[]`), // a diagnostic with no fixes, as a check's
+		Step(`{"jsonrpc":"2.0","method":"textDocument/didChange","params":{"textDocument":{"uri":"file:///none.doir","version":1},"contentChanges":[{"text":"x\n"}]}}`),
+		Step(`{"jsonrpc":"2.0","method":"textDocument/didClose","params":{"textDocument":{"uri":"file:///t.doir"}}}`),
+		Step(`{not json`),
+		Step(request!("textDocument/unknown", `{}`)),
+		Step(request!("shutdown", `null`)),
+	];
+
+	// The handlers log each refusal; the test sends what they log to a scratch file while it makes them.
+	auto log = fp.testing.openScratchFile().get;
+	scope(exit) fp.testing.free(log);
+
+	// What a step sent, joined, until the sentinel response to id 1 that the test sends after it.
+	static char* sent(ref doir.lsp.session.Fixture f) {
+		f.s.refused = f.engine.refused = false;
+		doir.lsp.session.respondNull(f.s, doir.lsp.session.id(f));
+		char* joined = null;
+		for (;;) {
+			const m = doir.lsp.session.message(f);
+			if (m == `{"jsonrpc":"2.0","id":1,"result":null}`) return joined;
+			assert(fp.string.append(joined, m, '\n'));
+		}
+	}
+	static bool textIs(ref doir.lsp.session.Fixture f, string uri, string text) {
+		auto o = doir.lsp.session.find(f.s, uri);
+		return o !is null && fp.rope.equal(doir.source.textOf(f.engine, o.file), text);
+	}
+
+	foreach (step; steps) {
+		doir.lsp.session.Fixture clean;
+		scope(exit) doir.lsp.session.free(clean);
+		assert(doir.lsp.session.open(clean, sample));
+		bool exit;
+		auto quiet = fp.testing.redirect(fp.io.Console.error, log.descriptor).get;
+		handle(clean.s, step.message, exit);
+		fp.testing.restore(quiet);
+		char* expected = sent(clean);
+		scope(exit) fp.string.free(expected);
+		assert(step.uri is null || textIs(clean, step.uri, step.after));
+		assert(step.shows is null || fp.string.contains(fp.string.slice(expected), step.shows, 0));
+		for (size_t budget = 0;; ++budget) {
+			doir.lsp.session.Fixture f;
+			scope(exit) doir.lsp.session.free(f);
+			assert(doir.lsp.session.open(f, sample));
+			quiet = fp.testing.redirect(fp.io.Console.error, log.descriptor).get;
+			auto allocator = fp.testing.limitAllocations(budget);
+			handle(f.s, step.message, exit);
+			fp.testing.restoreAllocator(allocator);
+			fp.testing.restore(quiet);
+			char* got = sent(f);
+			scope(exit) fp.string.free(got);
+			immutable same = fp.string.slice(got) == fp.string.slice(expected);
+			immutable changed = step.uri is null || textIs(f, step.uri, step.after);
+			if (same && changed) break;
+			assert(same || fp.string.length(got) == 0 || fp.string.contains(fp.string.slice(got), `"code":-32603`, 0));
+			assert(changed || doir.lsp.session.find(f.s, step.uri) is null || textIs(f, step.uri, step.before is null ? sample : step.before));
+		}
+	}
+}
+
+unittest { // a syntax error's fixes go out in its diagnostic's `data`, for `codeAction` to read back; a diagnostic without fixes has no `data`
+	static immutable string[2][2] published = [
+		["f : (a: T\n", `"data":{"fixes":[{"title":"Insert ` ~ "`)`" ~ `","isPreferred":true,"range":{"start":{"line":1,"character":0},"end":{"line":1,"character":0}},"newText":")"}]}`],
+		["x : T = \n", `"message":"syntax error, the file ends where the value after ` ~ "`=`" ~ ` should be`],
+	];
+	foreach (pair; published) {
+		doir.lsp.session.Fixture f;
+		scope(exit) doir.lsp.session.free(f);
+		assert(doir.lsp.session.open(f, pair[0]));
+		publish(f.s, *doir.lsp.session.find(f.s, "file:///t.doir"));
+		const m = doir.lsp.session.message(f);
+		assert(fp.string.contains(m, pair[1], 0) && fp.string.contains(m, `"data"`, 0) == (pair[0][0] == 'f'));
+	}
 }
 
 unittest { // the test fixture: set up under a refused allocation it reports failure and still frees; a handler reads its params and answers its id
