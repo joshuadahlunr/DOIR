@@ -154,7 +154,7 @@ def decode(data):
 
 
 def test_features(server):
-    """Highlighting by range agrees with the whole file's; outline, folding, definition, hover and selection ranges read the store; comments fold."""
+    """Highlighting by range agrees with the whole file's; outline, folding, definition, hover, selection ranges and signature help read the store; comments fold."""
     client = Client(server, ["utf-16"])
     uri = "file:///tmp/features.doir"
     text = "// a comment\nmath : namespace = {\n\tpi : f64 = 3.14 // the circle constant\n\ttwice : (x: f64) -> f64\n\tuse : f64 = pi\n\tdoubled : f64 = twice(pi)\n}\nouter : f64 = math.pi\n"
@@ -184,6 +184,14 @@ def test_features(server):
         starts.append((level["range"]["start"]["line"], level["range"]["start"]["character"]))
         level = level.get("parent")
     check(starts == [(4, 13), (4, 1), (1, 0), (0, 0)], f"selection ranges start at {starts}", "pi, then use, then math, then the file")
+    help_ = client.request("textDocument/signatureHelp", {"textDocument": {"uri": uri}, "position": {"line": 5, "character": 23}})
+    check(help_ and help_["signatures"][0]["label"] == "twice(x: f64) -> f64" and help_["signatures"][0]["parameters"] == [{"label": "x: f64"}] and help_["activeParameter"] == 0, f"signature help {help_}", "inside twice( the signature comes from twice's function type")
+    check(client.request("textDocument/signatureHelp", {"textDocument": {"uri": uri}, "position": {"line": 4, "character": 14}}) is None, "signature help outside a call", "a position in no call gets null")
+    # A deduced parameter is never written at a call (D-Deduce), so arguments bind the parameters after it.
+    deduce_uri = "file:///tmp/deduce.doir"
+    open_document(client, deduce_uri, "pick : (T: deduced type, a: T, b: T) -> T\nr : f64 = pick(one, b)\none : f64 = 1\n")
+    active = client.request("textDocument/signatureHelp", {"textDocument": {"uri": deduce_uri}, "position": {"line": 1, "character": 20}})
+    check(active and active["activeParameter"] == 2, f"signature help {active}", "the second argument binds b, the third parameter")
     comments_uri = "file:///tmp/comments.doir"
     open_document(client, comments_uri, "// one\n// two\n# three\nx : T = 1 // trailing\n// four\n/* a\nb */\ny : T = 2\n")
     folds = client.request("textDocument/foldingRange", {"textDocument": {"uri": comments_uri}})

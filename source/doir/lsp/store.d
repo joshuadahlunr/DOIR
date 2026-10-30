@@ -223,3 +223,51 @@ package(doir) Named declarationAt(ref doir.lsp.session.Session s, EntityId file,
 	if (name is null) return Named(Found(invalidEntity));
 	return Named(resolve(s, file, at, fp.string.slice(name)), start, start + fp.string.length(name));
 }
+
+
+// --- functions ---------------------------------------------------------------
+
+/// The function type declaration `found` of `file` is declared with: written in place as its type, its value, or the one its type names (`WF-Par`); `invalidEntity` if none.
+///
+/// Examples:
+/// ---
+/// doir.lsp.session.Fixture f;
+/// assert(doir.lsp.session.open(f, "g : (a: T) -> T\n"));
+/// scope(exit) doir.lsp.session.free(f);
+/// assert(functionTypeOf(f.s, f.s.opened[0].file, resolve(f.s, f.s.opened[0].file, 0, "g")) != invalidEntity);
+/// ---
+package(doir) EntityId functionTypeOf(ref doir.lsp.session.Session s, EntityId file, Found found) {
+	auto store = s.engine.store;
+	foreach (step; 0 .. 2) {
+		if (auto t = ecrs.context.findComponent!(doir.components.ast.TypeOf)(*store, found.e))
+			if (ecrs.context.hasComponent!(doir.components.ast.FunctionInputs)(*store, t.type)) return t.type;
+		if (ecrs.context.hasComponent!(doir.components.ast.FunctionInputs)(*store, found.e)) return found.e;
+		auto named = ecrs.context.findComponent!(doir.components.ast.LookupTypeOf)(*store, found.e);
+		if (step == 1 || named is null) break;
+		found = resolve(s, file, found.start, doir.strings.text(*s.strings, named.name));
+		if (found.e == invalidEntity) break;
+	}
+	return invalidEntity;
+}
+
+/// The index among `inputs`, a function type's parameters, of the one a call's argument `argument` binds: deduced parameters are never written at a call (`D-Deduce`), so it is the `argument`th of the rest. `inputs.length` if there is none.
+///
+/// Examples:
+/// ---
+/// static import ecrs.context;
+/// static import fp.dynarray;
+/// doir.lsp.session.Fixture f;
+/// assert(doir.lsp.session.open(f, "g : (T: deduced type, a: T) -> T\n"));
+/// scope(exit) doir.lsp.session.free(f);
+/// immutable type = functionTypeOf(f.s, f.s.opened[0].file, resolve(f.s, f.s.opened[0].file, 0, "g"));
+/// auto inputs = fp.dynarray.slice(ecrs.context.getComponent!(doir.components.ast.FunctionInputs)(f.store, type).related);
+/// assert(parameterOf(f.s, inputs, 0) == 1 && parameterOf(f.s, inputs, 1) == 2);
+/// ---
+package(doir) size_t parameterOf(ref doir.lsp.session.Session s, const(EntityId)[] inputs, size_t argument) {
+	foreach (i, p; inputs) {
+		auto type = ecrs.context.findComponent!(doir.components.ast.LookupTypeOf)(*s.engine.store, p);
+		if (type !is null && doir.strings.text(*s.strings, type.name) == doir.components.ast.deducedTypeName) continue;
+		if (argument-- == 0) return i;
+	}
+	return inputs.length;
+}
