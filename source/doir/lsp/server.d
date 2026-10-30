@@ -30,6 +30,7 @@ static import ecrs.context;
 
 static import doir.checks;
 static import doir.components.source;
+static import doir.lsp.features.actions;
 static import doir.lsp.features.completion;
 static import doir.lsp.features.definition;
 static import doir.lsp.features.folding;
@@ -185,6 +186,7 @@ private void initialize(ref doir.lsp.session.Session s, bc.json.Value params, bc
 	bc.json.set(capabilities, "documentHighlightProvider", true);
 	bc.json.set(capabilities, "typeDefinitionProvider", true);
 	bc.json.set(capabilities, "workspaceSymbolProvider", true);
+	bc.json.set(capabilities, "codeActionProvider", true);
 	bc.json.set(bc.json.setObject(result, "serverInfo"), "name", "doir");
 	doir.lsp.session.send(s, d);
 }
@@ -303,6 +305,7 @@ private void handle(ref doir.lsp.session.Session s, const(char)[] message, ref b
 		case "textDocument/completion": doir.lsp.features.completion.completion(s, params, id); break;
 		case "textDocument/documentHighlight": doir.lsp.features.highlights.documentHighlight(s, params, id); break;
 		case "workspace/symbol": doir.lsp.features.workspace.workspaceSymbol(s, params, id); break;
+		case "textDocument/codeAction": doir.lsp.features.actions.codeAction(s, params, id); break;
 		case "textDocument/inlayHint": doir.lsp.features.inlay.inlayHint(s, params, id); break;
 		case "textDocument/formatting", "textDocument/rangeFormatting", "textDocument/onTypeFormatting": doir.lsp.features.formatting.formatting(s, params, id); break;
 		default:
