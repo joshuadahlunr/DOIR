@@ -166,7 +166,7 @@ def apply_edits(text, edits):
 
 
 def test_features(server):
-    """Highlighting by range agrees with the whole file's; outline, folding, definition, hover, selection ranges, signature help and completion read the store; comments fold; formatting lays out the whole file, a range or a line, as the doir.format settings say."""
+    """Highlighting by range agrees with the whole file's; outline, folding, definition, hover, selection ranges, signature help, completion and inlay hints read the store; comments fold; formatting lays out the whole file, a range or a line, as the doir.format settings say."""
     client = Client(server, ["utf-16"])
     uri = "file:///tmp/features.doir"
     text = "// a comment\nmath : namespace = {\n\tpi : f64 = 3.14 // the circle constant\n\ttwice : (x: f64) -> f64\n\tuse : f64 = pi\n\tdoubled : f64 = twice(pi)\n}\nouter : f64 = math.pi\n"
@@ -209,6 +209,8 @@ def test_features(server):
     # A deduced parameter is never written at a call (D-Deduce), so arguments bind the parameters after it.
     deduce_uri = "file:///tmp/deduce.doir"
     open_document(client, deduce_uri, "pick : (T: deduced type, a: T, b: T) -> T\nr : f64 = pick(one, b)\none : f64 = 1\n")
+    hints = client.request("textDocument/inlayHint", {"textDocument": {"uri": deduce_uri}, "range": {"start": {"line": 0, "character": 0}, "end": {"line": 3, "character": 0}}})
+    check([(h["position"]["line"], h["position"]["character"], h["label"]) for h in hints] == [(1, 15, "a")], f"inlay hints {hints}", "each argument named after the parameter it binds, skipping T and arguments already named so")
     active = client.request("textDocument/signatureHelp", {"textDocument": {"uri": deduce_uri}, "position": {"line": 1, "character": 20}})
     check(active and active["activeParameter"] == 2, f"signature help {active}", "the second argument binds b, the third parameter")
     comments_uri = "file:///tmp/comments.doir"
