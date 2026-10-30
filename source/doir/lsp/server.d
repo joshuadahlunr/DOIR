@@ -34,6 +34,7 @@ static import doir.lsp.features.folding;
 static import doir.lsp.features.hover;
 static import doir.lsp.features.selection;
 static import doir.lsp.features.semantic;
+static import doir.lsp.features.signature;
 static import doir.lsp.features.symbols;
 static import doir.lsp.positions;
 static import doir.lsp.session;
@@ -162,6 +163,9 @@ private void initialize(ref doir.lsp.session.Session s, bc.json.Value params, bc
 	bc.json.set(capabilities, "definitionProvider", true);
 	bc.json.set(capabilities, "hoverProvider", true);
 	bc.json.set(capabilities, "selectionRangeProvider", true);
+	auto signature = bc.json.setArray(bc.json.setObject(capabilities, "signatureHelpProvider"), "triggerCharacters");
+	bc.json.append(signature, "(");
+	bc.json.append(signature, ",");
 	bc.json.set(bc.json.setObject(result, "serverInfo"), "name", "doir");
 	doir.lsp.session.send(s, d);
 }
@@ -274,6 +278,7 @@ private void handle(ref doir.lsp.session.Session s, const(char)[] message, ref b
 		case "textDocument/definition": doir.lsp.features.definition.definition(s, params, id); break;
 		case "textDocument/hover": doir.lsp.features.hover.hover(s, params, id); break;
 		case "textDocument/selectionRange": doir.lsp.features.selection.selectionRange(s, params, id); break;
+		case "textDocument/signatureHelp": doir.lsp.features.signature.signatureHelp(s, params, id); break;
 		default:
 			// Notifications it does not know, `initialized` and `$/cancelRequest` among them, need nothing; requests get an error.
 			if (bc.json.exists(id)) doir.lsp.session.respondError(s, id, -32_601, "the DOIR server does not handle this method");
