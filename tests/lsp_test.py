@@ -166,7 +166,7 @@ def apply_edits(text, edits):
 
 
 def test_features(server):
-    """Highlighting by range agrees with the whole file's; outline, folding, definition, hover, selection ranges and signature help read the store; comments fold; formatting lays out the whole file, a range or a line, as the doir.format settings say."""
+    """Highlighting by range agrees with the whole file's; outline, folding, definition, hover, selection ranges, signature help and completion read the store; comments fold; formatting lays out the whole file, a range or a line, as the doir.format settings say."""
     client = Client(server, ["utf-16"])
     uri = "file:///tmp/features.doir"
     text = "// a comment\nmath : namespace = {\n\tpi : f64 = 3.14 // the circle constant\n\ttwice : (x: f64) -> f64\n\tuse : f64 = pi\n\tdoubled : f64 = twice(pi)\n}\nouter : f64 = math.pi\n"
@@ -199,6 +199,13 @@ def test_features(server):
     help_ = client.request("textDocument/signatureHelp", {"textDocument": {"uri": uri}, "position": {"line": 5, "character": 23}})
     check(help_ and help_["signatures"][0]["label"] == "twice(x: f64) -> f64" and help_["signatures"][0]["parameters"] == [{"label": "x: f64"}] and help_["activeParameter"] == 0, f"signature help {help_}", "inside twice( the signature comes from twice's function type")
     check(client.request("textDocument/signatureHelp", {"textDocument": {"uri": uri}, "position": {"line": 4, "character": 14}}) is None, "signature help outside a call", "a position in no call gets null")
+    labels = lambda result: [item["label"] for item in result["items"]]
+    near = client.request("textDocument/completion", {"textDocument": {"uri": uri}, "position": {"line": 4, "character": 14}})
+    check(labels(near) == ["pi"], f"completing `p` inside math offered {labels(near)}", "names visible there starting with what is typed")
+    members = client.request("textDocument/completion", {"textDocument": {"uri": uri}, "position": {"line": 7, "character": 19}})
+    check(sorted(labels(members)) == ["doubled", "pi", "twice", "use"], f"completing `math.` offered {labels(members)}", "after a dot, the entries of the block the name before it resolves to")
+    top = labels(client.request("textDocument/completion", {"textDocument": {"uri": uri}, "position": {"line": 7, "character": 14}}))
+    check("math" in top and "outer" in top and "export" in top and "pi" not in top, f"completing at the root offered {top}", "the root's names and the keywords, not math's members")
     # A deduced parameter is never written at a call (D-Deduce), so arguments bind the parameters after it.
     deduce_uri = "file:///tmp/deduce.doir"
     open_document(client, deduce_uri, "pick : (T: deduced type, a: T, b: T) -> T\nr : f64 = pick(one, b)\none : f64 = 1\n")
