@@ -34,6 +34,7 @@ static import doir.lsp.features.completion;
 static import doir.lsp.features.definition;
 static import doir.lsp.features.folding;
 static import doir.lsp.features.formatting;
+static import doir.lsp.features.highlights;
 static import doir.lsp.features.hover;
 static import doir.lsp.features.inlay;
 static import doir.lsp.features.selection;
@@ -179,6 +180,7 @@ private void initialize(ref doir.lsp.session.Session s, bc.json.Value params, bc
 	bc.json.set(bc.json.setObject(capabilities, "documentOnTypeFormattingProvider"), "firstTriggerCharacter", "}");
 	bc.json.append(bc.json.setArray(bc.json.setObject(capabilities, "completionProvider"), "triggerCharacters"), ".");
 	bc.json.set(capabilities, "inlayHintProvider", true);
+	bc.json.set(capabilities, "documentHighlightProvider", true);
 	bc.json.set(bc.json.setObject(result, "serverInfo"), "name", "doir");
 	doir.lsp.session.send(s, d);
 }
@@ -294,6 +296,7 @@ private void handle(ref doir.lsp.session.Session s, const(char)[] message, ref b
 		case "textDocument/selectionRange": doir.lsp.features.selection.selectionRange(s, params, id); break;
 		case "textDocument/signatureHelp": doir.lsp.features.signature.signatureHelp(s, params, id); break;
 		case "textDocument/completion": doir.lsp.features.completion.completion(s, params, id); break;
+		case "textDocument/documentHighlight": doir.lsp.features.highlights.documentHighlight(s, params, id); break;
 		case "textDocument/inlayHint": doir.lsp.features.inlay.inlayHint(s, params, id); break;
 		case "textDocument/formatting", "textDocument/rangeFormatting", "textDocument/onTypeFormatting": doir.lsp.features.formatting.formatting(s, params, id); break;
 		default:
