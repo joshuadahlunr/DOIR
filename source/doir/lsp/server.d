@@ -32,6 +32,7 @@ static import doir.checks;
 static import doir.lsp.features.definition;
 static import doir.lsp.features.folding;
 static import doir.lsp.features.hover;
+static import doir.lsp.features.selection;
 static import doir.lsp.features.semantic;
 static import doir.lsp.features.symbols;
 static import doir.lsp.positions;
@@ -160,6 +161,7 @@ private void initialize(ref doir.lsp.session.Session s, bc.json.Value params, bc
 	bc.json.set(capabilities, "foldingRangeProvider", true);
 	bc.json.set(capabilities, "definitionProvider", true);
 	bc.json.set(capabilities, "hoverProvider", true);
+	bc.json.set(capabilities, "selectionRangeProvider", true);
 	bc.json.set(bc.json.setObject(result, "serverInfo"), "name", "doir");
 	doir.lsp.session.send(s, d);
 }
@@ -271,6 +273,7 @@ private void handle(ref doir.lsp.session.Session s, const(char)[] message, ref b
 		case "textDocument/foldingRange": doir.lsp.features.folding.foldingRange(s, params, id); break;
 		case "textDocument/definition": doir.lsp.features.definition.definition(s, params, id); break;
 		case "textDocument/hover": doir.lsp.features.hover.hover(s, params, id); break;
+		case "textDocument/selectionRange": doir.lsp.features.selection.selectionRange(s, params, id); break;
 		default:
 			// Notifications it does not know, `initialized` and `$/cancelRequest` among them, need nothing; requests get an error.
 			if (bc.json.exists(id)) doir.lsp.session.respondError(s, id, -32_601, "the DOIR server does not handle this method");

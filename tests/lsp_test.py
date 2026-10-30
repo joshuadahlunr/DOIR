@@ -154,7 +154,7 @@ def decode(data):
 
 
 def test_features(server):
-    """Highlighting by range agrees with the whole file's; outline, folding, definition and hover read the store; comments fold."""
+    """Highlighting by range agrees with the whole file's; outline, folding, definition, hover and selection ranges read the store; comments fold."""
     client = Client(server, ["utf-16"])
     uri = "file:///tmp/features.doir"
     text = "// a comment\nmath : namespace = {\n\tpi : f64 = 3.14 // the circle constant\n\ttwice : (x: f64) -> f64\n\tuse : f64 = pi\n\tdoubled : f64 = twice(pi)\n}\nouter : f64 = math.pi\n"
@@ -178,6 +178,12 @@ def test_features(server):
     check(hover and hover["contents"]["value"] == "```doir\npi : f64 = 3.14\n```\n\nthe circle constant", f"hover {hover}", "hover shows the declaration and its trailing comment")
     hover = client.request("textDocument/hover", {"textDocument": {"uri": uri}, "position": {"line": 1, "character": 0}})
     check(hover and hover["contents"]["value"] == "```doir\nmath : namespace = { … }\n```\n\na comment", f"hover {hover}", "hover shows a block's header, not its body, and the comment directly above it")
+    ranges = client.request("textDocument/selectionRange", {"textDocument": {"uri": uri}, "positions": [{"line": 4, "character": 14}]})
+    starts, level = [], ranges[0]
+    while level:
+        starts.append((level["range"]["start"]["line"], level["range"]["start"]["character"]))
+        level = level.get("parent")
+    check(starts == [(4, 13), (4, 1), (1, 0), (0, 0)], f"selection ranges start at {starts}", "pi, then use, then math, then the file")
     comments_uri = "file:///tmp/comments.doir"
     open_document(client, comments_uri, "// one\n// two\n# three\nx : T = 1 // trailing\n// four\n/* a\nb */\ny : T = 2\n")
     folds = client.request("textDocument/foldingRange", {"textDocument": {"uri": comments_uri}})
