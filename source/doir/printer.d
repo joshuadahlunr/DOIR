@@ -1,4 +1,4 @@
-/// The pretty printer: a parsed block written back out as DOIR source, one declaration per line and nested blocks indented by a tab.
+/// The pretty printer: a parsed block written back out as DOIR source, one declaration per line, laid out by `doir.format` as the language server formats a file.
 /// It inverts `doir.syntax.parser`'s build, so the text parses back into an equivalent store: the same declarations, names, types, values, flags and source annotations (`AT-Source`).
 /// Comments, `language` blocks (`I-Language`) and literal spellings are not kept: a character or hexadecimal literal prints as its decimal value, a raw string as an escaped one, and a float as the shortest decimal that reads back to the same `double`.
 /// No literal is a NaN or reads back as positive infinity's own spelling, so a declaration's NaN or positive infinity prints as the `N-Limits` call on its written type, `std.numbers.not_a_number(T)` or `std.numbers.infinity(T)`, which reads back as that call rather than as a constant. A parameter default cannot be a call, so an infinite one prints as the literal `1e999` and a NaN one as the call, which does not parse.
@@ -30,6 +30,8 @@ static import std.typecons;
 
 static import fp.dynarray;
 static import fp.pointer;
+static import fp.testing;
+
 version(unittest) static import fp.testing;
 static import fp.string;
 static import fp.string.ascii;
@@ -40,6 +42,7 @@ static import ecrs.context;
 
 static import doir.components.ast;
 static import doir.components.source;
+static import doir.format;
 static import doir.strings;
 static import doir.engine.locations;
 static import doir.syntax.lexer;
@@ -129,15 +132,31 @@ private bool appendFloat(ref char* out_, double value) {
 
 // --- printing ----------------------------------------------------------------
 
+// The printer chooses tokens and where lines end; `doir.format` lays them out, so the two agree on spacing and indentation.
 private struct Printer {
 	const(ecrs.context.Context)* store;
 	const(doir.strings.Strings)* strings;
 	char* out_;
+	bool attached; // the next token follows the last with no space, as a call's `(` follows its callee
+}
+
+// Starts a token: a space after the last one on its line, unless it is attached.
+private bool space(ref Printer printer) {
+	immutable n = fp.string.length(printer.out_);
+	immutable separate = n && printer.out_[n - 1] != '\n' && !printer.attached;
+	printer.attached = false;
+	return !separate || fp.string.append(printer.out_, ' ');
+}
+
+// Appends the tokens of `text`, separated by spaces.
+private bool tokens(ref Printer printer, const(char)[] text) {
+	return space(printer) && fp.string.concatenate(printer.out_, text);
 }
 
 // `quote` forces `%"..."` where the plain spelling would make the parser build another form, as `type` before a block does.
 private bool appendName(ref Printer printer, doir.strings.StringId name, bool quote = false) {
 	const text = doir.strings.text(*printer.strings, name);
+	if (!space(printer)) return false;
 	if (!quote && isPlain(text)) return fp.string.concatenate(printer.out_, text);
 	return fp.string.concatenate(printer.out_, `%"`) && appendEscaped(printer.out_, text) && fp.string.concatenate(printer.out_, `"`);
 }
@@ -145,11 +164,12 @@ private bool appendName(ref Printer printer, doir.strings.StringId name, bool qu
 // A declaration's or parameter's own name, where a bare `_` spells none.
 private bool appendOwnName(ref Printer printer, EntityId e) {
 	auto name = ecrs.context.findComponent!(doir.components.ast.Name)(*printer.store, e);
-	return name is null ? fp.string.concatenate(printer.out_, "_") : appendName(printer, name.value, doir.strings.text(*printer.strings, name.value) == "_");
+	return name is null ? tokens(printer, "_") : appendName(printer, name.value, doir.strings.text(*printer.strings, name.value) == "_");
 }
 
 // The value of `typed`, a declaration or, if `parameter`, a parameter default, whose written type a NaN or an infinity's `N-Limits` call names.
 private bool appendConstant(ref Printer printer, EntityId typed, bool parameter, ref const doir.components.ast.ConstantVal value) {
+	if (!space(printer)) return false;
 	final switch (value.kind) {
 		case doir.components.ast.ConstantVal.Kind.integer:
 			return fp.string.append(printer.out_, value.integerValue);
@@ -157,9 +177,10 @@ private bool appendConstant(ref Printer printer, EntityId typed, bool parameter,
 			return fp.string.append(printer.out_, "-") && fp.string.append(printer.out_, 0 - value.integerValue);
 		case doir.components.ast.ConstantVal.Kind.float_:
 			immutable notANumber = value.floatValue != value.floatValue;
-			if (notANumber || (!parameter && value.floatValue == double.infinity))
-				return fp.string.concatenate(printer.out_, notANumber ? "std.numbers.not_a_number(" : "std.numbers.infinity(") && appendType(printer, typed, parameter) && fp.string.concatenate(printer.out_, ")");
-			return appendFloat(printer.out_, value.floatValue);
+			if (!notANumber && (parameter || value.floatValue != double.infinity)) return appendFloat(printer.out_, value.floatValue);
+			if (!fp.string.concatenate(printer.out_, notANumber ? "std.numbers.not_a_number" : "std.numbers.infinity")) return false;
+			printer.attached = true;
+			return tokens(printer, "(") && appendType(printer, typed, parameter) && tokens(printer, ")");
 		case doir.components.ast.ConstantVal.Kind.bytes:
 			return fp.string.concatenate(printer.out_, `"`) && appendEscaped(printer.out_, doir.strings.text(*printer.strings, value.bytesValue)) && fp.string.concatenate(printer.out_, `"`);
 	}
@@ -168,7 +189,7 @@ private bool appendConstant(ref Printer printer, EntityId typed, bool parameter,
 // A parameter's `deduced type` is the interned `deducedTypeName`, which only a parameter may spell bare (`D-Deduce`).
 private bool appendType(ref Printer printer, EntityId e, bool parameter, bool quote = false) {
 	if (auto lookup = ecrs.context.findComponent!(doir.components.ast.LookupTypeOf)(*printer.store, e)) {
-		if (parameter && doir.strings.text(*printer.strings, lookup.name) == doir.components.ast.deducedTypeName) return fp.string.concatenate(printer.out_, "deduced type");
+		if (parameter && doir.strings.text(*printer.strings, lookup.name) == doir.components.ast.deducedTypeName) return tokens(printer, "deduced type");
 		return appendName(printer, lookup.name, quote);
 	}
 	auto typeOf = ecrs.context.findComponent!(doir.components.ast.TypeOf)(*printer.store, e);
@@ -178,24 +199,18 @@ private bool appendType(ref Printer printer, EntityId e, bool parameter, bool qu
 
 // `(a: T, b: U = 5) -> V`, from function type `functionType`'s parameters and return type (`R-Param`, `F-Default`).
 private bool appendFunctionType(ref Printer printer, EntityId functionType) {
-	if (!fp.string.concatenate(printer.out_, "(")) return false;
+	if (!tokens(printer, "(")) return false;
 	foreach (i, parameter; fp.dynarray.slice(ecrs.context.getComponent!(doir.components.ast.FunctionInputs)(*printer.store, functionType).related)) {
-		if (i && !fp.string.concatenate(printer.out_, ", ")) return false;
-		if (!appendOwnName(printer, parameter) || !fp.string.concatenate(printer.out_, ": ") || !appendType(printer, parameter, true)) return false;
+		if (i && !tokens(printer, ",")) return false;
+		if (!appendOwnName(printer, parameter) || !tokens(printer, ":") || !appendType(printer, parameter, true)) return false;
 		if (auto constant = ecrs.context.findComponent!(doir.components.ast.ConstantVal)(*printer.store, parameter)) {
-			if (!fp.string.concatenate(printer.out_, " = ") || !appendConstant(printer, parameter, true, *constant)) return false;
+			if (!tokens(printer, "=") || !appendConstant(printer, parameter, true, *constant)) return false;
 		} else if (auto value = ecrs.context.findComponent!(doir.components.ast.LookupValue)(*printer.store, parameter))
-			if (!fp.string.concatenate(printer.out_, " = ") || !appendName(printer, value.name)) return false;
+			if (!tokens(printer, "=") || !appendName(printer, value.name)) return false;
 	}
-	if (!fp.string.concatenate(printer.out_, ")")) return false;
-	if (auto lookup = ecrs.context.findComponent!(doir.components.ast.LookupFunctionReturn)(*printer.store, functionType)) return fp.string.concatenate(printer.out_, " -> ") && appendName(printer, lookup.name);
-	if (auto returned = ecrs.context.findComponent!(doir.components.ast.FunctionReturn)(*printer.store, functionType)) return fp.string.concatenate(printer.out_, " -> ") && appendFunctionType(printer, returned.type);
-	return true;
-}
-
-private bool appendIndent(ref Printer printer, size_t depth) {
-	foreach (_; 0 .. depth)
-		if (!fp.string.append(printer.out_, '\t')) return false;
+	if (!tokens(printer, ")")) return false;
+	if (auto lookup = ecrs.context.findComponent!(doir.components.ast.LookupFunctionReturn)(*printer.store, functionType)) return tokens(printer, "->") && appendName(printer, lookup.name);
+	if (auto returned = ecrs.context.findComponent!(doir.components.ast.FunctionReturn)(*printer.store, functionType)) return tokens(printer, "->") && appendFunctionType(printer, returned.type);
 	return true;
 }
 
@@ -204,7 +219,7 @@ private bool appendAnnotation(ref Printer printer, ref const doir.components.sou
 	const at = annotation.location;
 	// A quote in the name would end the quoted form early; the bare form ends at the first `:`.
 	immutable quoted = fp.string.find(at.file, `"`, 0) == fp.pointer.notFound;
-	if (!fp.string.concatenate(printer.out_, quoted ? ` <"` : " <") || !fp.string.concatenate(printer.out_, at.file) || !fp.string.concatenate(printer.out_, quoted ? `":` : ":")) return false;
+	if (!tokens(printer, quoted ? `<"` : "<") || !fp.string.concatenate(printer.out_, at.file) || !fp.string.concatenate(printer.out_, quoted ? `":` : ":")) return false;
 	if (!fp.string.append(printer.out_, at.start.line)) return false;
 	if (at.end.line != at.start.line && !fp.string.append(printer.out_, "-", at.end.line)) return false;
 	if (!fp.string.append(printer.out_, ":", at.start.column)) return false;
@@ -212,26 +227,26 @@ private bool appendAnnotation(ref Printer printer, ref const doir.components.sou
 	return fp.string.concatenate(printer.out_, ">");
 }
 
-private bool appendBlock(ref Printer printer, EntityId block, size_t depth) {
+private bool appendBlock(ref Printer printer, EntityId block) {
 	foreach (e; fp.dynarray.slice(ecrs.context.getComponent!(doir.components.ast.Block)(*printer.store, block).related))
-		if (!appendDeclaration(printer, e, depth)) return false;
+		if (!appendDeclaration(printer, e)) return false;
 	return true;
 }
 
 // One `assignment` of `doir.peg`, the forms `doir.builders` documents, ended by a newline.
-private bool appendDeclaration(ref Printer printer, EntityId e, size_t depth) {
+private bool appendDeclaration(ref Printer printer, EntityId e) {
 	auto store = printer.store;
 	auto flags = ecrs.context.findComponent!(doir.components.ast.Flags)(*store, e);
 	immutable set = flags is null ? doir.components.ast.Flags.None : flags.flags;
-	if (!appendIndent(printer, depth) || !fp.string.concatenate(printer.out_, set & doir.components.ast.Flags.Export ? "export " : "")) return false;
-	if (!appendOwnName(printer, e) || !fp.string.concatenate(printer.out_, " : ")) return false;
+	if ((set & doir.components.ast.Flags.Export) && !tokens(printer, "export")) return false;
+	if (!appendOwnName(printer, e) || !tokens(printer, ":")) return false;
 
 	auto block = ecrs.context.findComponent!(doir.components.ast.Block)(*store, e);
 	auto alias_ = ecrs.context.findComponent!(doir.components.ast.LookupAlias)(*store, e);
 	auto reference = ecrs.context.findComponent!(doir.components.ast.LookupValue)(*store, e);
 	bool ok;
-	if (set & doir.components.ast.Flags.Namespace) ok = fp.string.concatenate(printer.out_, "namespace");
-	else if (alias_ !is null) ok = fp.string.concatenate(printer.out_, "alias = ") && appendName(printer, alias_.name);
+	if (set & doir.components.ast.Flags.Namespace) ok = tokens(printer, "namespace");
+	else if (alias_ !is null) ok = tokens(printer, "alias =") && appendName(printer, alias_.name);
 	else {
 		// The parser reads `type` and `namespace` before a block, and `alias` before a name, as other forms (`WF-Kind`).
 		bool quote = false;
@@ -245,19 +260,21 @@ private bool appendDeclaration(ref Printer printer, EntityId e, size_t depth) {
 	if (!ok) return false;
 
 	if (block !is null) {
-		if (!fp.string.concatenate(printer.out_, " = {\n") || !appendBlock(printer, e, depth + 1) || !appendIndent(printer, depth) || !fp.string.concatenate(printer.out_, "}")) return false;
+		if (!tokens(printer, "= {\n") || !appendBlock(printer, e) || !fp.string.concatenate(printer.out_, "}")) return false;
 	} else if (auto constant = ecrs.context.findComponent!(doir.components.ast.ConstantVal)(*store, e)) {
-		if (!fp.string.concatenate(printer.out_, " = ") || !appendConstant(printer, e, false, *constant)) return false;
+		if (!tokens(printer, "=") || !appendConstant(printer, e, false, *constant)) return false;
 	} else if (auto callee = ecrs.context.findComponent!(doir.components.ast.LookupCall)(*store, e)) {
-		immutable prefix = set & doir.components.ast.Flags.Inline ? "inline " : set & doir.components.ast.Flags.Flatten ? "flatten " : set & doir.components.ast.Flags.Tail ? "tail " : "";
-		if (!fp.string.concatenate(printer.out_, " = ") || !fp.string.concatenate(printer.out_, prefix) || !appendName(printer, callee.name) || !fp.string.concatenate(printer.out_, "(")) return false;
+		immutable prefix = set & doir.components.ast.Flags.Inline ? "inline" : set & doir.components.ast.Flags.Flatten ? "flatten" : set & doir.components.ast.Flags.Tail ? "tail" : "";
+		if (!tokens(printer, "=") || (prefix.length && !tokens(printer, prefix)) || !appendName(printer, callee.name)) return false;
+		printer.attached = true;
+		if (!tokens(printer, "(")) return false;
 		foreach (i, argument; fp.dynarray.slice(ecrs.context.getComponent!(doir.components.ast.LookupFunctionInputs)(*store, e).names.p))
-			if ((i && !fp.string.concatenate(printer.out_, ", ")) || !appendName(printer, argument)) return false;
-		if (!fp.string.concatenate(printer.out_, ")")) return false;
+			if ((i && !tokens(printer, ",")) || !appendName(printer, argument)) return false;
+		if (!tokens(printer, ")")) return false;
 	} else if (reference !is null) {
-		if (!fp.string.concatenate(printer.out_, " = ") || !appendName(printer, reference.name)) return false;
+		if (!tokens(printer, "=") || !appendName(printer, reference.name)) return false;
 	} else if (ecrs.context.hasComponent!(doir.components.ast.FunctionInputs)(*store, e)) {
-		if (!fp.string.concatenate(printer.out_, " = ") || !appendFunctionType(printer, e)) return false;
+		if (!tokens(printer, "=") || !appendFunctionType(printer, e)) return false;
 	}
 
 	if (auto annotation = ecrs.context.findComponent!(doir.components.source.SourceAnnotation)(*store, e))
@@ -289,11 +306,15 @@ private bool appendDeclaration(ref Printer printer, EntityId e, size_t depth) {
 /// ---
 std.typecons.Nullable!(char*) print(ref const ecrs.context.Context store, ref const doir.strings.Strings strings, EntityId block) {
 	auto printer = Printer(&store, &strings, null);
-	if (!appendBlock(printer, block, 0)) {
-		fp.string.free(printer.out_);
+	scope(exit) fp.string.free(printer.out_);
+	doir.format.Formatted layout;
+	scope(exit) doir.format.free(layout);
+	char* out_ = null;
+	if (!appendBlock(printer, block) || !doir.format.format(fp.string.slice(printer.out_), 0, layout) || !doir.format.apply(fp.string.slice(printer.out_), layout, out_)) {
+		fp.string.free(out_);
 		return typeof(return).init;
 	}
-	return typeof(return)(printer.out_);
+	return typeof(return)(out_);
 }
 
 
