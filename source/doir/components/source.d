@@ -1,4 +1,4 @@
-/// The components of source files and the declarations parsed from them (`roadmap.md` Phase 2): a file's text and lines, the keys the input commit matches declarations by across reparses, the files a block imports (`I-Import`), and every parsed entity's `SourceSpan`, relative to its parent's start, with the `SourceAnnotation` that overrides it (`AT-Source`). Every one holding an entity id mixes in `ecrs.relation.Relates` (`E-Remap`).
+/// The components of source files and the declarations parsed from them (`roadmap.md` Phase 2): a file's text and lines, the syntax errors in each block, the keys the input commit matches declarations by across reparses, the files a block imports (`I-Import`), and every parsed entity's `SourceSpan`, relative to its parent's start, with the `SourceAnnotation` that overrides it (`AT-Source`). Every one holding an entity id mixes in `ecrs.relation.Relates` (`E-Remap`).
 ///
 /// Examples:
 /// ---
@@ -12,6 +12,7 @@
 module doir.components.source;
 
 static import fp.dynarray;
+static import fp.rope;
 static import fp.string;
 
 static import diagnose;
@@ -33,41 +34,22 @@ struct SourceFile {
 	doir.strings.StringId path; /// The path, as the build named it.
 }
 
-/// A file's text, owned by its input entity, which every parsed entity's location slices.
+/// A file's path and its text as of the last commit, owned by its input entity. Every parsed entity's location is a range of it, and its lines are kept by the text itself (`fp.rope`).
 struct SourceText {
-	char* text = null; /// An owned fp string.
+	const(char)[] path; /// The path, interned, so it outlives every version of the text.
+	fp.rope.Rope text; /// The version the last commit wrote; this component owns it.
 
 	/// Releases the text when the component is removed.
 	///
 	/// Examples:
 	/// ---
-	/// static import fp.string;
-	/// SourceText s = SourceText(fp.string.makeDynamic("x"));
+	/// static import fp.rope;
+	/// SourceText s = SourceText("a.doir", fp.rope.create("x").get);
 	/// s.finalize();
-	/// assert(s.text is null);
+	/// assert(fp.rope.length(s.text) == 0);
 	/// ---
 	void finalize() @nogc nothrow {
-		fp.string.free(text);
-		text = null;
-	}
-}
-
-/// A file's path and current text, which the input commit sets, and the starts of its lines, computed the first time a location in it is asked for.
-struct SourceLines {
-	const(char)[] path; /// The path, interned, so it outlives every version of the text.
-	const(char)[] text; /// The text as of the last commit, owned by the file's `SourceText`.
-	size_t* starts = null; /// The byte offset of each line's start, or null until computed; an fp dynarray.
-
-	/// Releases the line starts when the component is removed.
-	///
-	/// Examples:
-	/// ---
-	/// SourceLines lines;
-	/// lines.finalize();
-	/// ---
-	void finalize() @nogc nothrow {
-		fp.dynarray.free(starts);
-		starts = null;
+		fp.rope.free(text);
 	}
 }
 
@@ -121,6 +103,62 @@ struct SourceSpan {
 /// The location a source annotation wrote on its declaration (`AT-Source`), which replaces the derived one.
 struct SourceAnnotation {
 	diagnose.Detailed location; /// The annotated range; its file name is interned, so it outlives the text it was parsed from.
+}
+
+
+// --- syntax errors -----------------------------------------------------------
+
+/// An edit a syntax error's hint states exactly: `text`, with a space before and after it where `spaceBefore` and `spaceAfter` say, written over the bytes from `from` to `to`, counted from where the error is reported, so it moves with the error.
+struct SyntaxFix {
+	int from; /// Where the replaced bytes start, from where the error is reported; negative before it.
+	int to; /// Where the replaced bytes end, from where the error is reported; equal to `from` for an insertion.
+	string text; /// What is written there, without the spaces; a view of the parser's tables, so it needs no freeing.
+	bool spaceBefore; /// Whether a space goes before `text`, as in `x : T = {`.
+	bool spaceAfter; /// Whether a space goes after `text`.
+}
+
+/// The most fixes one syntax error offers: one per token its hint lists.
+enum maxSyntaxFixes = 9;
+
+/// The fixes a syntax error offers, in the order its hint names them.
+struct SyntaxFixes {
+	SyntaxFix[maxSyntaxFixes] items; /// The first `length` are the fixes.
+	size_t length; /// How many there are.
+}
+
+/// A syntax error the parse recovered from, as `SyntaxErrors` keeps it.
+struct StoredError {
+	uint at; /// Bytes from its holder's start to where it is reported.
+	uint opening = noOpening; /// Bytes from its holder's start to the bracket a missing closer would close, or `noOpening`.
+	char* message = null; /// What went wrong; an owned fp string.
+	char* hint = null; /// How to fix it; an owned fp string.
+	char* note = null; /// What DOIR expects there, for someone new to it; an owned fp string.
+	SyntaxFixes fixes; /// The edits its hint states exactly, for an editor to offer.
+}
+
+/// `StoredError.opening` when no bracket is left open.
+enum uint noOpening = uint.max;
+
+/// The syntax errors found directly in a block when it was last parsed: held by the innermost block-valued declaration enclosing them, or by the file's root block, with offsets from its start, so they move with its span. A commit replaces them whenever it reparses the block and leaves them alone when it skips it as unchanged.
+struct SyntaxErrors {
+	StoredError* errors = null; /// In source order; an owned fp dynarray.
+
+	/// Releases the errors and their strings when the component is removed.
+	///
+	/// Examples:
+	/// ---
+	/// SyntaxErrors s;
+	/// s.finalize();
+	/// assert(s.errors is null);
+	/// ---
+	void finalize() @nogc nothrow {
+		foreach (ref error; fp.dynarray.slice(errors)) {
+			fp.string.free(error.message);
+			fp.string.free(error.hint);
+			fp.string.free(error.note);
+		}
+		fp.dynarray.free(errors);
+	}
 }
 
 unittest { // libECRS silently skips a holder whose hook is not `@nogc nothrow`; every holder of an entity id must pass (E-Remap)

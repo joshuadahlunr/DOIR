@@ -10,13 +10,17 @@
 		"source"
 	],
 	"dependencies": {
+		"bc-fetch": {
+			"repository": "git+https://github.com/doir-lang/bc-fetch",
+			"version": "850980844d612d2da2485b81a59d8b5bd17673c9"
+		},
 		"libecrs": {
 			"repository": "git+https://github.com/doir-lang/libECRS.git",
-			"version": "cceb48287d643e83882910ad7334d788d2d2f631"
+			"version": "3d4416c1501317b5ccf7b989de22bd5067ba3c1b"
 		},
 		"libdiagnose": {
 			"repository": "git+https://github.com/doir-lang/libdiagnose.git",
-			"version": "807e273e912a0cb7e3dd9a29b784e236c4bf13c6"
+			"version": "ee3e09b3b69418367268506dcfbb91742f7e5382"
 		},
 		"mizu": {
 			"path": "mizu"
@@ -59,5 +63,8 @@
 			"targetPath": "bin",
 			"targetName": "doir-tests"
 		}
-	]
+	],
+	"subConfigurations": {
+		"bc-threads": "library"
+	}
 }

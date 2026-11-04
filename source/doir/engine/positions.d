@@ -16,9 +16,11 @@
 /// ---
 module doir.engine.positions;
 
-static import fp.dynarray;
-static import fp.fnv1a;
-static import fp.hashtable;
+static import fp.pointer;
+version(unittest) static import fp.testing;
+
+static import bc.interner;
+
 
 @nogc nothrow:
 
@@ -39,23 +41,9 @@ enum Position none = Position.init;
 // Digits are 1 .. maxDigit; maxDigit + 1 still fits, so a midpoint never overflows.
 private enum ulong maxDigit = ulong.max - 1;
 
-private struct Entry {
-	const(ulong)[] digits;
-	Position id;
-}
-
-private size_t hashEntry(inout(ubyte)[] bytes) @trusted {
-	return fp.fnv1a.hash((cast(const(Entry)*) bytes.ptr).digits);
-}
-
-private bool equalEntry(inout(ubyte)[] a, inout(ubyte)[] b) @trusted {
-	return (cast(const(Entry)*) a.ptr).digits == (cast(const(Entry)*) b.ptr).digits;
-}
-
-/// The interning table of order keys. Plain data, released only by `free`; it holds no entity ids, so `E-Remap` leaves it alone.
+/// The interning table of order keys. Any thread may make positions at once (`bc.interner`); `free` it from one thread. It holds no entity ids, so `E-Remap` leaves it alone.
 struct Positions {
-	private Entry* table = null;
-	private ulong** keys = null; // keys[i] is the key of Position(i + 1); root has no storage
+	private bc.interner.Interner!ulong keys; // the key of Position(i + 1) is id i; root has no storage
 }
 
 
@@ -63,8 +51,8 @@ struct Positions {
 
 private const(ulong)[] digitsOf(ref const Positions positions, Position p) @trusted {
 	if (p == root) return null;
-	assert(p != none && p.value - 1 < fp.dynarray.length(positions.keys));
-	return fp.dynarray.slice(positions.keys[p.value - 1]);
+	assert(p != none);
+	return bc.interner.content(positions.keys, p.value - 1);
 }
 
 /// Orders `a` and `b`: negative if `a` comes first, zero if they are the same position, positive otherwise. `none` comes after every other position.
@@ -102,36 +90,15 @@ bool precedes(ref const Positions positions, Position a, Position b) {
 
 // --- creation and freeing ----------------------------------------------------
 
-private Position intern(ref Positions positions, ulong* digits) @trusted {
-	if (positions.table is null) {
-		fp.hashtable.Config config;
-		config.hashFunction = &hashEntry;
-		config.equalFunction = &equalEntry;
-		positions.table = fp.hashtable.create!Entry(config);
-		if (positions.table is null) return none;
-	}
-	auto found = fp.hashtable.find(positions.table, Entry(fp.dynarray.slice(digits), none));
-	if (found !is null) return found.id;
-	assert(fp.dynarray.length(positions.keys) < uint.max - 2, "doir.positions: id space exhausted");
-	immutable id = Position(cast(uint) fp.dynarray.length(positions.keys) + 1);
-	auto copy = fp.dynarray.clone(digits);
-	if (copy is null) return none;
-	if (!fp.dynarray.pushBack(positions.keys, copy)) {
-		fp.dynarray.free(copy);
-		return none;
-	}
-	if (fp.hashtable.insert(positions.table, Entry(fp.dynarray.slice(copy), id)) is null) {
-		cast(void) fp.dynarray.popBack(positions.keys);
-		fp.dynarray.free(copy);
-		return none;
-	}
-	return id;
+private Position intern(ref Positions positions, ulong* digits) {
+	immutable id = bc.interner.intern(positions.keys, fp.dynarray.slice(digits));
+	return id == bc.interner.none ? none : Position(id + 1);
 }
 
 // The segment of `child`'s key below `parent`, without its terminating 0.
 private const(ulong)[] localOf(ref const Positions positions, Position parent, Position child) {
 	auto p = digitsOf(positions, parent), c = digitsOf(positions, child);
-	assert(c.length > p.length && c[0 .. p.length] == p && c[$ - 1] == 0, "doir.positions: sibling is not a child of parent");
+	assert(c.length > p.length && c[0 .. p.length] == p && c[$ - 1] == 0, "doir.engine.positions: sibling is not a child of parent");
 	return c[p.length .. $ - 1];
 }
 
@@ -193,16 +160,11 @@ Position between(ref Positions positions, Position parent, Position previous, Po
 /// cast(void) between(positions, root, none, none);
 /// free(positions);
 /// ---
-void free(ref Positions positions) @trusted {
-	foreach (k; fp.dynarray.slice(positions.keys)) fp.dynarray.free(k);
-	fp.dynarray.free(positions.keys);
-	positions.keys = null;
-	fp.hashtable.free(positions.table);
+void free(ref Positions positions) {
+	bc.interner.free(positions.keys);
 }
 
 
-version(unittest) static import fp.pointer;
-version(unittest) static import doir.testing;
 
 unittest {
 	Positions positions;
@@ -247,15 +209,15 @@ unittest {
 	Position previous = none;
 	foreach (i; 0 .. 100) {
 		for (size_t budget = 0;; ++budget) {
-			auto allocator = doir.testing.beginRationedAllocator(budget);
+			auto allocator = fp.testing.beginRationedAllocator(budget);
 			immutable next = between(rationed, root, previous, none);
-			fp.pointer.allocFunction = allocator;
+			fp.testing.endRationedAllocator(allocator);
 			if (next != none) {
 				assert(next.value == i + 1 && (previous == none || precedes(rationed, previous, next)));
 				previous = next;
 				break;
 			}
-			assert(fp.dynarray.length(rationed.keys) == i);
+			assert(bc.interner.count(rationed.keys) == i);
 		}
 	}
 }

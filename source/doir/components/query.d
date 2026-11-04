@@ -1,4 +1,4 @@
-/// The components a query entity carries (`roadmap.md` Phase 1): its key and value, revisions, dependencies, what it produced and created, and the diagnostics it reported. `doir.engine.query` reads and writes them. Every one holding an entity id mixes in `ecrs.relation.Relates` or forwards to one that does (`E-Remap`).
+/// The components a query entity carries (`roadmap.md` Phase 1): its key and value, revisions, dependencies, what it produced and created, and the diagnostics it reported. `doir.query` reads and writes them. Every one holding an entity id mixes in `ecrs.relation.Relates` or forwards to one that does (`E-Remap`).
 ///
 /// Examples:
 /// ---
@@ -20,7 +20,7 @@ static import ecrs.context;
 static import ecrs.registry;
 static import ecrs.relation;
 
-static import doir.engine.query;
+static import doir.query;
 
 public import ecrs.registry : EntityId, invalidEntity;
 
@@ -31,16 +31,29 @@ public import ecrs.registry : EntityId, invalidEntity;
 
 /// The revision an entity last changed in: set on inputs by `markChanged`, and on a query entity whenever a run produces a different value or different components.
 struct ChangedAt {
-	doir.engine.query.Revision revision;
+	doir.query.Revision revision;
 }
 
-/// The revision a query entity's value was last confirmed current in.
+/// The revision a query entity's value was last confirmed current in, and whether that confirmation still holds without checking its dependencies.
 struct VerifiedAt {
-	doir.engine.query.Revision revision;
+	doir.query.Revision revision;
+	bool stale; /// Something it depends on changed since, as `doir.query.markChanged` pushes along `Dependents`. Accessed atomically.
+	bool reports; /// It or a query below it holds diagnostics, which reusing it reports. Accessed atomically.
+	bool reportsBelow; /// A query below it holds diagnostics, so reusing it walks its dependencies to report them, even when it is not stale. Accessed atomically.
 }
 
 /// The entities and query entities a query read during its last run.
 struct DependsOn {
+	mixin ecrs.relation.Relates;
+}
+
+/// The queries a query depends on that hold diagnostics, or have one below them that does, in the order it read them: what reusing it walks to, to report them again, instead of every dependency. Every query entity has one, so a worker confirming a query only writes it.
+struct ReportingBelow {
+	mixin ecrs.relation.Relates;
+}
+
+/// The query entities that read an entity, so a change to it marks them stale. It may still list a query that no longer reads it, which costs that query one re-validation.
+struct Dependents {
 	mixin ecrs.relation.Relates;
 }
 
@@ -192,22 +205,24 @@ struct InCycle {
 	enum isTag = true;
 }
 
-/// Marks a running query with the index of its frame on the engine's stack, so finding it never scans the stack. Present only while the query runs.
+/// Which thread runs a query, if any, and where, so finding it never scans a stack; every query entity has one. A worker claims a query by setting `owner` atomically, and a demand from another worker waits until it is 0 again (`doir.query.demandEach`).
 struct Running {
-	size_t frame; /// Its index in the engine's stack.
+	uint owner; /// 0 if no thread runs it; 1 for the engine's own thread; 2 on for a batch's workers. Accessed atomically.
+	size_t frame = size_t.max; /// Its index in its owner's stack while it runs, `size_t.max` otherwise, as while a worker validates it.
+	bool withheld; /// A worker brought it up to date, and it or a query below it has diagnostics not yet reported, which the engine's thread reports in order.
 }
 
 
 // --- query entities ----------------------------------------------------------
 
 /// Brings query entity `q` up to date, re-running it if needed. Returns false if it cannot: `q` is already running, the depth limit is reached, or its run failed on a refused allocation.
-alias RefreshFunction = bool function(ref doir.engine.query.QueryEngine engine, EntityId q) @nogc nothrow;
+alias RefreshFunction = bool function(ref doir.query.QueryEngine engine, EntityId q) @nogc nothrow;
 
 /// Discards query entity `q`'s value and what it produced and created, so the next demand runs it.
-alias ResetFunction = void function(ref doir.engine.query.QueryEngine engine, EntityId q) @nogc nothrow;
+alias ResetFunction = void function(ref doir.query.QueryEngine engine, EntityId q) @nogc nothrow;
 
 /// Appends a description of query entity `q`, such as `Layout(12)`, to an fp string. Returns false if the string could not grow, leaving it holding a prefix of the description.
-alias DescribeFunction = bool function(ref doir.engine.query.QueryEngine engine, EntityId q, ref char* out_) @nogc nothrow;
+alias DescribeFunction = bool function(ref doir.query.QueryEngine engine, EntityId q, ref char* out_) @nogc nothrow;
 
 /// Marks an entity as a query instance, with the type-erased entry points that let a dependent re-validate it and a cycle report name it.
 struct QueryInfo {
@@ -223,7 +238,7 @@ struct QueryInfo {
 /// struct Identity {
 /// 	alias Key = int;
 /// 	alias Value = int;
-/// 	static int compute(ref doir.engine.query.QueryEngine engine, int key) @nogc nothrow { return key; }
+/// 	static int compute(ref doir.query.QueryEngine engine, int key) @nogc nothrow { return key; }
 /// }
 /// QueryKey!Identity k;
 /// k.key = 3;
@@ -241,7 +256,7 @@ struct QueryKey(Q) {
 	/// struct Of {
 	/// 	alias Key = ecrs.relation.Relation!1;
 	/// 	alias Value = int;
-	/// 	static int compute(ref doir.engine.query.QueryEngine engine, Key key) @nogc nothrow { return 0; }
+	/// 	static int compute(ref doir.query.QueryEngine engine, Key key) @nogc nothrow { return 0; }
 	/// }
 	/// auto k = QueryKey!Of(Of.Key([1]));
 	/// immutable EntityId[2] remap = [0, 7];
@@ -258,7 +273,7 @@ struct QueryKey(Q) {
 /// struct Constant {
 /// 	alias Key = int;
 /// 	alias Value = int;
-/// 	static int compute(ref doir.engine.query.QueryEngine engine, int key) @nogc nothrow { return 1; }
+/// 	static int compute(ref doir.query.QueryEngine engine, int key) @nogc nothrow { return 1; }
 /// }
 /// QueryValue!Constant v;
 /// v.value = 1;
@@ -276,7 +291,7 @@ struct QueryValue(Q) {
 	/// struct Pick {
 	/// 	alias Key = int;
 	/// 	alias Value = ecrs.relation.Relation!1;
-	/// 	static Value compute(ref doir.engine.query.QueryEngine engine, int key) @nogc nothrow { return Value([1]); }
+	/// 	static Value compute(ref doir.query.QueryEngine engine, int key) @nogc nothrow { return Value([1]); }
 	/// }
 	/// auto v = QueryValue!Pick(Pick.Value([1]));
 	/// immutable EntityId[2] remap = [0, 7];
@@ -298,7 +313,7 @@ struct QueryValue(Q) {
 	/// struct Listed {
 	/// 	alias Key = int;
 	/// 	alias Value = Owning;
-	/// 	static Owning compute(ref doir.engine.query.QueryEngine engine, int key) @nogc nothrow { return Owning.init; }
+	/// 	static Owning compute(ref doir.query.QueryEngine engine, int key) @nogc nothrow { return Owning.init; }
 	/// 	static bool valueEqual(ref const Owning a, ref const Owning b) @nogc nothrow { return true; }
 	/// }
 	/// QueryValue!Listed v;
@@ -308,5 +323,5 @@ struct QueryValue(Q) {
 }
 
 unittest { // libECRS silently skips a holder whose hook is not `@nogc nothrow`; every holder of an entity id must pass (E-Remap)
-	static assert(ecrs.registry.hasRemapEntities!DependsOn && ecrs.registry.hasRemapEntities!Produces && ecrs.registry.hasRemapEntities!Creates && ecrs.registry.hasRemapEntities!Provenance && ecrs.registry.hasRemapEntities!QueryDiagnostics && ecrs.registry.hasRemapEntities!QueryAnnotation && ecrs.registry.hasRemapEntities!ProvisionalOn);
+	static assert(ecrs.registry.hasRemapEntities!DependsOn && ecrs.registry.hasRemapEntities!ReportingBelow && ecrs.registry.hasRemapEntities!Produces && ecrs.registry.hasRemapEntities!Creates && ecrs.registry.hasRemapEntities!Provenance && ecrs.registry.hasRemapEntities!QueryDiagnostics && ecrs.registry.hasRemapEntities!QueryAnnotation && ecrs.registry.hasRemapEntities!ProvisionalOn);
 }

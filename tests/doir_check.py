@@ -7,7 +7,7 @@
 
 doir.peg is a pe (https://github.com/goodmami/pe) grammar, loaded by `doir_grammar.py`; each rule match becomes a `Node`.
 
-    uv run tools/doir_check.py [-a] [-g doir.peg] file.doir... [-p program.doir...]
+    uv run tests/doir_check.py [-a] [-g doir.peg] file.doir... [-p program.doir...]
 
 Files after -p are programs, whose root must also end with a terminator (L-Entry).
 """
@@ -20,7 +20,9 @@ import sys
 
 import pe
 
-import doir_grammar
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent / "tools"))  # doir_grammar is a tool, shared with doir_doc and doirp
+
+import doir_grammar  # noqa: E402
 
 SCANNED_CALLS = frozenset({"compiler.levels.make", "compiler.levels.this_file", "compiler.levels.lower_to", "compiler.levels.bundle"})
 

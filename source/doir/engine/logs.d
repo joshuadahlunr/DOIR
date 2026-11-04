@@ -13,14 +13,14 @@
 module doir.engine.logs;
 
 static import fp.dynarray;
-static import fp.fnv1a;
+static import fp.hash;
 
 static import ecrs.context;
 static import ecrs.registry;
 static import ecrs.relation;
 
 static import doir.engine.positions;
-static import doir.engine.query;
+static import doir.query;
 static import doir.components.query;
 
 public import ecrs.registry : EntityId, invalidEntity;
@@ -134,15 +134,15 @@ package(doir) size_t hash(L)(ref const ecrs.context.Context store, EntityId e, s
 	size_t h = 0;
 	foreach (ref entry; fp.dynarray.slice(log.entries))
 		if (entry.owner == owner) {
-			h = (h ^ entry.at.value) * 0x100000001b3;
+			h = fp.hash.mix(h, entry.at.value);
 			static if (__traits(hasMember, typeof(entry.effect), "contentHash")) immutable effectHash = typeof(entry.effect).contentHash(entry.effect);
-			else immutable effectHash = fp.fnv1a.hash((cast(const(ubyte)*) &entry.effect)[0 .. entry.effect.sizeof]);
-			h = (h ^ effectHash) * 0x100000001b3;
+			else immutable effectHash = fp.hash.murmur((cast(const(ubyte)*) &entry.effect)[0 .. entry.effect.sizeof]);
+			h = fp.hash.mix(h, effectHash);
 		}
 	return h;
 }
 
-/// Adds `effect` at `at` to log component `L` on `e`, owned by the running query, after every entry at or before `at`; adds `L` to `e` if it has none. The entry is stripped when the query runs again or is evicted. Returns false on a refused allocation, which fails the running queries (`doir.engine.query.fail`) and adds no entry.
+/// Adds `effect` at `at` to log component `L` on `e`, owned by the running query, after every entry at or before `at`; adds `L` to `e` if it has none. The entry is stripped when the query runs again or is evicted. Returns false on a refused allocation, which fails the running queries (`doir.query.fail`) and adds no entry.
 ///
 /// Examples:
 /// ---
@@ -154,40 +154,40 @@ package(doir) size_t hash(L)(ref const ecrs.context.Context store, EntityId e, s
 /// struct Mark {
 /// 	alias Key = ecrs.relation.Relation!1;
 /// 	alias Value = bool;
-/// 	static bool compute(ref doir.engine.query.QueryEngine engine, Key key) @nogc nothrow {
+/// 	static bool compute(ref doir.query.QueryEngine engine, Key key) @nogc nothrow {
 /// 		return append!(Marks, uint)(engine, key.related[0], doir.engine.positions.none, 4);
 /// 	}
 /// }
 /// auto store = ecrs.context.create();
 /// scope(exit) ecrs.context.free(store);
-/// doir.engine.query.QueryEngine engine;
+/// doir.query.QueryEngine engine;
 /// engine.store = &store;
-/// scope(exit) doir.engine.query.free(engine);
+/// scope(exit) doir.query.free(engine);
 /// immutable e = ecrs.context.addEntity(store);
-/// assert(*doir.engine.query.query!Mark(engine, Mark.Key([e])));
+/// assert(*doir.query.query!Mark(engine, Mark.Key([e])));
 /// assert(ecrs.context.getComponent!Marks(store, e).entries[0].effect == 4);
 /// ---
-package(doir) bool append(L, E)(ref doir.engine.query.QueryEngine engine, EntityId e, doir.engine.positions.Position at, E effect) {
-	immutable q = doir.engine.query.currentQuery(engine);
+package(doir) bool append(L, E)(ref doir.query.QueryEngine engine, EntityId e, doir.engine.positions.Position at, E effect) {
+	immutable q = doir.query.currentQuery(engine);
 	assert(q != invalidEntity, "doir.logs: writing an effect outside a query");
 	// Recorded first, so no entry exists that a reset of its owner would not strip.
-	if (!doir.engine.query.recordProduced(engine, doir.components.query.Produced([e], ecrs.registry.componentId!L(), &strip!L, &hash!L), false)) return false;
+	if (!doir.query.recordProduced(engine, doir.components.query.Produced([e], ecrs.registry.componentId!L(), &strip!L, &hash!L), false)) return false;
 	auto log = ecrs.context.getOrAddComponent!L(*engine.store, e);
 	size_t i = log is null ? 0 : fp.dynarray.length(log.entries);
 	while (i > 0 && doir.engine.positions.precedes(engine.positions, at, log.entries[i - 1].at)) --i;
 	if (log !is null && fp.dynarray.insert(log.entries, i, Entry!E([q], at, effect))) return true;
-	doir.engine.query.fail(engine);
+	doir.query.fail(engine);
 	return false;
 }
 
 
 // --- reading -----------------------------------------------------------------
 
-private bool visible(ref doir.engine.query.QueryEngine engine, doir.engine.positions.Position entry, doir.engine.positions.Position at) {
+private bool visible(ref doir.query.QueryEngine engine, doir.engine.positions.Position entry, doir.engine.positions.Position at) {
 	return at == doir.engine.positions.none || doir.engine.positions.precedes(engine.positions, entry, at);
 }
 
-/// Calls `visit` with every effect of log component `L` on `e` visible to a read at `at`: those strictly before it, or every one for `at` of `none` (`C-Order`, `L-Freeze`). Each visible entry's owner is brought up to date first, as a reader demands a producer, and the read of `e` and of each owner is recorded, so the reader re-runs when a writer's effects change. An entry owned by another query that is still running is an effect the read cannot wait for, a cycle (`Q-Cycle`): it is reported, and visited all the same. Returns false if the fold may be incomplete: a refused allocation, which fails the running queries (`doir.engine.query.fail`), or an owner that could not be brought up to date, such as one past the depth limit, which is reported.
+/// Calls `visit` with every effect of log component `L` on `e` visible to a read at `at`: those strictly before it, or every one for `at` of `none` (`C-Order`, `L-Freeze`). Each visible entry's owner is brought up to date first, as a reader demands a producer, and the read of `e` and of each owner is recorded, so the reader re-runs when a writer's effects change. An entry owned by another query that is still running is an effect the read cannot wait for, a cycle (`Q-Cycle`): it is reported, and visited all the same. Returns false if the fold may be incomplete: a refused allocation, which fails the running queries (`doir.query.fail`), or an owner that could not be brought up to date, such as one past the depth limit, which is reported.
 ///
 /// Examples:
 /// ---
@@ -197,31 +197,79 @@ private bool visible(ref doir.engine.query.QueryEngine engine, doir.engine.posit
 /// }
 /// auto store = ecrs.context.create();
 /// scope(exit) ecrs.context.free(store);
-/// doir.engine.query.QueryEngine engine;
+/// doir.query.QueryEngine engine;
 /// engine.store = &store;
-/// scope(exit) doir.engine.query.free(engine);
+/// scope(exit) doir.query.free(engine);
 /// uint seen = 0;
 /// assert(fold!(Marks, uint)(engine, ecrs.context.addEntity(store), doir.engine.positions.none, (ref const uint effect) { seen |= effect; }));
 /// assert(seen == 0);
 /// ---
-package(doir) bool fold(L, E)(ref doir.engine.query.QueryEngine engine, EntityId e, doir.engine.positions.Position at, scope void delegate(ref const E effect) @nogc nothrow visit) {
-	bool complete = doir.engine.query.read(engine, e);
+package(doir) bool fold(L, E)(ref doir.query.QueryEngine engine, EntityId e, doir.engine.positions.Position at, scope void delegate(ref const E effect) @nogc nothrow visit) {
+	bool complete = doir.query.read(engine, e);
 	if (!ecrs.context.hasComponent!L(*engine.store, e)) return complete;
-	immutable reader = doir.engine.query.currentQuery(engine);
+	immutable reader = doir.query.currentQuery(engine);
 	// A refreshed writer may re-run, rewriting this log, so the log is re-fetched after each one.
 	for (size_t i = 0;; ++i) {
 		auto entries = ecrs.context.getComponent!L(*engine.store, e).entries;
 		if (i >= fp.dynarray.length(entries) || !visible(engine, entries[i].at, at)) break;
 		immutable owner = entries[i].owner;
-		if (owner != reader && !doir.engine.query.running(engine, owner)) complete = ecrs.context.getComponent!(doir.components.query.QueryInfo)(*engine.store, owner).refresh(engine, owner) && complete;
+		if (owner != reader && !doir.query.running(engine, owner)) complete = ecrs.context.getComponent!(doir.components.query.QueryInfo)(*engine.store, owner).refresh(engine, owner) && complete;
 	}
 	foreach (entry; fp.dynarray.slice(ecrs.context.getComponent!L(*engine.store, e).entries)) {
 		if (!visible(engine, entry.at, at)) break;
 		if (entry.owner != reader) {
-			if (doir.engine.query.running(engine, entry.owner)) complete = doir.engine.query.reportRunning(engine, entry.owner) && complete;
-			else complete = doir.engine.query.read(engine, entry.owner) && complete;
+			if (doir.query.running(engine, entry.owner)) complete = doir.query.reportRunning(engine, entry.owner) && complete;
+			else complete = doir.query.read(engine, entry.owner) && complete;
 		}
 		visit(entry.effect);
 	}
 	return complete;
+}
+
+
+version(unittest) {
+	private struct TestMarks {
+		mixin Log!uint;
+	}
+
+	private struct TestMark {
+		alias Key = ecrs.relation.Relation!1;
+		alias Value = bool;
+		static bool compute(ref doir.query.QueryEngine engine, Key key) @nogc nothrow {
+			return append!(TestMarks, uint)(engine, key.related[0], doir.engine.positions.none, 4);
+		}
+	}
+}
+
+unittest { // a refused append adds no entry and fails the query; the next demand appends it once
+	static import fp.testing;
+	auto store = ecrs.context.create();
+	scope(exit) ecrs.context.free(store);
+	doir.query.QueryEngine engine;
+	engine.store = &store;
+	scope(exit) doir.query.free(engine);
+	bool reachedCompute = false;
+	for (size_t budget = 0;; ++budget) {
+		immutable e = ecrs.context.addEntity(store);
+		auto allocator = fp.testing.beginRationedAllocator(budget);
+		auto appended = doir.query.query!TestMark(engine, TestMark.Key([e]));
+		fp.testing.endRationedAllocator(allocator);
+		if (appended !is null && *appended) break;
+		assert(engine.refused);
+		auto log = ecrs.context.findComponent!TestMarks(store, e);
+		reachedCompute |= doir.query.find!TestMark(engine, TestMark.Key([e])) != invalidEntity;
+		assert(log is null || fp.dynarray.length(log.entries) == 0);
+		engine.refused = false;
+		doir.query.beginRevision(engine);
+		assert(*doir.query.query!TestMark(engine, TestMark.Key([e])));
+		assert(fp.dynarray.length(ecrs.context.getComponent!TestMarks(store, e).entries) == 1);
+	}
+	assert(reachedCompute);
+
+	// A renumbering rewrites each entry's owner with its query (E-Remap).
+	immutable marked = ecrs.context.addEntity(store), spare = ecrs.context.addEntity(store);
+	assert(*doir.query.query!TestMark(engine, TestMark.Key([marked])));
+	immutable owner = doir.query.find!TestMark(engine, TestMark.Key([marked]));
+	assert(ecrs.context.swapEntities(store, owner, spare));
+	assert(ecrs.context.getComponent!TestMarks(store, marked).entries[0].owner == spare);
 }

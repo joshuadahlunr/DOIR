@@ -10,10 +10,9 @@
 /// ---
 module doir.strings;
 
-static import fp.dynarray;
-static import fp.fnv1a;
-static import fp.hashtable;
-static import fp.string;
+version(unittest) static import fp.testing;
+
+static import bc.interner;
 
 @nogc nothrow:
 
@@ -28,30 +27,15 @@ struct StringId {
 /// The id no string has, and a `StringId`'s initial value: what the parser passes for the name of a `_` declaration, which gets no `Name` component.
 enum StringId noName = StringId.init;
 
-private struct Entry {
-	const(char)[] text;
-	StringId id;
-}
-
-// Keys hash and compare by their text, so a lookup key needs no id and the padding after `id` is never read.
-private size_t hashEntry(inout(ubyte)[] bytes) @trusted {
-	return fp.fnv1a.hash(cast(const(ubyte)[]) (cast(const(Entry)*) bytes.ptr).text);
-}
-
-private bool equalEntry(inout(ubyte)[] a, inout(ubyte)[] b) @trusted {
-	return (cast(const(Entry)*) a.ptr).text == (cast(const(Entry)*) b.ptr).text;
-}
-
-/// The interning table: one owned copy of each text, indexed by id, and a hash set over them. Plain data, released only by `free`.
+/// The interning table: one copy of each text, NUL-terminated, indexed by id. Any thread may intern or look up at once (`bc.interner`); `free` it from one thread once no other uses it.
 struct Strings {
-	private Entry* table = null;
-	private char** texts = null;
+	private bc.interner.Interner!char table;
 }
 
 
 // --- queries -----------------------------------------------------------------
 
-/// The text of `id`, which must be a valid id. The slice stays valid until `free`.
+/// The text of `id`, which must be a valid id. The slice stays valid until `free`, and is followed by a NUL.
 ///
 /// Examples:
 /// ---
@@ -59,9 +43,8 @@ struct Strings {
 /// scope(exit) free(strings);
 /// assert(text(strings, intern(strings, "std.add")) == "std.add");
 /// ---
-const(char)[] text(ref const Strings strings, StringId id) @trusted {
-	assert(id.value < fp.dynarray.length(strings.texts));
-	return fp.string.slice(strings.texts[id.value]);
+const(char)[] text(ref const Strings strings, StringId id) {
+	return bc.interner.content(strings.table, id.value);
 }
 
 /// The id of `s`, or `noName` if it was never interned.
@@ -75,74 +58,55 @@ const(char)[] text(ref const Strings strings, StringId id) @trusted {
 /// assert(find(strings, "x") == x);
 /// ---
 StringId find(ref Strings strings, const(char)[] s) {
-	if (strings.table is null) return noName;
-	auto found = fp.hashtable.find(strings.table, Entry(s, noName));
-	return found is null ? noName : found.id;
+	return StringId(bc.interner.find(strings.table, s));
 }
 
 
 // --- creation and freeing ----------------------------------------------------
 
-/// The id of `s`, interning a copy of it first if it is new.
+/// The id of `s`, interning a copy of it if it is new. Any thread may call it at once with any other.
 ///
-/// Returns `noName` if allocation fails, leaving `strings` as it was.
+/// Returns `noName` if allocation fails, leaving the strings as they were.
 ///
 /// Examples:
 /// ---
 /// Strings strings;
 /// scope(exit) free(strings);
-/// immutable a = intern(strings, "a"), b = intern(strings, "b");
-/// assert(a != b && intern(strings, "a") == a);
+/// immutable a = intern(strings, "a");
+/// assert(intern(strings, "a") == a && intern(strings, "b") != a);
 /// ---
-StringId intern(ref Strings strings, const(char)[] s) @trusted {
-	immutable existing = find(strings, s);
-	if (existing != noName) return existing;
-	if (strings.table is null) {
-		fp.hashtable.Config config;
-		config.hashFunction = &hashEntry;
-		config.equalFunction = &equalEntry;
-		strings.table = fp.hashtable.create!Entry(config);
-		if (strings.table is null) return noName;
-	}
-	assert(fp.dynarray.length(strings.texts) < uint.max, "doir.strings: id space exhausted");
-	immutable id = StringId(cast(uint) fp.dynarray.length(strings.texts));
-	// The empty text is a null fp string, so null means refusal only for a non-empty one.
-	char* copy = fp.string.makeDynamic(s);
-	if (copy is null && s.length) return noName;
-	if (!fp.dynarray.pushBack(strings.texts, copy)) {
-		fp.string.free(copy);
-		return noName;
-	}
-	if (fp.hashtable.insert(strings.table, Entry(fp.string.slice(copy), id)) is null) {
-		cast(void) fp.dynarray.popBack(strings.texts);
-		fp.string.free(copy);
-		return noName;
-	}
-	return id;
+StringId intern(ref Strings strings, const(char)[] s) {
+	return StringId(bc.interner.intern(strings.table, s));
 }
 
-/// Releases every text and the table, leaving `strings` empty and reusable.
+/// The number of strings interned.
 ///
 /// Examples:
 /// ---
 /// Strings strings;
-/// cast(void) intern(strings, "x");
-/// free(strings);
-/// assert(find(strings, "x") == noName && intern(strings, "y").value == 0);
+/// scope(exit) free(strings);
+/// cast(void) intern(strings, "a");
+/// assert(count(strings) == 1);
+/// ---
+size_t count(ref const Strings strings) {
+	return bc.interner.count(strings.table);
+}
+
+/// Releases every string, leaving `strings` empty and reusable.
+///
+/// Examples:
+/// ---
+/// Strings strings;
+/// cast(void) intern(strings, "a");
 /// free(strings);
 /// ---
-void free(ref Strings strings) @trusted {
-	foreach (t; fp.dynarray.slice(strings.texts)) fp.string.free(t);
-	fp.dynarray.free(strings.texts);
-	strings.texts = null;
-	fp.hashtable.free(strings.table);
+void free(ref Strings strings) {
+	bc.interner.free(strings.table);
 }
 
 
 version(unittest) {
 	static import core.stdc.stdio;
-	static import fp.pointer;
-	static import doir.testing;
 }
 
 unittest {
@@ -158,7 +122,7 @@ unittest {
 		assert(id.value == i + 1 && text(strings, id) == buffer[0 .. n]);
 	}
 	assert(intern(strings, "n42").value == 43);
-	assert(fp.dynarray.length(strings.texts) == 101);
+	assert(count(strings) == 101);
 
 	// A refused allocation at any step leaves the strings as they were; budgets cover every step at every table size.
 	Strings rationed;
@@ -167,14 +131,14 @@ unittest {
 		char[8] buffer;
 		immutable n = cast(size_t) core.stdc.stdio.snprintf(buffer.ptr, buffer.length, "n%d", i);
 		for (size_t budget = 0;; ++budget) {
-			auto previous = doir.testing.beginRationedAllocator(budget);
+			auto previous = fp.testing.beginRationedAllocator(budget);
 			immutable id = intern(rationed, buffer[0 .. n]);
-			fp.pointer.allocFunction = previous;
+			fp.testing.endRationedAllocator(previous);
 			if (id != noName) {
 				assert(id.value == i && text(rationed, id) == buffer[0 .. n]);
 				break;
 			}
-			assert(fp.dynarray.length(rationed.texts) == i && find(rationed, buffer[0 .. n]) == noName);
+			assert(count(rationed) == i && find(rationed, buffer[0 .. n]) == noName);
 		}
 	}
 }

@@ -7,11 +7,12 @@
 /// static import doir.components.ast;
 /// static import doir.components.source;
 /// static import ecrs.context;
+/// static import fp.rope;
 /// static import diagnose;
 /// auto store = ecrs.context.create();
 /// scope(exit) ecrs.context.free(store);
 /// immutable file = ecrs.context.addEntity(store), root = ecrs.context.addEntity(store), e = ecrs.context.addEntity(store);
-/// ecrs.context.addComponent!(doir.components.source.SourceLines)(store, file).text = "a : T\nb : T\n";
+/// assert(ecrs.context.setComponent!(doir.components.source.SourceText)(store, file, doir.components.source.SourceText("f.doir", fp.rope.create("a : T\nb : T\n").get)));
 /// ecrs.context.addComponent!(doir.components.source.InFile)(store, root).file = file;
 /// *ecrs.context.addComponent!(doir.components.source.SourceSpan)(store, root) = doir.components.source.SourceSpan(0, 12);
 /// ecrs.context.addComponent!(doir.components.ast.Parent)(store, e).parent = root;
@@ -23,7 +24,7 @@ module doir.engine.locations;
 
 static import std.typecons;
 
-static import fp.dynarray;
+static import fp.rope;
 
 static import diagnose;
 static import ecrs.context;
@@ -42,38 +43,26 @@ public import ecrs.registry : EntityId, invalidEntity;
 
 private enum size_t maxHops = 64;
 
-/// The line and column of byte `at` in `file`'s text, computing its line starts on first use.
+/// The line and column of byte `at` in `file`'s text, found through the lines the text keeps (`fp.rope`). `at` may be the text's length.
 ///
-/// Returns null if computing them is refused, leaving them to be computed on the next call.
+/// Returns null if `file` has no text.
 ///
 /// Examples:
 /// ---
 /// static import doir.components.source;
+/// static import fp.rope;
 /// static import ecrs.context;
 /// auto store = ecrs.context.create();
 /// scope(exit) ecrs.context.free(store);
 /// immutable file = ecrs.context.addEntity(store);
-/// assert(ecrs.context.setComponent!(doir.components.source.SourceLines)(store, file, doir.components.source.SourceLines("f.doir", "a\nbc\n")));
+/// assert(ecrs.context.setComponent!(doir.components.source.SourceText)(store, file, doir.components.source.SourceText("f.doir", fp.rope.create("a\nbc\n").get)));
 /// assert(pairAt(store, file, 3).get == imported!"diagnose".Pair(2, 2));
 /// ---
 std.typecons.Nullable!(diagnose.Pair) pairAt(ref ecrs.context.Context store, EntityId file, size_t at) {
-	auto lines = &ecrs.context.getComponent!(doir.components.source.SourceLines)(store, file);
-	if (lines.starts is null) {
-		bool computed = fp.dynarray.pushBack(lines.starts, size_t(0));
-		foreach (i, c; lines.text)
-			if (computed && c == '\n') computed = fp.dynarray.pushBack(lines.starts, i + 1);
-		if (!computed) {
-			lines.finalize();
-			return typeof(return).init;
-		}
-	}
-	size_t lo = 0, hi = fp.dynarray.length(lines.starts);
-	while (hi - lo > 1) {
-		immutable mid = (lo + hi) / 2;
-		if (lines.starts[mid] <= at) lo = mid;
-		else hi = mid;
-	}
-	return typeof(return)(diagnose.Pair(lo + 1, at - lines.starts[lo] + 1));
+	auto source = ecrs.context.findComponent!(doir.components.source.SourceText)(store, file);
+	if (source is null) return typeof(return).init;
+	immutable line = fp.rope.lineOf(source.text, at);
+	return typeof(return)(diagnose.Pair(line + 1, at - fp.rope.lineStart(source.text, line) + 1));
 }
 
 /// A byte range of a file, as `bytesOf` finds it.
@@ -97,11 +86,11 @@ std.typecons.Nullable!FileBytes bytesOf(ref ecrs.context.Context store, EntityId
 	size_t start = own.offset;
 	for (EntityId at = e;;) {
 		if (auto root = ecrs.context.findComponent!(doir.components.source.InFile)(store, at)) {
-			auto lines = ecrs.context.findComponent!(doir.components.source.SourceLines)(store, root.file);
-			if (lines is null) return typeof(return).init;
+			auto source = ecrs.context.findComponent!(doir.components.source.SourceText)(store, root.file);
+			if (source is null) return typeof(return).init;
 			FileBytes out_;
 			out_.file = root.file;
-			out_.bytes = diagnose.SourceLocation(lines.path, start, start + own.length);
+			out_.bytes = diagnose.SourceLocation(source.path, start, start + own.length);
 			return typeof(return)(out_);
 		}
 		auto parent = ecrs.context.findComponent!(doir.components.ast.Parent)(store, at);
@@ -113,7 +102,7 @@ std.typecons.Nullable!FileBytes bytesOf(ref ecrs.context.Context store, EntityId
 	}
 }
 
-/// The location a diagnostic about `e` reports: its `SourceAnnotation`, else its span's lines and columns, else, for an entity without a span, that of the entity it was derived from (`Provenance`) or of its `Parent`. Returns null if none is found, or if computing its lines is refused.
+/// The location a diagnostic about `e` reports: its `SourceAnnotation`, else its span's lines and columns, else, for an entity without a span, that of the entity it was derived from (`Provenance`) or of its `Parent`. Returns null if none is found.
 ///
 /// Examples:
 /// ---
@@ -151,7 +140,7 @@ unittest { // spans add up to the file; annotations win; derived entities and pa
 	immutable ns = ecrs.context.addEntity(store), declared = ecrs.context.addEntity(store), annotated = ecrs.context.addEntity(store);
 	immutable derived = ecrs.context.addEntity(store), part = ecrs.context.addEntity(store);
 	static immutable text = "ns : namespace = {\n\tx : T = 1\n\ty : T = 2\n}\n";
-	assert(ecrs.context.setComponent!(doir.components.source.SourceLines)(store, file, doir.components.source.SourceLines("a.doir", text)));
+	assert(ecrs.context.setComponent!(doir.components.source.SourceText)(store, file, doir.components.source.SourceText("a.doir", fp.rope.create(text).get)));
 	ecrs.context.addComponent!(doir.components.source.InFile)(store, root).file = file;
 	*ecrs.context.addComponent!(doir.components.source.SourceSpan)(store, root) = doir.components.source.SourceSpan(0, cast(uint) text.length);
 	void place(EntityId e, EntityId parent, uint offset, uint length) {
@@ -179,9 +168,9 @@ unittest { // spans add up to the file; annotations win; derived entities and pa
 	ecrs.context.addComponent!(doir.components.query.Provenance)(store, loopB).origin = loopA;
 	assert(locate(store, loopA).isNull);
 
-	// New text drops the line starts, which are computed again from it.
+	// New text brings its own lines.
 	static immutable moved = "\n\n" ~ text;
-	assert(ecrs.context.setComponent!(doir.components.source.SourceLines)(store, file, doir.components.source.SourceLines("a.doir", moved)));
+	assert(ecrs.context.setComponent!(doir.components.source.SourceText)(store, file, doir.components.source.SourceText("a.doir", fp.rope.create(moved).get)));
 	ecrs.context.getComponent!(doir.components.source.SourceSpan)(store, root) = doir.components.source.SourceSpan(0, cast(uint) moved.length);
 	ecrs.context.getComponent!(doir.components.source.SourceSpan)(store, ns).offset = 2;
 	assert(locate(store, declared).get.start == diagnose.Pair(4, 2));

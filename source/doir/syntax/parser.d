@@ -1,6 +1,6 @@
 /// The recursive-descent parser over the lexer's tokens (`roadmap.md` Phase 2), its rules named as `doir.peg`'s so the two can be diffed: `_` skips newlines and trivia, `wsc` trivia only, and each rule restores the token position when it fails, as PEG does.
 ///
-/// It runs in two modes. `skim` parses a whole file into one `Record` per declaration, in preorder, with the declaration's tokens and its hash, and the syntax errors it recovered from; it reads only the tokens, so files can be skimmed in parallel. `build` parses one record's tokens again and writes its components through `doir.builders`, skipping its nested block, whose declarations have records of their own. The input commit (`doir.source`) matches records against the previous parse and builds only the ones that are new or changed.
+/// It runs in two modes. `skim` parses a whole file into one `Record` per declaration, in preorder, with the declaration's tokens and its hash, and the syntax errors it recovered from; it reads only the tokens, so files can be skimmed in parallel. `describe` parses one record's tokens again into the writes that make its components, skipping its nested block, whose declarations have records of their own; it touches no store, so workers can run it, and `apply` replays the writes through `doir.builders`. `build` is the two together. The input commit (`doir.source`) matches records against the previous parse and builds only the ones that are new or changed.
 ///
 /// Examples:
 /// ---
@@ -13,14 +13,16 @@
 /// ---
 module doir.syntax.parser;
 
+static import core.atomic;
 static import core.stdc.stdlib;
 static import core.stdc.string;
 static import std.typecons;
 
 static import fp.dynarray;
-static import fp.fnv1a;
+static import fp.hash;
 static import fp.pointer;
 static import fp.string;
+version(unittest) static import fp.testing;
 
 static import diagnose;
 static import ecrs.context;
@@ -585,6 +587,64 @@ struct Builder {
 	bool annotated; /// Out: whether it has one.
 }
 
+/// How a `Write` names the declaration it describes; its parts are numbered from `firstPart`, in the order the parse made them.
+enum EntityId declarationRef = 1;
+/// How a `Write` names the declaration's first part.
+enum EntityId firstPart = 2;
+
+/// A recorded write's type: an interned name, or one of the declaration's parts, a function type written in place.
+struct TypeRef {
+	doir.strings.StringId name; /// The type's name, when `part` is `invalidEntity`.
+	EntityId part = invalidEntity; /// The function type, as a `Write` names a part.
+}
+
+/// One store write `describe` records and `apply` replays: which `doir.builders` call it is, on which of the declaration's entities, and with what.
+struct Write {
+	/// The builder it replays.
+	enum Kind : ubyte { span, inPlaceFunctionType, parameter, defaultValue, defaultName, returnType, functionType, valueless, constant, namespace, aggregate, block, call, alias_, reference, flags }
+	Kind kind; /// Which.
+	EntityId target; /// `declarationRef` or a part.
+	EntityId other = invalidEntity; /// An in-place function type's owner, or a parameter's function type.
+	TypeRef type; /// The type, for the writes that give one.
+	doir.strings.StringId name; /// A parameter's name, a default's, alias's or reference's target, or a call's callee.
+	doir.components.ast.ConstantVal value; /// A constant, or a parameter's default.
+	uint flags; /// For `flags`.
+	uint from, count; /// A span's start and length from its parent's start; a call's arguments in `Description.arguments`.
+}
+
+/// What `describe` records of one declaration: the writes `build` would make, in order, and how many part entities they need. Plain data, released by `free`; it holds no entity, so any thread may make one.
+struct Description {
+	Write* writes = null; /// In order; an fp dynarray.
+	doir.strings.StringId* arguments = null; /// Calls' arguments, which `Write.from` and `Write.count` slice; an fp dynarray.
+	uint parts; /// The part entities the writes name, from `firstPart`.
+	diagnose.Detailed annotation; /// The declaration's `SourceAnnotation`, if `annotated`.
+	bool annotated; /// Whether it has one.
+}
+
+/// Releases `d`'s arrays, leaving it empty.
+///
+/// Examples:
+/// ---
+/// Description d;
+/// free(d);
+/// assert(d.writes is null);
+/// ---
+void free(ref Description d) {
+	fp.dynarray.free(d.writes);
+	fp.dynarray.free(d.arguments);
+	d = Description.init;
+}
+
+private Write write(Write.Kind kind, EntityId target, TypeRef type = TypeRef.init, doir.strings.StringId name = doir.strings.noName, EntityId other = invalidEntity) {
+	Write w;
+	w.kind = kind;
+	w.target = target;
+	w.type = type;
+	w.name = name;
+	w.other = other;
+	return w;
+}
+
 private struct Parser {
 	const(char)[] source;
 	const(Token)[] tokens;
@@ -601,7 +661,8 @@ private struct Parser {
 	bool refused; // an allocation was refused; every rule stops and the entry point returns false
 	uint depth;
 	Syntax* syntax; // skimming
-	Builder* build; // building; null while skimming or validating
+	Description* build; // describing a record to build; null while skimming or validating
+	doir.strings.Strings* strings; // where a description's names are interned
 	const(Record)* record; // the record being built
 	uint record_; // the record being skimmed
 }
@@ -680,35 +741,31 @@ private void error(ref Parser p, SyntaxError.Kind kind, uint at, uint token, str
 
 // The intern functions return `noName` and set `p.refused` if allocation fails.
 private doir.strings.StringId intern(ref Parser p, size_t token) {
-	immutable id = nameOf(doir.syntax.lexer.text(p.tokens[token], p.source), *p.build.strings);
+	immutable id = nameOf(doir.syntax.lexer.text(p.tokens[token], p.source), *p.strings);
 	if (id == doir.strings.noName) p.refused = true;
 	return id;
 }
 
 private doir.strings.StringId intern(ref Parser p, const(char)[] spelled) {
-	immutable id = doir.strings.intern(*p.build.strings, spelled);
+	immutable id = doir.strings.intern(*p.strings, spelled);
 	if (id == doir.strings.noName) p.refused = true;
 	return id;
 }
 
+private bool record(ref Parser p, Write w) {
+	return fp.dynarray.pushBack(p.build.writes, w) || refuse(p);
+}
+
+// The next part, as a `Write` names it; `apply` makes or reuses its entity.
 private EntityId takePart(ref Parser p) {
-	auto b = p.build;
-	immutable n = fp.dynarray.length(b.parts);
-	immutable reused = n < b.reuse.length;
-	immutable e = reused ? b.reuse[n] : ecrs.context.addEntity(*b.store);
-	if (e == invalidEntity) {
-		p.refused = true;
-		return invalidEntity;
-	}
-	if (fp.dynarray.pushBack(b.parts, e)) return e;
-	if (!reused) cast(void) ecrs.context.removeEntity(*b.store, e); // if refused, an orphan nothing reaches
-	p.refused = true;
-	return invalidEntity;
+	return cast(EntityId) (firstPart + p.build.parts++);
 }
 
 private bool setSpan(ref Parser p, EntityId e, uint parentStart, uint start, uint end) {
-	// Set rather than written in place: a reused part keeps its span, and the commit's transaction must be able to restore it.
-	return ecrs.context.setComponent!(doir.components.source.SourceSpan)(*p.build.store, e, doir.components.source.SourceSpan(start - parentStart, end - start)) || refuse(p);
+	auto w = write(Write.Kind.span, e);
+	w.from = start - parentStart;
+	w.count = end - start;
+	return record(p, w);
 }
 
 /// A parsed type position: a name, or a function type written in place.
@@ -721,11 +778,11 @@ private bool isName(ref Parser p, ParsedType type, const(char)[] word) {
 	return type.name != noToken && doir.syntax.lexer.text(p.tokens[type.name], p.source) == word;
 }
 
-// Calls `f` with the type as `attach*` takes it: the interned name or function type entity. Returns `f`'s result, or false on refused interning.
+// Calls `f` with the type as a `Write` takes it: the interned name or the function type part. Returns `f`'s result, or false on refused interning.
 private bool withType(alias f)(ref Parser p, ParsedType type) {
-	if (type.entity != invalidEntity) return f(type.entity);
+	if (type.entity != invalidEntity) return f(TypeRef(doir.strings.noName, type.entity));
 	immutable name = intern(p, type.name);
-	return name != doir.strings.noName && f(name);
+	return name != doir.strings.noName && f(TypeRef(name));
 }
 
 /// A parsed constant's payload.
@@ -811,13 +868,9 @@ private std.typecons.Nullable!ParsedType type(ref Parser p, EntityId owner, uint
 		} else if (validates!(q => functionType(q, invalidEntity, 0))(p)) {
 			immutable start = p.tokens[p.pos].start;
 			immutable e = takePart(p);
-			if (e == invalidEntity) return typeof(return).init;
 			immutable typeName = intern(p, "type");
 			if (typeName == doir.strings.noName) return typeof(return).init;
-			if (!doir.builders.attachInPlaceFunctionType(*p.build.store, e, owner, typeName)) {
-				cast(void) refuse(p);
-				return typeof(return).init;
-			}
+			if (!record(p, write(Write.Kind.inPlaceFunctionType, e, TypeRef(typeName), doir.strings.noName, owner))) return typeof(return).init;
 			if (!functionType(p, e, start)) {
 				assert(p.refused, "doir.parser: a validated function type did not build");
 				return typeof(return).init;
@@ -891,19 +944,22 @@ private bool parameter(ref Parser p, EntityId ft, uint ftStart) {
 	}
 	if (p.build is null) return true;
 
-	auto store = p.build.store;
 	immutable unnamed = doir.syntax.lexer.text(p.tokens[name], p.source) == "_";
 	immutable named = unnamed ? doir.strings.noName : intern(p, name);
 	if (p.refused) return false;
 	bool ok;
 	if (deduced) {
 		immutable deducedType = intern(p, doir.components.ast.deducedTypeName);
-		ok = deducedType != doir.strings.noName && doir.builders.attachParameter(*store, e, ft, named, deducedType);
-	} else ok = withType!(t => doir.builders.attachParameter(*store, e, ft, named, t))(p, paramType);
+		ok = deducedType != doir.strings.noName && record(p, write(Write.Kind.parameter, e, TypeRef(deducedType), named, ft));
+	} else ok = withType!(t => record(p, write(Write.Kind.parameter, e, t, named, ft)))(p, paramType);
 	if (ok && hasDefault && defaultName != noToken) {
 		immutable value = intern(p, defaultName);
-		ok = value != doir.strings.noName && doir.builders.setDefault(*store, e, value);
-	} else if (ok && hasDefault) ok = doir.builders.setDefault(*store, e, defaultConstant.value);
+		ok = value != doir.strings.noName && record(p, write(Write.Kind.defaultName, e, TypeRef.init, value));
+	} else if (ok && hasDefault) {
+		auto w = write(Write.Kind.defaultValue, e);
+		w.value = defaultConstant.value;
+		ok = record(p, w);
+	}
 	if (!ok) return refuse(p);
 	return setSpan(p, e, ftStart, p.tokens[start].start, lastEnd(p, start));
 }
@@ -945,7 +1001,7 @@ private bool functionType(ref Parser p, EntityId ft, uint ftStart) {
 		p.where = Where.returnType;
 		auto returned = type(p, ft, ftStart);
 		if (!returned.isNull) {
-			if (p.build is null || withType!(t => doir.builders.setReturnType(*p.build.store, ft, t))(p, returned.get)) return true;
+			if (p.build is null || withType!(t => record(p, write(Write.Kind.returnType, ft, t)))(p, returned.get)) return true;
 			return refuse(p);
 		}
 		if (p.refused) return false;
@@ -1054,45 +1110,41 @@ private bool changeLanguage(ref Parser p) {
 	return true;
 }
 
-private ulong mix(ulong h, ulong value) {
-	return (h ^ value) * 0x100000001b3;
-}
+/// Where a `Record.hash` starts, before `hashLevel` mixes in its tokens.
+enum ulong hashStart = 0xcbf29ce484222325;
 
-// A token's text, eight bytes at a time, for `hashOf`.
-private ulong hashText(const(char)[] text) @trusted {
-	ulong h = text.length * 0x9e3779b97f4a7c15;
-	size_t i = 0;
-	for (; i + 8 <= text.length; i += 8) {
-		ulong word;
-		core.stdc.string.memcpy(&word, text.ptr + i, 8);
-		h = (h ^ word) * 0xff51afd7ed558ccd;
-		h ^= h >> 32;
+/// Mixes into `h` tokens `from` to `to` of `syntax`, skimmed from `source`, as a `Record.hash` covers them: each record from `child` on whose first token it reaches, and those after it at its level, is one placeholder, its terminator included; trivia, newlines and semicolons are left out. A hash split across several skims, as a commit that chunks a block's contents makes it, carries `h` from one to the next. It cannot fail.
+///
+/// Examples:
+/// ---
+/// Syntax syntax;
+/// scope(exit) free(syntax);
+/// assert(skim("ns : namespace = {\n\tx : T\n}\n", syntax));
+/// immutable r = syntax.records[0];
+/// assert(hashLevel(hashStart, syntax, "ns : namespace = {\n\tx : T\n}\n", r.first, r.terminator, 1) == r.hash);
+/// ---
+ulong hashLevel(ulong h, ref const Syntax syntax, const(char)[] source, size_t from, size_t to, size_t child = noToken) {
+	auto records = fp.dynarray.slice(syntax.records);
+	size_t t = from;
+	while (t < to) {
+		if (child < records.length && t == records[child].first) {
+			h = fp.hash.mix(h, 0x9e3779b97f4a7c15);
+			t = records[child].terminator + 1;
+			child = records[child].end;
+			continue;
+		}
+		immutable token = syntax.tokens[t++];
+		if (doir.syntax.lexer.isTrivia(token.kind) || token.kind == TokenKind.newline || token.kind == TokenKind.semicolon) continue;
+		h = fp.hash.mix(h, token.kind);
+		h = fp.hash.mix(h, fp.hash.murmur(cast(const(ubyte)[]) doir.syntax.lexer.text(token, source)));
 	}
-	ulong tail = 0;
-	foreach (k; i .. text.length) tail = tail << 8 | cast(ubyte) text[k];
-	h = (h ^ tail) * 0xc4ceb9fe1a85ec53;
-	return h ^ (h >> 29);
+	return h;
 }
 
 // The hash of record `r`: its non-trivia tokens, each nested record a placeholder, the terminator left out.
 private ulong hashOf(ref Parser p, size_t r) {
 	auto records = p.syntax.records;
-	ulong h = 0xcbf29ce484222325;
-	size_t child = r + 1;
-	size_t t = records[r].first;
-	while (t < records[r].terminator) {
-		if (child < records[r].end && t == records[child].first) {
-			h = mix(h, 0x9e3779b97f4a7c15);
-			t = records[child].terminator + 1;
-			child = records[child].end;
-			continue;
-		}
-		immutable token = p.tokens[t++];
-		if (doir.syntax.lexer.isTrivia(token.kind) || token.kind == TokenKind.newline || token.kind == TokenKind.semicolon) continue;
-		h = mix(h, token.kind);
-		h = mix(h, hashText(doir.syntax.lexer.text(token, p.source)));
-	}
-	return h;
+	return hashLevel(hashStart, *p.syntax, p.source, records[r].first, records[r].terminator, r + 1 < records[r].end ? r + 1 : noToken);
 }
 
 // SourceInfo's location, its file name interned. Null if interning is refused.
@@ -1130,7 +1182,7 @@ private std.typecons.Nullable!(diagnose.Detailed) annotation(ref Parser p, size_
 	}
 	immutable name = intern(p, file);
 	if (name == doir.strings.noName) return typeof(return).init;
-	return typeof(return)(diagnose.Detailed(doir.strings.text(*p.build.strings, name),
+	return typeof(return)(diagnose.Detailed(doir.strings.text(*p.strings, name),
 		diagnose.Pair(cast(size_t) values[0], cast(size_t) values[2]), diagnose.Pair(cast(size_t) values[1], cast(size_t) values[3])));
 }
 
@@ -1158,7 +1210,7 @@ private bool assignment(ref Parser p) {
 		return false;
 	}
 
-	immutable e = p.build is null ? invalidEntity : p.build.declaration;
+	immutable e = p.build is null ? invalidEntity : declarationRef;
 	immutable declStart = p.tokens[start].start;
 	bool exported = false;
 	if (atWord(p, TokenKind.keyword, "export")) {
@@ -1204,8 +1256,7 @@ private bool assignment(ref Parser p) {
 			if (p.build is null) {
 				if (functionType(p, invalidEntity, 0)) value = Value.functionType;
 			} else if (validates!(q => functionType(q, invalidEntity, 0))(p)) {
-				auto store = p.build.store;
-				if (!withType!(t => doir.builders.attachFunctionType(*store, e, t))(p, declared)) return refuse(p);
+				if (!withType!(t => record(p, write(Write.Kind.functionType, e, t)))(p, declared)) return refuse(p);
 				if (!functionType(p, e, declStart)) {
 					assert(p.refused, "doir.parser: a validated function type did not build");
 					return false;
@@ -1246,42 +1297,58 @@ private bool assignment(ref Parser p) {
 	}
 	if (p.build is null) return true;
 
-	auto store = p.build.store;
 	bool ok = true;
 	final switch (value) {
 		case Value.none:
-			ok = withType!(t => doir.builders.attachValueless(*store, e, t))(p, declared);
+			ok = withType!(t => record(p, write(Write.Kind.valueless, e, t)))(p, declared);
 			break;
 		case Value.constant:
-			ok = withType!(t => doir.builders.attachConstant(*store, e, t, constantValue.value))(p, declared);
+			ok = withType!((t) {
+				auto w = write(Write.Kind.constant, e, t);
+				w.value = constantValue.value;
+				return record(p, w);
+			})(p, declared);
 			break;
 		case Value.block:
-			if (isName(p, declared, "namespace")) ok = doir.builders.attachNamespace(*store, e).block != invalidEntity;
-			else if (isName(p, declared, "type")) ok = withType!(t => doir.builders.attachAggregate(*store, e, t).block != invalidEntity)(p, declared);
-			else ok = withType!(t => doir.builders.attachBlock(*store, e, t).block != invalidEntity)(p, declared);
+			if (isName(p, declared, "namespace")) ok = record(p, write(Write.Kind.namespace, e));
+			else if (isName(p, declared, "type")) ok = withType!(t => record(p, write(Write.Kind.aggregate, e, t)))(p, declared);
+			else ok = withType!(t => record(p, write(Write.Kind.block, e, t)))(p, declared);
 			break;
 		case Value.call:
-			doir.strings.StringId* arguments = null;
-			scope(exit) fp.dynarray.free(arguments);
+			immutable from = cast(uint) fp.dynarray.length(p.build.arguments);
 			foreach (a; fp.dynarray.slice(call.arguments)) {
 				immutable argument = intern(p, a);
-				if (argument == doir.strings.noName || !fp.dynarray.pushBack(arguments, argument)) return refuse(p);
+				if (argument == doir.strings.noName || !fp.dynarray.pushBack(p.build.arguments, argument)) return refuse(p);
 			}
 			immutable callee = intern(p, call.callee);
 			if (callee == doir.strings.noName) return false;
-			ok = withType!(t => doir.builders.attachCall(*store, e, t, callee, fp.dynarray.slice(arguments)))(p, declared)
-				&& (!call.flags || doir.builders.addFlags(*store, e, call.flags));
+			ok = withType!((t) {
+				auto w = write(Write.Kind.call, e, t, callee);
+				w.from = from;
+				w.count = cast(uint) (fp.dynarray.length(p.build.arguments) - from);
+				return record(p, w);
+			})(p, declared);
+			if (ok && call.flags) {
+				auto w = write(Write.Kind.flags, e);
+				w.flags = call.flags;
+				ok = record(p, w);
+			}
 			break;
 		case Value.reference:
 			immutable target = intern(p, reference);
 			if (target == doir.strings.noName) return false;
-			if (isName(p, declared, "alias")) ok = doir.builders.attachAlias(*store, e, target);
-			else ok = withType!(t => doir.builders.attachReference(*store, e, t, target))(p, declared);
+			if (isName(p, declared, "alias")) ok = record(p, write(Write.Kind.alias_, e, TypeRef.init, target));
+			else ok = withType!(t => record(p, write(Write.Kind.reference, e, t, target)))(p, declared);
 			break;
 		case Value.functionType:
 			break;
 	}
-	if (!ok || (exported && !doir.builders.addFlags(*store, e, doir.components.ast.Flags.Export))) return refuse(p);
+	if (ok && exported) {
+		auto w = write(Write.Kind.flags, e);
+		w.flags = doir.components.ast.Flags.Export;
+		ok = record(p, w);
+	}
+	if (!ok) return refuse(p);
 	if (info != noToken) {
 		auto location = annotation(p, info);
 		if (location.isNull) return false;
@@ -1324,7 +1391,7 @@ private void statement(ref Parser p) {
 
 // --- entry points ------------------------------------------------------------
 
-/// Lexes and parses `source` into `out_`, which must be empty: a record for every declaration that parses, in preorder, and the syntax errors in the rest, each failed declaration skipped to the next terminator at its brace depth so its siblings still parse. Reads nothing but `source`.
+/// Lexes and parses `source` into `out_`, which must be empty: a record for every declaration that parses, in preorder, and the syntax errors in the rest, each failed declaration skipped to the next terminator at its brace depth so its siblings still parse. Reads nothing but `source`. `depth` is how many blocks enclose `source`, when it is one declaration cut from a file, so `maxNesting` counts them.
 ///
 /// Returns false if allocation fails, leaving `out_` empty.
 ///
@@ -1336,7 +1403,7 @@ private void statement(ref Parser p) {
 /// assert(skim("a : T = 1\nb : = 2\nc : T = 3\n", syntax));
 /// assert(fp.dynarray.length(syntax.records) == 2 && fp.dynarray.length(syntax.errors) == 1);
 /// ---
-bool skim(const(char)[] source, ref Syntax out_) {
+bool skim(const(char)[] source, ref Syntax out_, uint depth = 0) {
 	assert(out_.tokens is null && out_.records is null && out_.errors is null);
 	out_.tokens = doir.syntax.lexer.lex(source);
 	if (out_.tokens is null) return false;
@@ -1345,6 +1412,7 @@ bool skim(const(char)[] source, ref Syntax out_) {
 	p.tokens = fp.dynarray.slice(out_.tokens);
 	p.syntax = &out_;
 	p.record_ = uint.max;
+	p.depth = depth;
 	skip_(p);
 	while (!p.refused && p.tokens[p.pos].kind != TokenKind.end) statement(p);
 	if (!p.refused) return true;
@@ -1352,7 +1420,116 @@ bool skim(const(char)[] source, ref Syntax out_) {
 	return false;
 }
 
-/// Writes record `r` of `syntax`, skimmed from `source`, into `builder.declaration` through `doir.builders`: its type, value, flags and parts, but not its `Name`, `Parent`, span or nested declarations, which the commit writes. Parts reuse `builder.reuse` in order before new entities are made; each gets its `SourceSpan`.
+/// Records what `build` would write for record `r` of `syntax`, skimmed from `source`, into `out_`, which must be empty: its type, value, flags, parts and their spans, but not its `Name`, `Parent`, span or nested declarations, which the commit writes. It reads no store and interns names in `strings`, which any thread may do at once, so workers can describe a commit's declarations while it writes the store.
+///
+/// Returns false if allocation fails, leaving `out_` partly recorded for the caller to free.
+///
+/// Examples:
+/// ---
+/// static import fp.dynarray;
+/// static import doir.strings;
+/// Syntax syntax;
+/// scope(exit) free(syntax);
+/// immutable source = "f : (a: T) -> U\n";
+/// assert(skim(source, syntax));
+/// doir.strings.Strings strings;
+/// scope(exit) doir.strings.free(strings);
+/// Description d;
+/// scope(exit) free(d);
+/// assert(describe(syntax, source, 0, strings, d));
+/// assert(d.parts == 2 && d.writes[0].kind == Write.Kind.inPlaceFunctionType); // the function type and its parameter
+/// ---
+bool describe(ref const Syntax syntax, const(char)[] source, size_t r, ref doir.strings.Strings strings, ref Description out_) {
+	version(unittest) core.atomic.atomicOp!"+="(*cast(shared(size_t)*) &builds, 1);
+	Parser p;
+	p.source = source;
+	p.tokens = fp.dynarray.slice(syntax.tokens);
+	p.build = &out_;
+	p.strings = &strings;
+	p.record = &syntax.records[r];
+	p.pos = syntax.records[r].first;
+	if (assignment(p)) return true;
+	assert(p.refused, "doir.parser: a skimmed record did not describe");
+	return false;
+}
+
+// Calls `f` with `type` as the builders take it, a name or an entity, `parts` resolving a part.
+private bool withRef(alias f)(TypeRef type, const(EntityId)[] parts) {
+	return type.part == invalidEntity ? f(type.name) : f(parts[type.part - firstPart]);
+}
+
+/// Writes `d` into `builder.declaration` through `doir.builders`, making or reusing its parts as `build` does. It must run where the store may be changed, and may not run on several threads at once.
+///
+/// Returns false if allocation fails, leaving the declaration and `builder.parts` partly built; the parts taken so far are still listed there.
+///
+/// Examples:
+/// ---
+/// static import ecrs.context;
+/// static import fp.dynarray;
+/// static import doir.strings;
+/// static import doir.components.ast;
+/// Syntax syntax;
+/// scope(exit) free(syntax);
+/// immutable source = "x : T = 5\n";
+/// assert(skim(source, syntax));
+/// auto store = ecrs.context.create();
+/// scope(exit) ecrs.context.free(store);
+/// doir.strings.Strings strings;
+/// scope(exit) doir.strings.free(strings);
+/// Description d;
+/// scope(exit) free(d);
+/// assert(describe(syntax, source, 0, strings, d));
+/// Builder b = Builder(&store, &strings, ecrs.context.addEntity(store));
+/// scope(exit) fp.dynarray.free(b.parts);
+/// assert(apply(d, b));
+/// assert(ecrs.context.getComponent!(doir.components.ast.ConstantVal)(store, b.declaration).integerValue == 5);
+/// ---
+bool apply(ref const Description d, ref Builder builder) @trusted {
+	auto store = builder.store;
+	foreach (i; 0 .. d.parts) {
+		immutable reused = i < builder.reuse.length;
+		immutable e = reused ? builder.reuse[i] : ecrs.context.addEntity(*store);
+		if (e == invalidEntity) return false;
+		if (fp.dynarray.pushBack(builder.parts, e)) continue;
+		if (!reused) cast(void) ecrs.context.removeEntity(*store, e); // if refused, an orphan nothing reaches
+		return false;
+	}
+	auto parts = fp.dynarray.slice(builder.parts);
+	EntityId entity(EntityId named) {
+		return named == declarationRef ? builder.declaration : parts[named - firstPart];
+	}
+	foreach (w; fp.dynarray.slice(d.writes)) {
+		immutable e = entity(w.target);
+		bool ok;
+		final switch (w.kind) with (Write.Kind) {
+			case span:
+				// Set rather than written in place: a reused part keeps its span, and the commit's transaction must be able to restore it.
+				ok = ecrs.context.setComponent!(doir.components.source.SourceSpan)(*store, e, doir.components.source.SourceSpan(w.from, w.count));
+				break;
+			case inPlaceFunctionType: ok = withRef!(t => doir.builders.attachInPlaceFunctionType(*store, e, entity(w.other), t))(w.type, parts); break;
+			case parameter: ok = withRef!(t => doir.builders.attachParameter(*store, e, entity(w.other), w.name, t))(w.type, parts); break;
+			case defaultValue: ok = doir.builders.setDefault(*store, e, w.value); break;
+			case defaultName: ok = doir.builders.setDefault(*store, e, w.name); break;
+			case returnType: ok = withRef!(t => doir.builders.setReturnType(*store, e, t))(w.type, parts); break;
+			case functionType: ok = withRef!(t => doir.builders.attachFunctionType(*store, e, t))(w.type, parts); break;
+			case valueless: ok = withRef!(t => doir.builders.attachValueless(*store, e, t))(w.type, parts); break;
+			case constant: ok = withRef!(t => doir.builders.attachConstant(*store, e, t, w.value))(w.type, parts); break;
+			case namespace: ok = doir.builders.attachNamespace(*store, e).block != invalidEntity; break;
+			case aggregate: ok = withRef!(t => doir.builders.attachAggregate(*store, e, t).block != invalidEntity)(w.type, parts); break;
+			case block: ok = withRef!(t => doir.builders.attachBlock(*store, e, t).block != invalidEntity)(w.type, parts); break;
+			case call: ok = withRef!(t => doir.builders.attachCall(*store, e, t, w.name, d.arguments[w.from .. w.from + w.count]))(w.type, parts); break;
+			case alias_: ok = doir.builders.attachAlias(*store, e, w.name); break;
+			case reference: ok = withRef!(t => doir.builders.attachReference(*store, e, t, w.name))(w.type, parts); break;
+			case flags: ok = doir.builders.addFlags(*store, e, w.flags); break;
+		}
+		if (!ok) return false;
+	}
+	builder.annotation = d.annotation;
+	builder.annotated = d.annotated;
+	return true;
+}
+
+/// Writes record `r` of `syntax`, skimmed from `source`, into `builder.declaration` through `doir.builders`: `describe`, then `apply`. Parts reuse `builder.reuse` in order before new entities are made; each gets its `SourceSpan`.
 ///
 /// Returns false if allocation fails, leaving the declaration and `builder.parts` partly built; the parts taken so far are still listed there.
 ///
@@ -1377,16 +1554,9 @@ bool skim(const(char)[] source, ref Syntax out_) {
 /// assert(ecrs.context.getComponent!(doir.components.ast.TypeOf)(store, b.declaration).type == b.parts[0]);
 /// ---
 bool build(ref const Syntax syntax, const(char)[] source, size_t r, ref Builder builder) {
-	version(unittest) ++builds;
-	Parser p;
-	p.source = source;
-	p.tokens = fp.dynarray.slice(syntax.tokens);
-	p.build = &builder;
-	p.record = &syntax.records[r];
-	p.pos = syntax.records[r].first;
-	if (assignment(p)) return true;
-	assert(p.refused, "doir.parser: a skimmed record did not build");
-	return false;
+	Description d;
+	scope(exit) free(d);
+	return describe(syntax, source, r, *builder.strings, d) && apply(d, builder);
 }
 
 /// The components `build` writes, which a rebuild removes first. `Name` and `Parent` are among them, written by the builders on parts and by the commit on declarations.
@@ -1415,7 +1585,6 @@ bool removeParsed(ref ecrs.context.Context store, EntityId e) {
 
 
 version(unittest) {
-	static import doir.testing;
 
 	/// How many times `build` has run, for tests that a commit builds only what changed.
 	package(doir) __gshared size_t builds;
@@ -1454,9 +1623,9 @@ version(unittest) {
 			b.store = ecrs.context.create();
 			assert(skim(source, b.syntax));
 			b.builder = Builder(&b.store, &b.strings, ecrs.context.addEntity(b.store));
-			auto allocator = doir.testing.beginRationedAllocator(budget);
+			auto allocator = fp.testing.beginRationedAllocator(budget);
 			immutable built = build(b.syntax, source, 0, b.builder);
-			fp.pointer.allocFunction = allocator;
+			fp.testing.endRationedAllocator(allocator);
 			if (!built) continue;
 			assert(fp.dynarray.length(b.builder.parts) == fp.dynarray.length(whole.builder.parts));
 			assert(b.builder.annotated == whole.builder.annotated);
@@ -1628,6 +1797,28 @@ unittest { // skimming: records in preorder, hashes that ignore trivia, and reco
 		assert((opening(k, k.errors[0]) == fp.pointer.notFound) == (context[2][$ - 9 .. $] != "left open")); // a pointed fix outranks closing the bracket
 	}
 	assert(listed(1u << TokenKind.end, "remove everything from here to the end of the file") && listed(1u << TokenKind.end | 1u << TokenKind.newline, "insert a line break here"));
+	for (size_t budget = 0;; ++budget) {
+		auto allocator = fp.testing.beginRationedAllocator(budget);
+		char* fix = expectedHint(1u << TokenKind.comma | 1u << TokenKind.rightParen);
+		fp.testing.endRationedAllocator(allocator);
+		scope(exit) fp.string.free(fix);
+		if (fix !is null) {
+			assert(fp.string.slice(fix) == "insert `,` or `)` here");
+			break;
+		}
+	}
+
+	// Nesting, an inexact constant and a missing return type each explain themselves.
+	static bool explained(const(char)[] source, string part) {
+		Syntax x;
+		scope(exit) free(x);
+		assert(skim(source, x) && fp.dynarray.length(x.errors) >= 1);
+		char* note = explain(x, source, x.errors[0]);
+		scope(exit) fp.string.free(note);
+		return fp.string.contains(fp.string.slice(note), part, 0);
+	}
+	assert(explained(fp.string.slice(deep), "keeps the nesting shallow") && explained("big : u64 = 99999999999999999999\n", "stores every constant exactly"));
+	assert(explained("f : (a: T) ->\n", "After `->` comes the type the function returns"));
 
 	// A stray `}` at the root is skipped.
 	Syntax i;
@@ -1653,9 +1844,9 @@ unittest { // skimming: records in preorder, hashes that ignore trivia, and reco
 	for (size_t budget = 0;; ++budget) {
 		Syntax rationed;
 		scope(exit) free(rationed);
-		auto allocator = doir.testing.beginRationedAllocator(budget);
+		auto allocator = fp.testing.beginRationedAllocator(budget);
 		immutable skimmed = skim(everything, rationed);
-		fp.pointer.allocFunction = allocator;
+		fp.testing.endRationedAllocator(allocator);
 		if (skimmed) {
 			assert(fp.dynarray.length(rationed.records) == fp.dynarray.length(whole.records) && fp.dynarray.length(rationed.errors) == fp.dynarray.length(whole.errors));
 			break;

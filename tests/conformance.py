@@ -12,14 +12,15 @@ A case's build is the files `reference/compiler.doir`, `reference/backends.doir`
 `standard.doir` pastes `standard.os.doir`, and `reference/backends.doir` pairs the Mizu machine with the freestanding operating system (`OS-Target`), so an `OS-` case gets `std.os` with no file of its own; a `backends…` case pairs another.
 Files under `support/` are what cases import or build on; they must parse.
 
-`doir_check` parses and checks the few rules its diagnostics name. A reject case for one of those rules must fail naming its tag; for a rule it checks only in part (`PARTIAL`), a case it passes is pending instead. A reject case for any other rule must parse cleanly and is counted as pending: it waits for the compiler, and a syntax error or another rule's diagnostic means the case is broken. Runs `tools/doir_check.py` through `uv`, unless `--checker` names another executable.
+`doir_check` parses and checks the few rules its diagnostics name. A reject case for one of those rules must fail naming its tag; for a rule it checks only in part (`PARTIAL`), a case it passes is pending instead. A reject case for any other rule must parse cleanly and is counted as pending: it waits for the compiler, and a syntax error or another rule's diagnostic means the case is broken. Runs `tests/doir_check.py` through `uv`, unless `--checker` names another command, split as a shell would (`--checker "bin/doir --check"`).
 
-    python3 tools/conformance.py [--checker path/to/doir_check] [--pending]
+    python3 tests/conformance.py [--checker "bin/doir --check"] [--pending]
 """
 
 import argparse
 import pathlib
 import re
+import shlex
 import subprocess
 import sys
 
@@ -33,7 +34,7 @@ PARTIAL = {"B-Tail", "L-Scan", "L-Sema", "L-Bind"}  # B-Tail's return-type match
 
 def checked_tags():
 	"""The rule tags `doir_check` reports in full, read from its diagnostic strings."""
-	return set(re.findall(r'["\']([A-Z][A-Za-z0-9]*-[A-Za-z]+):', (ROOT / "tools/doir_check.py").read_text())) - PARTIAL
+	return set(re.findall(r'["\']([A-Z][A-Za-z0-9]*-[A-Za-z]+):', (ROOT / "tests/doir_check.py").read_text())) - PARTIAL
 
 
 def results(output):
@@ -61,10 +62,10 @@ def build_problems(case):
 def main():
 	"""Runs the corpus and prints each failing case; returns 1 if any fails."""
 	parser = argparse.ArgumentParser()
-	parser.add_argument("--checker")
+	parser.add_argument("--checker", help="the command to check with, split as a shell would, as in \"bin/doir --check\"")
 	parser.add_argument("--pending", action="store_true", help="list the pending reject cases")
 	args = parser.parse_args()
-	checker = [args.checker] if args.checker else ["uv", "run", "-q", str(ROOT / "tools/doir_check.py")]
+	checker = shlex.split(args.checker) if args.checker else ["uv", "run", "-q", str(ROOT / "tests/doir_check.py")]
 	cases = sorted(CORPUS.glob("*.doir"))
 	support = sorted(CORPUS.glob("support/*.doir"))
 	parsed = {case: case.name.split(".") for case in cases}
@@ -72,6 +73,9 @@ def main():
 	files = [str(c) for c in cases if str(c) not in programs] + [str(s) for s in support]
 	run = subprocess.run(checker + ["-g", str(ROOT / "doir.peg")] + files + ["-p"] + programs, capture_output=True, text=True)
 	reports = results(run.stdout)
+	if not reports:
+		print(f"{checker[0]}: reported no results (exit {run.returncode}); check that --checker names a command taking doir_check's arguments, as \"bin/doir --check\" does\n{run.stderr}", file=sys.stderr)
+		return 1
 	checked = checked_tags()
 	failures, pending = [], []
 	for case in cases + support:

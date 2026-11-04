@@ -28,6 +28,7 @@ static import core.stdc.stdlib;
 static import std.typecons;
 
 static import fp.dynarray;
+version(unittest) static import fp.testing;
 static import fp.string;
 
 static import ecrs.context;
@@ -385,9 +386,9 @@ unittest { // every declaration form prints as written and reparses to the same 
 	// A refused allocation returns null and leaves no text.
 	for (size_t n = 0;; ++n) {
 		assert(n < 1000);
-		auto previous = doir.testing.beginRationedAllocator(n);
+		auto previous = fp.testing.beginRationedAllocator(n);
 		auto printed = print(store, strings, a);
-		fp.pointer.allocFunction = previous;
+		fp.testing.endRationedAllocator(previous);
 		if (printed.isNull) continue;
 		scope(exit) fp.string.free(printed.get);
 		assert(fp.string.slice(printed.get) == expected);

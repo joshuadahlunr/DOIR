@@ -3,8 +3,6 @@ module doir.testing;
 
 version(unittest):
 
-static import fp.pointer;
-
 static import ecrs.context;
 
 public import ecrs.registry : EntityId, invalidEntity;
@@ -44,39 +42,4 @@ package(doir) ref C addComponent(C)(ref ecrs.context.Context store, EntityId e) 
 	auto component = ecrs.context.addComponent!C(store, e);
 	assert(component !is null, "doir.testing: allocation refused");
 	return *component;
-}
-
-
-// --- refused allocations -----------------------------------------------------
-
-private __gshared fp.pointer.AllocFunction rationedUnderlying;
-private __gshared size_t rationedRemaining;
-
-private void* rationedAlloc(void* p, size_t size) {
-	// Frees are always forwarded, or a test could not clean up after itself.
-	if (size == 0) return rationedUnderlying(p, 0);
-	if (rationedRemaining == 0) return null;
-	--rationedRemaining;
-	return rationedUnderlying(p, size);
-}
-
-/// For tests of refused allocations, as libfp's own: `beginRationedAllocator` makes `fp.pointer.allocFunction` grant only the next `n` allocations and refuse the rest, while still freeing; assign the allocator it returns back to `fp.pointer.allocFunction` to end it.
-///
-/// Examples:
-/// ---
-/// static import fp.dynarray;
-/// static import fp.pointer;
-/// int* list = null;
-/// auto previous = beginRationedAllocator(0);
-/// assert(!fp.dynarray.pushBack(list, 1));
-/// fp.pointer.allocFunction = previous;
-/// assert(fp.dynarray.pushBack(list, 1));
-/// fp.dynarray.free(list);
-/// ---
-package(doir) fp.pointer.AllocFunction beginRationedAllocator(size_t n) {
-	fp.pointer.AllocFunction previous = fp.pointer.allocFunction;
-	rationedUnderlying = previous;
-	rationedRemaining = n;
-	fp.pointer.allocFunction = &rationedAlloc;
-	return previous;
 }
