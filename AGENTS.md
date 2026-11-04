@@ -1,4 +1,4 @@
-# CLAUDE.md
+# AGENTS.md
 
 This file provides architectural rules and guidance for building the query-based DOIR compiler.
 
@@ -58,7 +58,7 @@ Three reference codebases guide implementation (`rustc-architecture.md` summariz
 
 ## Code Style
 
-The compiler is written in D under `-betterC` on LDC, on libfp; its tools are Python 3 (`tools/`), and its interfaces, references and tests are DOIR (`standard.doir`, `reference/`, `tests/`). The D rules are forwarded from libfp's `AGENTS.md`; they apply to every D, Python and DOIR source in this repository, except where a rule names the languages it covers.
+The compiler is written in D under `-betterC` on LDC, on libfp; its tools and test drivers are Python 3 (`tools/`, `tests/*.py`), and its interfaces, references and tests are DOIR (`standard.doir`, `reference/`, `tests/`). The D rules are forwarded from libfp's `AGENTS.md`; they apply to every D, Python and DOIR source in this repository, except where a rule names the languages it covers.
 
 ### Comments
 
@@ -93,10 +93,10 @@ The compiler is written in D under `-betterC` on LDC, on libfp; its tools are Py
   ```
 
 - Keep examples short, and make them correct against the current API: they should compile and pass as written under `-betterC`.
-  Check them with `python3 tools/doctest.py`, which compiles and runs every example and reports public definitions missing documentation or an example.
+  Check them with `python3 tests/doctest.py`, which compiles and runs every example and reports public definitions missing documentation or an example.
   With no arguments it checks `source/**/*.d`; pass files and `-I dir` import paths for the modules those sources import.
 - Generate DOIR documentation with `uv run tools/doir_doc.py`, which writes a Markdown page per file to `bin/docs`, and check DOIR comments against these rules with `uv run tools/doir_doc.py --check`.
-- A Python tool's module docstring says how to run it, as a usage line (`uv run tools/parse_diff.py [file.doir...]`).
+- A Python tool's module docstring says how to run it, as a usage line (`uv run tests/parse_diff.py [file.doir...]`).
 - Documentation is not a free-standing comment, so the 25-word cap does not apply to it, but keep it as brief as the definition allows.
 
 ### Style
@@ -121,6 +121,7 @@ The compiler is written in D under `-betterC` on LDC, on libfp; its tools are Py
 ### Failure and invariants
 
 - Every function that can fail says in its documentation how it reports failure (null, `false`, `fp.pointer.notFound`, `fp.pointer.allocationRefused`, `None`, the exception it raises), and what state it leaves its arguments in; prefer leaving them as they were.
+- Do not return a `bool` with the result in an `out` parameter (`bool find(…, out T x)`): return `std.typecons.Nullable!T`, null on failure, so the result cannot be read without the check. Several results go in a struct the `Nullable` holds.
 - Never drop the result of a call that can fail: check it, or discard it explicitly when failure is impossible or harmless there, with `cast(void)` in D and `_ = …` in Python.
   Tests assert on it.
 - When a limit on one value follows from another (such as a bit position), name the constant once, derive the others from it, and `assert` the limit where the value is accepted.
@@ -132,16 +133,17 @@ The compiler is written in D under `-betterC` on LDC, on libfp; its tools are Py
   "Expected `}`" alone is not enough; "insert `}` here to close the namespace opened above" is.
 - When other items are involved, such as the earlier import in a `WF-Unique` clash or the opening brace of an unclosed block, point an annotation at each, saying what part it plays.
 - A diagnostic with no source location, such as a file that cannot be read, still gives a hint.
-- A Python tool's error names the file and line it is about, the rule tag when there is one, and a hint; it keeps the rule tag first where another tool matches on it (`tools/conformance.py` on `doir_check`).
+- A Python tool's error names the file and line it is about, the rule tag when there is one, and a hint; it keeps the rule tag first where another tool matches on it (`tests/conformance.py` on `doir_check`).
 - Tests of a diagnostic assert on its annotations and hint, not only on its kind and count.
 
 ### Organization
 
 - Where possible, group related definitions into sections (for example: types and layout, queries, creation and freeing, growth, removal), separated by blank lines, and order them so a reader meets a type before the functions built on it.
-- Whenever possible, define a function before anything that uses it, so a module reads bottom-up from its building blocks; a Python tool ends with `main`.
-  When functions use each other in a cycle, define first the one that more of the module uses.
+- Whenever possible, define a function before anything that uses it, so a module reads bottom-up from its building blocks; a Python tool ends with `main`.  
+When functions use each other in a cycle, define first the one that more of the module uses.
 - Keep a module's tests in the same order as the code they test.
-- Prefer merging a new test case into an existing test (a D `unittest` block, a Python test function) covering the same section over adding a new one; add one only when no existing test fits. A DOIR test is a file of its own, named as `tools/conformance.py` or `tools/parse_diff.py` describes.
+- Prefer merging a new test case into an existing test (a D `unittest` block, a Python test function) covering the same section over adding a new one; add one only when no existing test fits. A DOIR test is a file of its own, named as `tests/conformance.py` or `tests/parse_diff.py` describes.
+- Prefer grouping components together in a file in `source/doir/components` rather than scattering components through every file.
 
 ### Bugs
 

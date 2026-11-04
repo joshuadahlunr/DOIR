@@ -14,6 +14,7 @@ module doir.components.lowering;
 static import std.typecons;
 
 static import fp.pointer;
+version(unittest) static import fp.testing;
 
 static import ecrs.context;
 static import ecrs.relation;
@@ -21,7 +22,7 @@ static import ecrs.registry;
 
 static import doir.engine.logs;
 static import doir.engine.positions;
-static import doir.engine.query;
+static import doir.query;
 static import doir.components.query;
 
 public import ecrs.registry : EntityId, invalidEntity;
@@ -127,15 +128,15 @@ const(C)* findPerTarget(C)(ref const ecrs.context.Context store, EntityId e, siz
 /// assert(findPerTarget!VirtualReg(store, e, 1).id == 9 && findPerTarget!VirtualReg(store, e, 0) is null);
 /// assert(findPerTarget!PhysicalReg(store, e, 0).kind == PhysicalReg.Kind.spill);
 /// ---
-C* producePerTarget(C)(ref doir.engine.query.QueryEngine engine, EntityId e, size_t target) @trusted if (isPerTarget!C) {
+C* producePerTarget(C)(ref doir.query.QueryEngine engine, EntityId e, size_t target) @trusted if (isPerTarget!C) {
 	immutable id = perTargetComponent!C(target);
 	if (id == fp.pointer.notFound) {
-		doir.engine.query.fail(engine);
+		doir.query.fail(engine);
 		return null;
 	}
-	if (!doir.engine.query.recordProduced(engine, doir.components.query.Produced([e], id, &doir.engine.query.stripComponent, &doir.engine.query.hashComponent!C), true)) return null;
+	if (!doir.query.recordProduced(engine, doir.components.query.Produced([e], id, &doir.query.stripComponent, &doir.query.hashComponent!C), true)) return null;
 	auto c = cast(C*) ecrs.context.addComponent(*engine.store, e, id, C.sizeof);
-	if (c is null) doir.engine.query.fail(engine);
+	if (c is null) doir.query.fail(engine);
 	return c;
 }
 
@@ -164,7 +165,7 @@ C* producePerTarget(C)(ref doir.engine.query.QueryEngine engine, EntityId e, siz
 /// assert(*doir.query.query!Lower(engine, Lower.Key([e])));
 /// assert(retiredFor(engine, e, e).get);
 /// ---
-bool retire(ref doir.engine.query.QueryEngine engine, EntityId e, EntityId target) {
+bool retire(ref doir.query.QueryEngine engine, EntityId e, EntityId target) {
 	return doir.engine.logs.append!(Lowered, ecrs.relation.Relation!1)(engine, e, doir.engine.positions.none, ecrs.relation.Relation!1([target]));
 }
 
@@ -181,7 +182,7 @@ bool retire(ref doir.engine.query.QueryEngine engine, EntityId e, EntityId targe
 /// immutable e = ecrs.context.addEntity(store);
 /// assert(!retiredFor(engine, e, e).get);
 /// ---
-std.typecons.Nullable!bool retiredFor(ref doir.engine.query.QueryEngine engine, EntityId e, EntityId target) {
+std.typecons.Nullable!bool retiredFor(ref doir.query.QueryEngine engine, EntityId e, EntityId target) {
 	bool retired = false;
 	immutable folded = doir.engine.logs.fold!(Lowered, ecrs.relation.Relation!1)(engine, e, doir.engine.positions.none, (ref const ecrs.relation.Relation!1 t) {
 		if (t.related[0] == target) retired = true;
@@ -242,9 +243,9 @@ unittest { // targets own their registers and retirement independently
 	bool refused = true;
 	for (size_t n = 0; refused; ++n) {
 		assert(n < 100);
-		auto previous = doir.testing.beginRationedAllocator(n);
+		auto previous = fp.testing.beginRationedAllocator(n);
 		auto lowered = doir.query.query!LowerFor(engine, LowerFor.Key([e], 1000 + n));
-		fp.pointer.allocFunction = previous;
+		fp.testing.endRationedAllocator(previous);
 		assert(lowered is null ? engine.refused : *lowered);
 		refused = engine.refused;
 		engine.refused = false;

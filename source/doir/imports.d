@@ -125,10 +125,10 @@ EntityId findImported(ref doir.query.QueryEngine engine, EntityId block, EntityI
 
 version(unittest) {
 	static import fp.string;
-	static import doir.engine.query;
+	static import doir.query;
 
 	static import doir.testing;
-	static import doir.positions;
+	static import doir.engine.positions;
 
 	private __gshared doir.strings.Strings strings;
 	private __gshared EntityId fileA, fileB, fileC;
@@ -162,8 +162,8 @@ version(unittest) {
 			immutable pushedU = fp.dynarray.pushBack(block.related, u);
 			assert(pushedU);
 		}
-		immutable pt = doir.positions.between(engine.positions, doir.positions.root, doir.positions.none, doir.positions.none);
-		immutable pm = doir.positions.between(engine.positions, doir.positions.root, pt, doir.positions.none);
+		immutable pt = doir.engine.positions.between(engine.positions, doir.engine.positions.root, doir.engine.positions.none, doir.engine.positions.none);
+		immutable pm = doir.engine.positions.between(engine.positions, doir.engine.positions.root, pt, doir.engine.positions.none);
 		assert(doir.effects.applyFlags(engine, t, pm, modifier));
 		// Inside B, a read on t's own line still sees it unmodified.
 		assert(doir.effects.flagsAt(engine, t, pt).get == doir.components.ast.Flags.Export);
@@ -269,5 +269,5 @@ unittest { // an imported file arrives finished, once per level, and its edits s
 	assert(diagnose.count(manager) == 1);
 	enum prefix = "Q-Cycle: a query needs its own answer: Import -> Import -> Import";
 	assert(fp.string.slice(manager.diagnostics[0].message) == prefix);
-	assert(fp.string.slice(manager.diagnostics[0].additionalNote) == doir.engine.query.cycleHint);
+	assert(fp.string.slice(manager.diagnostics[0].additionalNote) == doir.query.cycleHint);
 }

@@ -12,7 +12,7 @@
 module doir.components.ast;
 
 static import fp.dynarray;
-static import fp.fnv1a;
+static import fp.hash;
 
 static import ecrs.context;
 static import ecrs.relation;
@@ -181,7 +181,7 @@ struct LookupFunctionInputs {
 	/// assert(LookupFunctionInputs.contentHash(a) == LookupFunctionInputs.contentHash(b));
 	/// ---
 	static size_t contentHash(ref const LookupFunctionInputs self) @nogc nothrow {
-		return fp.fnv1a.hash(fp.dynarray.slice(self.names));
+		return fp.hash.murmur(cast(const(ubyte)[]) fp.dynarray.slice(self.names));
 	}
 
 	/// Releases the list when the component is removed.

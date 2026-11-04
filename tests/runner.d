@@ -8,10 +8,8 @@ private enum modules = [
 	"doir.syntax.parser",
 	"doir.engine.locations",
 	"doir.engine.positions",
-	"doir.engine.query",
-	"doir.engine.logs",
 	"doir.query",
-	"doir.positions",
+	"doir.engine.logs",
 	"doir.components.query",
 	"doir.components.ast",
 	"doir.components.types",
@@ -23,6 +21,8 @@ private enum modules = [
 	"doir.effects",
 	"doir.imports",
 	"doir.source",
+	"doir.names",
+	"doir.checks",
 	"doir.printer",
 ];
 

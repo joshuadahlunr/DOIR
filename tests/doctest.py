@@ -7,7 +7,7 @@ A module defining `main` is checked but not compiled into the doctest binary, wh
 
 Import paths and libraries for the dub dependencies (libECRS, libdiagnose, Mizu and theirs) come from `dub describe`.
 
-Usage: python3 tools/doctest.py [-I dir]... [file.d]...   (default sources: source/**/*.d; -I adds further import paths; set DC to use a compiler other than ldc2)
+Usage: python3 tests/doctest.py [-I dir]... [file.d]...   (default sources: source/**/*.d; -I adds further import paths; set DC to use a compiler other than ldc2)
 """
 import glob, os, re, subprocess, sys
 

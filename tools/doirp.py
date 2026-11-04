@@ -14,7 +14,7 @@ The DOIR+ grammar is `doir_plus.peg`, which extends `doir.peg`; both are loaded 
     uv run tools/doirp.py input.doirp -o output.doir
 
     # Check generated output:
-    uv run tools/doir_check.py output.doir
+    uv run tests/doir_check.py output.doir
 """
 
 import argparse

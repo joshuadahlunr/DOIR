@@ -16,6 +16,7 @@ module doir.syntax.lexer;
 
 static import fp.dynarray;
 static import fp.string;
+version(unittest) static import fp.testing;
 
 static import doir.syntax.tables;
 
@@ -391,6 +392,126 @@ enum Trivia : bool {
 // About one token per this many bytes of DOIR without trivia, as `standard.doir` measures: the first guess at the array's size.
 private enum size_t bytesPerToken = 6;
 
+/// A position in a text being lexed one token at a time, for a scan that needs each token only once; `lex` stores what `next` hands out.
+struct Cursor {
+	const(char)[] source; /// The text.
+	size_t at; /// The byte offset of the next token.
+	private int language; // `language` _ string _ `{`: 1 after the keyword, 2 after the name, so the next `{` opens a body
+}
+
+/// The token at `cursor.at`, trivia included, advancing past it; `cursor.at` must be below the text's length. It cannot fail.
+///
+/// Examples:
+/// ---
+/// auto cursor = Cursor("a -> b");
+/// assert(next(cursor).kind == TokenKind.identifier && next(cursor).kind == TokenKind.whitespace);
+/// assert(next(cursor).kind == TokenKind.arrow && cursor.at == 4);
+/// ---
+pragma(inline, true)
+Token next(ref Cursor cursor) @trusted {
+	const source = cursor.source;
+	int language = cursor.language;
+	size_t i = cursor.at;
+	immutable start = i;
+	TokenKind kind = TokenKind.invalid, attempted;
+	bool unterminated = false;
+	immutable c = source[i];
+
+	if (c == ' ' || c == '\t') {
+		kind = TokenKind.whitespace;
+		while (i < source.length && (source[i] == ' ' || source[i] == '\t')) ++i;
+	} else if (c == '\n') { kind = TokenKind.newline; ++i; }
+	else if (c == '\r') { kind = TokenKind.newline; i += isChar(source, i + 1, '\n') ? 2 : 1; }
+	else if ((c == '/' && isChar(source, i + 1, '/')) || c == '#') {
+		kind = TokenKind.lineComment;
+		while (i < source.length && source[i] != '\n') ++i;
+	} else if (c == '/' && isChar(source, i + 1, '*')) {
+		kind = TokenKind.longComment;
+		i += 2;
+		while (i < source.length && !startsWith(source, i, "*/")) ++i;
+		if (i < source.length) i += 2;
+		else unterminated = true;
+	} else if (c == '{' && language == 2) {
+		kind = TokenKind.languageBody;
+		immutable e = matchingBracesAt(source, i);
+		if (e == failed) { i = source.length; unterminated = true; }
+		else i = e;
+	} else if (c == ':') { kind = TokenKind.colon; ++i; }
+	else if (c == '=') { kind = TokenKind.equals; ++i; }
+	else if (c == ',') { kind = TokenKind.comma; ++i; }
+	else if (c == '(') { kind = TokenKind.leftParen; ++i; }
+	else if (c == ')') { kind = TokenKind.rightParen; ++i; }
+	else if (c == '{') { kind = TokenKind.leftBrace; ++i; }
+	else if (c == '}') { kind = TokenKind.rightBrace; ++i; }
+	else if (c == ';') { kind = TokenKind.semicolon; ++i; }
+	else if (c == '-' && isChar(source, i + 1, '>')) { kind = TokenKind.arrow; i += 2; }
+	else if (c == '<') {
+		kind = TokenKind.sourceInfo;
+		size_t at;
+		immutable e = sourceInfoAt(source, i, at);
+		if (e == failed) { i = at; unterminated = true; }
+		else i = e;
+	} else if (fp.string.isDigit(c) || c == '.') {
+		immutable f = floatAt(source, i);
+		immutable n = f == failed ? integerAt(source, i) : failed;
+		if (f != failed) { kind = TokenKind.float_; i = f; }
+		else if (n != failed) { kind = TokenKind.integer; i = n; }
+		else ++i;
+	} else if (c == '"') {
+		immutable raw = rawStringAt(source, i);
+		size_t at;
+		if (raw != failed) { kind = TokenKind.rawString; i = raw; }
+		else {
+			kind = TokenKind.string_;
+			immutable e = quotedAt(source, i, at);
+			if (e == failed) { i = at; unterminated = true; }
+			else i = e;
+		}
+	} else if (c == '\'') {
+		kind = TokenKind.character;
+		immutable e = stringCharAt(source, i + 1);
+		if (e != failed && isChar(source, e, '\'')) i = e + 1;
+		else { i = e == failed ? i + 1 : e; unterminated = true; }
+	} else if (c == '%') {
+		kind = TokenKind.identifier;
+		size_t at;
+		immutable quoted = isChar(source, i + 1, '"') ? quotedAt(source, i + 1, at) : failed;
+		i = quoted != failed ? quoted : plainIdentifierAt(source, i);
+	} else {
+		size_t j = i;
+		immutable cp = decode(source, j);
+		if (isWhitespace(cp)) {
+			kind = TokenKind.whitespace;
+			i = j;
+			while (i < source.length) {
+				size_t k = i;
+				if (!isWhitespace(decode(source, k))) break;
+				i = k;
+			}
+		} else if (isIdentifierStart(cp)) {
+			immutable end = wordEnd(source, i);
+			// Keywords are 4 to 8 bytes; anything else is an identifier without comparing.
+			if (end - i >= 4 && end - i <= 8 && isKeyword(source[i .. end])) {
+				kind = TokenKind.keyword;
+				i = end;
+			} else {
+				kind = TokenKind.identifier;
+				i = dottedEnd(source, end);
+			}
+		} else i = j;
+	}
+
+	attempted = kind;
+	if (unterminated) kind = TokenKind.unterminated;
+
+	if (kind == TokenKind.keyword && source[start .. i] == "language") language = 1;
+	else if (kind == TokenKind.string_ && language == 1) language = 2;
+	else if (!isTrivia(kind) && kind != TokenKind.newline) language = 0;
+	cursor.at = i;
+	cursor.language = language;
+	return Token(kind, attempted, cast(uint) start, cast(uint) (i - start));
+}
+
 /// Lexes `source` into a new fp dynarray of tokens in order, ending with one `end` token; with `Trivia.keep` they cover every byte. A character no rule matches becomes an `invalid` token, and a token that does not finish an `unterminated` one, so lexing always reaches the end.
 ///
 /// Returns null if allocation fails.
@@ -424,105 +545,10 @@ Token* lex(const(char)[] source, Trivia trivia = Trivia.skip) @trusted {
 	}
 
 	// `language` _ string _ `{`: 1 after the keyword, 2 after the name, so the next `{` opens a body.
-	int language = 0;
-	size_t i = 0;
-	while (i < source.length) {
-		immutable start = i;
-		TokenKind kind = TokenKind.invalid, attempted;
-		bool unterminated = false;
-		immutable c = source[i];
-
-		if (c == ' ' || c == '\t') {
-			kind = TokenKind.whitespace;
-			while (i < source.length && (source[i] == ' ' || source[i] == '\t')) ++i;
-		} else if (c == '\n') { kind = TokenKind.newline; ++i; }
-		else if (c == '\r') { kind = TokenKind.newline; i += isChar(source, i + 1, '\n') ? 2 : 1; }
-		else if ((c == '/' && isChar(source, i + 1, '/')) || c == '#') {
-			kind = TokenKind.lineComment;
-			while (i < source.length && source[i] != '\n') ++i;
-		} else if (c == '/' && isChar(source, i + 1, '*')) {
-			kind = TokenKind.longComment;
-			i += 2;
-			while (i < source.length && !startsWith(source, i, "*/")) ++i;
-			if (i < source.length) i += 2;
-			else unterminated = true;
-		} else if (c == '{' && language == 2) {
-			kind = TokenKind.languageBody;
-			immutable e = matchingBracesAt(source, i);
-			if (e == failed) { i = source.length; unterminated = true; }
-			else i = e;
-		} else if (c == ':') { kind = TokenKind.colon; ++i; }
-		else if (c == '=') { kind = TokenKind.equals; ++i; }
-		else if (c == ',') { kind = TokenKind.comma; ++i; }
-		else if (c == '(') { kind = TokenKind.leftParen; ++i; }
-		else if (c == ')') { kind = TokenKind.rightParen; ++i; }
-		else if (c == '{') { kind = TokenKind.leftBrace; ++i; }
-		else if (c == '}') { kind = TokenKind.rightBrace; ++i; }
-		else if (c == ';') { kind = TokenKind.semicolon; ++i; }
-		else if (c == '-' && isChar(source, i + 1, '>')) { kind = TokenKind.arrow; i += 2; }
-		else if (c == '<') {
-			kind = TokenKind.sourceInfo;
-			size_t at;
-			immutable e = sourceInfoAt(source, i, at);
-			if (e == failed) { i = at; unterminated = true; }
-			else i = e;
-		} else if (fp.string.isDigit(c) || c == '.') {
-			immutable f = floatAt(source, i);
-			immutable n = f == failed ? integerAt(source, i) : failed;
-			if (f != failed) { kind = TokenKind.float_; i = f; }
-			else if (n != failed) { kind = TokenKind.integer; i = n; }
-			else ++i;
-		} else if (c == '"') {
-			immutable raw = rawStringAt(source, i);
-			size_t at;
-			if (raw != failed) { kind = TokenKind.rawString; i = raw; }
-			else {
-				kind = TokenKind.string_;
-				immutable e = quotedAt(source, i, at);
-				if (e == failed) { i = at; unterminated = true; }
-				else i = e;
-			}
-		} else if (c == '\'') {
-			kind = TokenKind.character;
-			immutable e = stringCharAt(source, i + 1);
-			if (e != failed && isChar(source, e, '\'')) i = e + 1;
-			else { i = e == failed ? i + 1 : e; unterminated = true; }
-		} else if (c == '%') {
-			kind = TokenKind.identifier;
-			size_t at;
-			immutable quoted = isChar(source, i + 1, '"') ? quotedAt(source, i + 1, at) : failed;
-			i = quoted != failed ? quoted : plainIdentifierAt(source, i);
-		} else {
-			size_t j = i;
-			immutable cp = decode(source, j);
-			if (isWhitespace(cp)) {
-				kind = TokenKind.whitespace;
-				i = j;
-				while (i < source.length) {
-					size_t k = i;
-					if (!isWhitespace(decode(source, k))) break;
-					i = k;
-				}
-			} else if (isIdentifierStart(cp)) {
-				immutable end = wordEnd(source, i);
-				// Keywords are 4 to 8 bytes; anything else is an identifier without comparing.
-				if (end - i >= 4 && end - i <= 8 && isKeyword(source[i .. end])) {
-					kind = TokenKind.keyword;
-					i = end;
-				} else {
-					kind = TokenKind.identifier;
-					i = dottedEnd(source, end);
-				}
-			} else i = j;
-		}
-
-		attempted = kind;
-		if (unterminated) kind = TokenKind.unterminated;
-		if ((trivia || !isTrivia(kind)) && !emit(Token(kind, attempted, cast(uint) start, cast(uint) (i - start)))) return null;
-
-		if (kind == TokenKind.keyword && source[start .. i] == "language") language = 1;
-		else if (kind == TokenKind.string_ && language == 1) language = 2;
-		else if (!isTrivia(kind) && kind != TokenKind.newline) language = 0;
+	auto cursor = Cursor(source);
+	while (cursor.at < source.length) {
+		immutable t = next(cursor);
+		if ((trivia || !isTrivia(t.kind)) && !emit(t)) return null;
 	}
 	if (!emit(Token(TokenKind.end, TokenKind.end, cast(uint) source.length, 0))) return null;
 	cast(void) fp.dynarray.popBackCount(out_, capacity - count);
@@ -531,8 +557,6 @@ Token* lex(const(char)[] source, Trivia trivia = Trivia.skip) @trusted {
 
 
 version(unittest) {
-	static import fp.pointer;
-	static import doir.testing;
 
 	// The kinds of `source`'s tokens, trivia left out, `end` included; lexing without trivia must give the same tokens.
 	private bool kindsAre(const(char)[] source, const(TokenKind)[] expected...) {
@@ -612,9 +636,9 @@ unittest { // tokens cover the text, and follow the grammar's ordered choices
 	assert(fp.dynarray.length(many) == dense.length + 1 && many[999].kind == TokenKind.semicolon && many[999].start == 999);
 
 	// A refused allocation while growing frees what was lexed and returns null.
-	auto previous = doir.testing.beginRationedAllocator(1);
+	auto previous = fp.testing.beginRationedAllocator(1);
 	assert(lex(dense[]) is null);
-	fp.pointer.allocFunction = previous;
+	fp.testing.endRationedAllocator(previous);
 
 	// Every byte belongs to exactly one token, in order.
 	static immutable source = "x : (a: T, b: deduced type) -> U = {\n\t_ : _ = tail f(a, b) <g:1:1>; # c\n}\n";

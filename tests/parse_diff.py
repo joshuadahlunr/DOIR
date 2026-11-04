@@ -5,7 +5,7 @@
 # ///
 """The differential test of the parser against `doir.peg` (`roadmap.md` Phase 2): runs `bin/doir --syntax` and pe over each file, and checks that both accept or both reject it, and that they report the first syntax error on the same line. A file named `*.accept.doir` must also be accepted. A `*.reject.doir` file in `tests/syntax`, or in `tests/conformance` with a case starting `syntax` (`<Rule-Tag>.syntax….reject.doir`), must be rejected; any other conformance reject case must parse, as its rule waits for the compiler.
 
-    uv run tools/parse_diff.py [file.doir...]
+    uv run tests/parse_diff.py [file.doir...]
 
 With no files it checks the corpus (`standard.doir`, `test.doir`, `test_call.doir`), `tests/conformance` and `tests/syntax`. Build `bin/doir` first (`dub build --compiler=ldc2`).
 """
@@ -17,9 +17,10 @@ import sys
 
 import pe
 
-import doir_grammar
-
 ROOT = pathlib.Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT / "tools"))  # doir_grammar is a tool, shared with doir_doc and doirp
+
+import doir_grammar  # noqa: E402
 DOIR = ROOT / "bin" / "doir"
 
 

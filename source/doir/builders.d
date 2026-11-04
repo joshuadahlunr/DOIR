@@ -19,6 +19,7 @@
 module doir.builders;
 
 static import fp.dynarray;
+version(unittest) static import fp.testing;
 
 static import ecrs.context;
 
@@ -677,16 +678,14 @@ unittest {
 
 	// A refused allocation is reported, and leaves the block or the function type without the declaration.
 	static import fp.dynarray;
-	static import fp.pointer;
-	static import doir.testing;
 	bool refusedOnce = false;
 	foreach (n; 0 .. 8) {
 		immutable declarations = fp.dynarray.length(ecrs.context.getComponent!(doir.components.ast.Block)(store, root.block).related);
 		immutable parameters = fp.dynarray.length(ecrs.context.getComponent!(doir.components.ast.FunctionInputs)(store, ft).related);
-		auto previous = doir.testing.beginRationedAllocator(n);
+		auto previous = fp.testing.beginRationedAllocator(n);
 		immutable d = pushDeclaration(root, doir.strings.intern(strings, "refused"));
 		immutable p = pushParameter(store, ft, doir.strings.intern(strings, "refused"), doir.strings.intern(strings, "std.u8"));
-		fp.pointer.allocFunction = previous;
+		fp.testing.endRationedAllocator(previous);
 		assert(fp.dynarray.length(ecrs.context.getComponent!(doir.components.ast.Block)(store, root.block).related) == declarations + (d != invalidEntity));
 		assert(fp.dynarray.length(ecrs.context.getComponent!(doir.components.ast.FunctionInputs)(store, ft).related) == parameters + (p != invalidEntity));
 		refusedOnce |= d == invalidEntity || p == invalidEntity;
@@ -698,9 +697,9 @@ unittest {
 		assert(n < 100);
 		auto fresh = ecrs.context.create();
 		scope(exit) ecrs.context.free(fresh);
-		auto previous = doir.testing.beginRationedAllocator(n);
+		auto previous = fp.testing.beginRationedAllocator(n);
 		auto made = createRoot(fresh);
-		fp.pointer.allocFunction = previous;
+		fp.testing.endRationedAllocator(previous);
 		if (made.block != invalidEntity) break;
 		assert(made.store is null);
 		assert(ecrs.context.entityCount(fresh) <= 1 || !ecrs.context.hasComponent!(doir.components.ast.Block)(fresh, 1));
