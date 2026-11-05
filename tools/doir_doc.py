@@ -7,7 +7,7 @@
 
 A `//` or `#` comment directly above a declaration outside every function body and block documents it, and one at the top of a file documents the file. Namespaces and type bodies with declarations become sections, each listing its declarations in source order before its subsections; a declaration is shown with its signature, and a `_` declaration only when it is documented. A declaration's trailing comment is appended to its documentation.
 
-With `--check`, nothing is written; instead each comment that breaks AGENTS.md is reported: a paragraph hard-wrapped over several lines, a free-standing comment over 25 words (rule tags not counted), or a file without a comment at its top.
+With `--check`, nothing is written; instead each comment that breaks AGENTS.md is reported: a sentence hard-wrapped over several lines, a documentation line holding more than one sentence, a free-standing comment over 25 words (rule tags not counted), or a file without a comment at its top.
 
     uv run tools/doir_doc.py [-o DIR] [file.doir...]    # write DIR/<name>.md for each file (default: bin/docs)
     uv run tools/doir_doc.py --check [file.doir...]
@@ -27,6 +27,8 @@ import doir_grammar
 
 TAG = re.compile(r"\b[A-Z]{1,3}-[A-Z][A-Za-z]+\b")
 WORD_CAP = 25
+ABBREVIATIONS = {"e.g.", "i.e.", "cf.", "vs.", "al.", "etc.", "approx.", "resp.", "viz."}
+SENTENCE_END = re.compile(r"[.!?:][*_\"')]*$")
 SECTION_TYPES = ("namespace", "type")
 
 
@@ -64,6 +66,30 @@ class Declaration:
 def is_continuation(line: str) -> bool:
 	"""Whether a comment line continues its paragraph as written apart: a list item, or an indented line such as code."""
 	return line.startswith((" ", "\t")) or bool(re.match(r"\s*([-*]|\d+[.)])\s", line))
+
+
+def sentence_breaks(line: str) -> list[int]:
+	"""The offsets in `line` where a new sentence starts, skipping code spans, `$` math, brackets and abbreviations such as `e.g.`."""
+	out, depth, i, n = [], 0, 0, len(line)
+	math = line.count("$") % 2 == 0
+	while i < n:
+		c = line[i]
+		if c == "`" or (c == "$" and math):
+			ticks = re.match(r"`+|\$", line[i:]).group(0)
+			end = line.find(ticks, i + len(ticks))
+			i = end + len(ticks) if end >= 0 else i + len(ticks)
+			continue
+		if c in "([":
+			depth += 1
+		elif c in ")]":
+			depth = max(0, depth - 1)
+		elif c in ".!?" and depth == 0:
+			m = re.compile(r"[*_\"']*( +)([A-Z`*\[(\"$_'])").match(line, i + 1)
+			word = line[: i + 1].rsplit(" ", 1)[-1].lstrip("(*_`")
+			if m and word not in ABBREVIATIONS and not re.fullmatch(r"[A-Z]\.|\d+\.", word):
+				out.append(m.start(2))
+		i += 1
+	return out
 
 
 def paragraph_text(paragraph: list[str]) -> str:
@@ -193,8 +219,13 @@ def problems(source: Source) -> list[str]:
 	if not source.comments or source.comments[0].first != 1:
 		out.append(f"{source.path}:1: no comment at the top of the file; add one saying what the file is")
 	for comment in source.comments:
-		if any(len(p) > 1 and not all(is_continuation(l) for l in p[1:]) for p in comment.paragraphs()):
-			out.append(f"{source.path}:{comment.first}: comment hard-wrapped over lines {comment.first}-{comment.last}; join each paragraph onto one line, since editors here soft-wrap")
+		prose = [line for p in comment.paragraphs() for line in p if not is_continuation(line)]
+		if comment.documents and any(sentence_breaks(line) for line in prose):
+			out.append(f"{source.path}:{comment.first}: documentation over lines {comment.first}-{comment.last} has a line holding more than one sentence; put each sentence on its own line")
+		if any(len(p) > 1 and not all(is_continuation(l) or SENTENCE_END.search(l.rstrip()) for l in p[:-1]) for p in comment.paragraphs()):
+			out.append(f"{source.path}:{comment.first}: comment hard-wrapped over lines {comment.first}-{comment.last}; end each line with its sentence, since editors here soft-wrap")
+		elif not comment.documents and len(prose) > 1:
+			out.append(f"{source.path}:{comment.first}: free-standing comment over lines {comment.first}-{comment.last}; write it on a single line")
 		words = len(TAG.sub("", " ".join(comment.lines)).split())
 		if not comment.documents and words > WORD_CAP:
 			out.append(f"{source.path}:{comment.first}: free-standing comment of {words} words, over the cap of {WORD_CAP}; shorten it, or move it directly above the declaration it documents")
