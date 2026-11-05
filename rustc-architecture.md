@@ -159,7 +159,7 @@ DOIR wants dense, renumberable `EntityId`s within the session, and every holder 
 
 - If incremental compilation across sessions is ever wanted, adopt rustc's split: a stable path hash per entity for persistence, and `EntityId` only in memory.
   Renumbering then never touches persisted data.
-- Within a session, DOIR stores query instances as entities (key, value, `DependsOn`, `Produces` and revisions as components), so memo tables are part of the store and libECRS's `remapEntities` hooks renumber them.
+- Within a session, DOIR stores query instances as entities (key, value, `Reads`, `Outputs` and revisions as components), so memo tables are part of the store and libECRS's `remapEntities` hooks renumber them.
   The remaining hazard is `std.meta.entity` values in live VM frames, so renumber only when no query is running and no VM frame is live: between levels, or between edits.
 
 ### D4. Lexical positions need owner-relative keys

@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Run the conformance corpus (`roadmap.md` Phase 10) through `doir_check`.
 
-Each file in `tests/conformance` is named `<Rule-Tag>.<case>.accept.doir` or `<Rule-Tag>.<case>.reject.doir`, and its first line is a comment saying what it tests. The `<case>` prefix gives the file's place in its build:
+Each file in `tests/conformance` is named `<Rule-Tag>.<case>.accept.doir` or `<Rule-Tag>.<case>.reject.doir`, and its first line is a comment saying what it tests.
+The `<case>` prefix gives the file's place in its build:
 
 - `program...`: the program, the last file of the chain, checked with `doir_check -p`.
 - `backends...`: the build's backends file, in place of `reference/backends.doir`.
@@ -12,7 +13,10 @@ A case's build is the files `reference/compiler.doir`, `reference/backends.doir`
 `standard.doir` pastes `standard.os.doir`, and `reference/backends.doir` pairs the Mizu machine with the freestanding operating system (`OS-Target`), so an `OS-` case gets `std.os` with no file of its own; a `backends…` case pairs another.
 Files under `support/` are what cases import or build on; they must parse.
 
-`doir_check` parses and checks the few rules its diagnostics name. A reject case for one of those rules must fail naming its tag; for a rule it checks only in part (`PARTIAL`), a case it passes is pending instead. A reject case for any other rule must parse cleanly and is counted as pending: it waits for the compiler, and a syntax error or another rule's diagnostic means the case is broken. Runs `tests/doir_check.py` through `uv`, unless `--checker` names another command, split as a shell would (`--checker "bin/doir --check"`).
+`doir_check` parses and checks the few rules its diagnostics name.
+A reject case for one of those rules must fail naming its tag; for a rule it checks only in part (`PARTIAL`), a case it passes is pending instead.
+A reject case for any other rule must parse cleanly and is counted as pending: it waits for the compiler, and a syntax error or another rule's diagnostic means the case is broken.
+Runs `tests/doir_check.py` through `uv`, unless `--checker` names another command, split as a shell would (`--checker "bin/doir --check"`).
 
     python3 tests/conformance.py [--checker "bin/doir --check"] [--pending]
 """

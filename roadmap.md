@@ -85,15 +85,15 @@ Legacy behavior reference: [doir-lang/DOIR/tree/D](https://github.com/doir-lang/
 - **Reference:** `rustc_middle/src/query` (`QueryJob` cycle stack) and `rustc_middle/src/dep_graph` (early cutoff) in rustc; Salsa's revision scheme (`verified_at`/`changed_at`) for lazy validation; `ecrs/datalog.d` in libECRS, whose `Program` already owns its derived relations and re-evaluates on component `generation`.
   The engine is `source/doir/engine/` (it grew from the former `reference/query.d`, whose linear key scan became a hashtable over the key components); programs use it through the modules directly under `source/doir/`.
 - **Deliverables:**
-  - Query entities: each query instance is an entity carrying its key, its value, a `DependsOn` relation to the entities and query entities it read, and a `Produces` list of the (entity, component type) pairs it wrote.
+  - Query entities: each query instance is an entity carrying its key, its value, a `Reads` relation to the entities and query entities it read, and an `Outputs` list of the (entity, component type) pairs it wrote.
     Lookup by key is a key component array sorted into a hashtable; it is rehashed after a renumbering.
     Memo tables are therefore ordinary components, and `E-Remap` covers them through libECRS like any other.
-  - Revisions instead of colours: a global revision bumped once per batch of input changes; `ChangedAt` on each input entity (source declarations and blocks), set when an input commit replaces its components; `VerifiedAt` and `ChangedAt` on each query entity.
+  - Revisions instead of colours: a global revision bumped once per batch of input changes; `ChangedAt` on each input entity (source declarations and blocks), set when an input commit replaces its components; `Verification` and `ChangedAt` on each query entity.
     A demanded query verified in the current revision is reused.
-    Otherwise it is reused if no dependency has `ChangedAt` after its `VerifiedAt`, and re-run if one has.
+    Otherwise it is reused if no dependency has `ChangedAt` after its `Verification`, and re-run if one has.
     A re-run whose value equals the old one keeps its old `ChangedAt` (early cutoff), so its dependents still verify.
     Validation is lazy: an edit walks no dependency edge.
-  - Ownership: when a query re-runs, the components in its `Produces` list are removed before it runs again; when it is evicted, they are removed along with the entities it created.
+  - Ownership: when a query re-runs, the components in its `Outputs` list are removed before it runs again; when it is evicted, they are removed along with the entities it created.
     Overlays (analyses, `VirtualReg`, interned types) and graph IRs (the interference graph, and any e-graph a later phase builds) are owned this way.
   - Stable created ids: an entity a query creates is identified by (query entity, creation sequence number), as rustc's `create_def` derives a `DefPathHash` from parent and disambiguator.
     A re-run hands back the same entity for the same sequence number, so a value holding created ids compares equal and early cutoff still fires; entities a re-run no longer creates are removed.
@@ -116,7 +116,7 @@ Legacy behavior reference: [doir-lang/DOIR/tree/D](https://github.com/doir-lang/
     Its names are visible to every lookup in the importing scope (`R-Order`): a lookup that misses a block's declarations demands that block's imports, as a forward reference demands a declaration.
     An import whose path depends on the lookup it would answer, or two files that import each other, is a cycle (`Q-Cycle`).
     Editing an imported file re-runs its import query, and early cutoff stops at importers whose reads of it are unchanged.
-- **Verification:** Recursive and mutually dependent queries resolve or report cycle diagnostics without stack overflows; a renumbering leaves every query answer unchanged up to the permutation; a read before a modifier's position sees the type unmodified even when demand evaluated the modifier first; a read of an imported type on any line, even above the import, sees every modifier the imported file applied; changing one declaration re-runs only the queries that read it, and a re-run query whose value is unchanged does not re-run its dependents; a re-run hands back the same ids for the entities it creates; evicting a query removes everything in its `Produces` list; a reused memo reports the same diagnostics as the run that produced it.
+- **Verification:** Recursive and mutually dependent queries resolve or report cycle diagnostics without stack overflows; a renumbering leaves every query answer unchanged up to the permutation; a read before a modifier's position sees the type unmodified even when demand evaluated the modifier first; a read of an imported type on any line, even above the import, sees every modifier the imported file applied; changing one declaration re-runs only the queries that read it, and a re-run query whose value is unchanged does not re-run its dependents; a re-run hands back the same ids for the entities it creates; evicting a query removes everything in its `Outputs` list; a reused memo reports the same diagnostics as the run that produced it.
 
 ### Phase 2: Parsing into the Entity Store
 - **Goal:** A new, resilient parser, written from scratch for the query architecture, that builds binding entities and their components directly, with a source location on every entity it creates.
@@ -136,7 +136,7 @@ Legacy behavior reference: [doir-lang/DOIR/tree/D](https://github.com/doir-lang/
     Matching comes before building: the parse first yields a record per declaration (its key, its hash and its token range), and the builders run only for declarations that are new or whose hash changed, parsing their token range again, so a reparse that changes nothing writes nothing to the store.
     Blocks are still descended, since a declaration's hash leaves out its nested declarations.
     A rebuild writes into the declaration's old parts (its in-place function types and parameters) in order, so their ids survive it; a declaration whose hash is unchanged but whose text moved inside it (a comment) is rebuilt that way without being marked changed, so its parts' spans follow the text.
-    Parsed entities are inputs and belong to no query's `Produces` list, so no re-run can remove them.
+    Parsed entities are inputs and belong to no query's `Outputs` list, so no re-run can remove them.
     A matched declaration whose text is byte-for-byte unchanged, nested declarations included, and whose order key is kept, is skipped with everything inside it: nothing below it is matched, keyed or written but its own span's offset, so an edit costs the commit only the path of blocks down to it, beside the lexing and parsing of the file.
   - Each declaration gets its lexical position, an order key, when the commit assigns keys after reparse matching, giving the total order within a level that the positioned effect logs and ⟨entity, position⟩ comptime keys need (`C-Order`, `M-Lexical`).
   - Identifier and keyword tables generated from `doir.peg` (`UnicodeIdentifierStart`, `UnicodeIdentifierContinue`, `Keywords`) by a script in `tools/`, so they match the grammar exactly.
@@ -145,7 +145,7 @@ Legacy behavior reference: [doir-lang/DOIR/tree/D](https://github.com/doir-lang/
     Spans are untracked: no query records a dependency on `SourceSpan`, and a diagnostic names the entity it is about and resolves its location only when reported.
     Moving text therefore invalidates nothing, even within one block, where it does change the spans after it.
     The one tracked read is comptime's: `std.meta.source_location.get` and its siblings (`AT-Source`) depend on the file's text, because a metaprogram can fold a line number into a value, so moving text re-runs those evaluations and nothing else.
-    A declaration with a source annotation gets the annotation's `Detailed` (`AT-Source`), which overrides the derived location.
+    A declaration with a source annotation gets the annotation's `LineColumnRange` (`AT-Source`), which overrides the derived location.
     None of these holds an entity id, so `E-Remap` leaves them alone.
     The file contents and path they slice are held by the file's input entity and outlive its parsed entities.
   - `language` blocks (`I-Language`): the grammar keeps them, and the parser skips the matched braces and reports an `I-Language` error, since this compiler registers no frontend.
@@ -162,7 +162,7 @@ Legacy behavior reference: [doir-lang/DOIR/tree/D](https://github.com/doir-lang/
     Matched declarations are written into their old entities, so the commit needs no `E-Remap` renumbering.
 - **Verification:** Parse `standard.doir`, `test.doir`, and `test_call.doir` into binding entities.
   A differential test runs the parser and `doir_check` over the corpus plus a set of malformed files: both accept and reject the same files, and agree on the statement of each syntax error.
-  Every parsed entity's derived `SourceLocation` slices back to the text of its declaration.
+  Every parsed entity's derived `ByteRange` slices back to the text of its declaration.
   Reparsing an unchanged file changes no id and no `ChangedAt`; editing one declaration's value changes only that declaration's `ChangedAt`; inserting a blank or comment line above a declaration leaves its order key and `ChangedAt` unchanged and re-runs no query except evaluations that read their own source location (`AT-Source`); editing a comment inside a declaration changes no `ChangedAt`; inserting a declaration re-runs only the lookups through its block, and early cutoff stops there unless the new name shadows one; inserting a `_` declaration between two others matches both of them.
   Reparsing an unchanged file makes no builder call.
   A one-line edit to `standard.doir` commits (lex, parse, match, build, locations) in under 5 ms in a release build, measured by `bin/doir --bench standard.doir`.
@@ -173,7 +173,7 @@ Legacy behavior reference: [doir-lang/DOIR/tree/D](https://github.com/doir-lang/
 - **Reference:** Roslyn's IDE-facing semantic model (`dotnet/roslyn`, `src/Features`).
   `tests/doir_check.py` already implements the diagnostics, the namespace walk, and the scope map this phase ports onto components.
 - **Deliverables:**
-  - The `doir_check` rules (`WF-Term`, `WF-Order`, `D-Return`) ported from its AST walk to queries over `Block`, `Parent`, `Name`, and the `Lookup*` components, reporting through libdiagnose at each entity's `SourceLocation`.
+  - The `doir_check` rules (`WF-Term`, `WF-Order`, `D-Return`) ported from its AST walk to queries over `Block`, `Parent`, `Name`, and the `Lookup*` components, reporting through libdiagnose at each entity's `ByteRange`.
   - Highlighting from the lexer's token stream (keywords, literals, comments, whitespace), not from the store: trivia never becomes entities.
     Highlighting is requested by range, and Phase 2 keeps no token array, so the server re-lexes the blocks in view; a whole-file array would be about 11 million tokens and 130 MB on the million-line file, three times the text.
   - A position→entity index for hover and go-to, built per block from block-relative spans when a request reaches the block, so an edit invalidates only the index of the block it is in.
@@ -213,12 +213,12 @@ Legacy behavior reference: [doir-lang/DOIR/tree/D](https://github.com/doir-lang/
       Order keys of different parents never collide, since a key begins with its parent's digits.
     - libECRS bulk structure and parallel fill: `addEntities` hands out a contiguous run of ids and a bulk add gives many entities one component each, journaled once per storage as any addition is; workers then write the values of components that already exist, which the store already allows of distinct entities.
       The commit creates a piece's entities and slots on its thread and fills them on workers.
-    - Where it stands (2026-10-29, best of five runs of `bin/doir bin/scale.doir` on 12 threads): the interning (`bc.interner`), hashing a word at a time with each shard's table indexing by bits the shard choice leaves alone, and describing on workers took the first commit from 1.58 s on one thread to 1.27 s. libECRS gained `addEntities`, `prepareConcurrentAdds` and `beginConcurrentWrites`: prepared storages hand out slots by an atomic counter, nothing another thread reads moves, the journal is the one lock, and a replaced component of an entity the transaction added is not journaled, since a rollback removes the entity whole.
+    - Where it stands (2026-10-29, best of five runs of `bin/doir bin/scale.doir` on 12 threads): the interning (`bc.interner`), hashing a word at a time with each shard's table indexing by bits the shard choice leaves alone, and describing on workers took the first commit from 1.58 s on one thread to 1.27 s. libECRS gained `addEntities`, `reserveConcurrentAdds` and `beginConcurrentWrites`: prepared storages hand out slots by an atomic counter, nothing another thread reads moves, the journal is the one lock, and a replaced component of an entity the transaction added is not journaled, since a rollback removes the entity whole.
       Rebuilds deferred to workers on it measured slower, 1.47 s: every piece prepares about twenty storages for its entities and trims what it did not use, workers contend for the interner shards that hold the common type names, and the commit's thread cannot keep matching while workers write, since the phase forbids its structural changes.
       So `doir.source` leaves them off (`deferBuilds`), tested; what would make them pay is preparing storages by what each description writes rather than for every entity, and a per-thread cache in front of interning.
     - Parallel queries: each check is a query per entity run in no order (`L-Sema`), so `doir.query.demandEach` runs a batch of independent demands on the engine's workers, each with its own stack of running queries and depth (thread-local), reporting their diagnostics in the order demanding them one after another would.
-      Every query entity carries its value and a `Running` component from the start, so bringing a query up to date writes only components that already exist, as libECRS's concurrent-write phase allows, which the batch runs in to assert that no worker changes the store's structure.
-      A worker claims a query by setting its `Running.owner` atomically; a demand from another worker waits until it is released, as rustc's `QueryLatch` does, and a wait that would close a loop through the queries other workers wait on is a cycle across threads.
+      Every query entity carries its value and a `Claim` component from the start, so bringing a query up to date writes only components that already exist, as libECRS's concurrent-write phase allows, which the batch runs in to assert that no worker changes the store's structure.
+      A worker claims a query by setting its `Claim.owner` atomically; a demand from another worker waits until it is released, as rustc's `QueryLatch` does, and a wait that would close a loop through the queries other workers wait on is a cycle across threads.
       Whatever only the engine's thread may do is handed back to it: adding a query entity, writing a component (`produce`), creating an entity, and settling any cycle (`Q-Cycle`), so cycle reports and fallbacks are exactly those of one thread.
       A worker records the query entities it needed, which the engine's thread adds between rounds, so a first run reaches the workers a level deeper each round instead of falling back whole; what is still handed back after the last round runs on the engine's thread, in order.
       Diagnostics a worker brings up to date are withheld on the query and reported afterwards in the order one thread would have reached them.
@@ -228,13 +228,13 @@ Legacy behavior reference: [doir-lang/DOIR/tree/D](https://github.com/doir-lang/
       ThreadSanitizer finds no race in the tests or in `--bench`, after two found in dependencies were fixed: libfp's dummy header for a null container was shared by every thread, and libECRS did not advance the generation of a storage written in place during concurrent writes.
     - Invalidation pushed along reverse edges, so re-validating after an edit costs in proportion to what the edit reached rather than to what was demanded.
       Salsa and rustc pull: a demand re-verifies a query by walking its dependencies, which for a file's checks is every block's checks and every entity they read.
-      Here each entity lists the queries that read it (`Dependents`), updated after each run from the difference between what it read and what it read before (on workers, recorded and applied afterwards, shared among the workers by entity).
+      Here each entity lists the queries that read it (`ReadBy`), updated after each run from the difference between what it read and what it read before (on workers, recorded and applied afterwards, shared among the workers by entity).
       `doir.query.markChanged` marks the direct readers stale and queues them; before the next demand `settle` brings the queued queries that something reads up to date, and only one whose value changed marks its own readers in turn, so early cutoff stops the push where it stops a pull.
       A query that is not stale is then reused at once, unless a query below it holds diagnostics, which reusing it must report and so walks to; one nothing reads waits for its demand, as any query does.
-      `CheckTree`, a query per block over its checks and its child blocks' trees, lets `doir.checks.check` skip every subtree that is current, and batch the checks of the rest on the workers.
+      The checks are a system (`doir.checks.BlockChecks`) the engine runs as one memoized query per block (`doir.schedules.runSystem`): after an edit it visits only the memos a change marked stale, the blocks the commit added, and those holding diagnostics, batched on the workers.
       A refused allocation that loses an edge turns the shortcut off (`edgesMissing`).
       On 2026-10-30 (12 threads), re-checking after a one-line edit took 0.86 ms on a million-line file regenerated from today's `standard.doir`, from 23 ms, and 0.07 ms on 14 million lines, from 388 ms; the 42 MB file generated on 2026-10-28, whose copies carry 1,948 diagnostics, took 11 ms, the walk to those diagnostics, which re-verified every dependency of every query on the way.
-      Each query now lists the queries below it that hold diagnostics (`ReportingBelow`), in the order it read them, and reusing a current query walks only those, on the engine's thread and on workers alike; `doir.checks` collects for its batch only the blocks whose checks must run, leaving the reuse of the rest to report their diagnostics.
+      Each query now lists the queries below it that hold diagnostics (`ReportingReads`), in the order it read them, and reusing a current query walks only those, on the engine's thread and on workers alike; `doir.checks` collects for its batch only the blocks whose checks must run, leaving the reuse of the rest to report their diagnostics.
       That takes the 42 MB file's re-check to 1.4 ms (2026-10-30).
       Whether a query reports is not part of its value, so a query that starts or stops reporting while keeping its value marks its readers stale, which before let a reader be reused without ever reaching new diagnostics.
       The edges cost the first check (146 to about 380 ms on a million lines, 2.6 to 6.2 s on 14 million) and memory (14 million lines peaked at 20.2 GB, from 18.3 GB; a commit alone already peaks well over the ten-times budget at that size).
@@ -279,12 +279,24 @@ Legacy behavior reference: [doir-lang/DOIR/tree/D](https://github.com/doir-lang/
   - Comptime bodies of the machine primitives (`C-Interpret`): the host runs the arithmetic, conversions and memory operations with the spec's semantics at the target's widths, rather than interpreting the machine's body.
   - The `std.meta.*` prototypes of `standard.doir` bound to that table (`H-Boot`), so comptime code stops reaching into `compiler`.
   - Embedded Mizu VM whose hook instructions dispatch through `HostServices` (`H-Hook`), so Mizu and a later JIT share one implementation of every hook.
-  - Bidirectional type deduction (`D-Deduce`) and in-place modifiers (`M-Flag`, `M-Freeze`) over the positioned effect logs.
+  - Bidirectional type deduction (`D-Deduce`), solving a constructed parameter type from the body's opening assertions (`D-Assert`), and in-place modifiers (`M-Flag`, `M-Freeze`) over the positioned effect logs.
     `standard.doir` cannot load without them: its first lines apply modifiers, and `std.meta.entity_of` has a deduced parameter.
   - Ascent query `evaluate_comptime(EntityId, Position)`, keyed by ⟨entity, lexical position⟩ inside a level and by entity alone once it is frozen (`L-Freeze`, `M-Lexical`).
   - Level freeze transition `freeze_level(Level)`: an engine state change and an input commit, not a memoized query, that makes cross-level queries defined (`L-Freeze`).
     An edit to a frozen level marks it and every level above it unfrozen, a per-level flag that walks no dependency edge; re-freezing writes the folded components as inputs and sets `ChangedAt` only where a folded value changed, so early cutoff reaches across levels.
-  - Lowering query `lower_level(EntityId, Level, Target)` from level 1 to 0. The lowering query for τ adds τ to the `Lowered` relation of each entity it retires and lists that entry, not the whole component, in its `Produces`, so an edit that re-runs one target's lowering clears only that target's entry.
+  - Lowering query `lower_level(EntityId, Level, Target)` from level 1 to 0.
+    The lowering query for τ adds τ to the `Lowered` relation of each entity it retires and lists that entry, not the whole component, in its `Outputs`, so an edit that re-runs one target's lowering clears only that target's entry.
+  - Passes and descent as schedules (`L-Lower`): a `lower_to` edge's pipeline is an `ecrs.schedules.sequential` over its pass list, built from the tower the scan read, each pass a schedule over the engine (`doir.schedules`), and descent runs the levels' pipelines top-down in the same way.
+    The ordered pipeline the spec gives passes is what `sequential` already is, so the passes need no runner of their own.
+  - Passes as systems over the store.
+    A pass that rewrites each entity of a node kind on its own is `ecrs.schedules.sequential!pass` or `parallel!pass` over the owners of that kind's tag, inside `concurrentWrites` when it writes; `sequential!fn(owner)` visits every live entity, so libECRS gains a system restricted to the owners of a component set rather than each pass filtering for itself.
+    A pass that iterates to a fixed point, such as folding and dead-code removal feeding each other, is `ecrs.schedules.untilStable` over them, watching the components they rewrite; a mutable access counts as a change, so such passes read through a `const` context.
+    Reuse across edits is `doir.schedules.whenChangedAt`: an edge's pipeline, and each unit emission is split into, runs only when a query entity it lowers from changed since it last ran, with early cutoff, as rustc reuses codegen units.
+    Never `ecrs.schedules.whenChanged` for this: it watches a component type's generation store-wide, so any edit anywhere re-runs everything.
+    Ascent stays demand-driven: checks are queries per entity (`L-Sema`) and comptime is `evaluate_comptime`, and schedules only drive them (`doir.schedules.demanding`), so Phase 11 compares queries against scheduled passes rather than schedules against schedules (H2, H3).
+  - Commits of a build's files.
+    From here a build has several files (the Mizu port, `standard.doir`, the program), and `bin/doir` commits each as `sequential(committing, checking)`.
+    Skimming reads only a file's text, so the commit splits into a skim of every file at once, `ecrs.schedules.parallel` over the files, then each file's matching and store writes in turn; the writes stay serial because a commit changes the store's structure outside the engine's exclusive section.
   - The `L-Erase` read barrier as a dependency-graph check (`rustc-architecture.md` D6): a query below level n for target τ that records a read of an entity whose `Lowered` relation holds τ is reported as a compiler bug.
     Phase 10 extends it to the full `T-Legal` verifier.
   - The comptime-aware LSP features Phase 3 deferred: hover with deduced types, and references and rename over the `std.meta` entity queries.

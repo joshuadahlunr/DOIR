@@ -1,4 +1,5 @@
-/// The components of source files and the declarations parsed from them (`roadmap.md` Phase 2): a file's text and lines, the syntax errors in each block, the keys the input commit matches declarations by across reparses, the files a block imports (`I-Import`), and every parsed entity's `SourceSpan`, relative to its parent's start, with the `SourceAnnotation` that overrides it (`AT-Source`). Every one holding an entity id mixes in `ecrs.relation.Relates` (`E-Remap`).
+/// The components of source files and the declarations parsed from them (`roadmap.md` Phase 2): a file's text and lines, the syntax errors in each block, the keys the input commit matches declarations by across reparses, the files a block imports (`I-Import`), and every parsed entity's `SourceSpan`, relative to its parent's start, with the `SourceAnnotation` that overrides it (`AT-Source`).
+/// Every one holding an entity id mixes in `ecrs.relation.Relates` (`E-Remap`).
 ///
 /// Examples:
 /// ---
@@ -29,28 +30,17 @@ public import doir.engine.positions : Position;
 
 // --- files -------------------------------------------------------------------
 
-/// A source file's input entity: its path, interned. The file's contents join it with the parser (`roadmap.md` Phase 2).
+/// A source file's input entity: its path, interned.
+/// The file's contents join it with the parser (`roadmap.md` Phase 2).
 struct SourceFile {
 	doir.strings.StringId path; /// The path, as the build named it.
 }
 
-/// A file's path and its text as of the last commit, owned by its input entity. Every parsed entity's location is a range of it, and its lines are kept by the text itself (`fp.rope`).
+/// A file's path and its text as of the last commit, owned by its input entity.
+/// Every parsed entity's location is a range of it, and its lines are kept by the text itself (`fp.rope`).
 struct SourceText {
 	const(char)[] path; /// The path, interned, so it outlives every version of the text.
-	fp.rope.Rope text; /// The version the last commit wrote; this component owns it.
-
-	/// Releases the text when the component is removed.
-	///
-	/// Examples:
-	/// ---
-	/// static import fp.rope;
-	/// SourceText s = SourceText("a.doir", fp.rope.create("x").get);
-	/// s.finalize();
-	/// assert(fp.rope.length(s.text) == 0);
-	/// ---
-	void finalize() @nogc nothrow {
-		fp.rope.free(text);
-	}
+	fp.rope.Rope text; /// The version the last commit wrote; this component owns it, and releases it through the rope's own hooks.
 }
 
 /// A file's root block, which every commit of the file keeps.
@@ -63,7 +53,8 @@ struct InFile {
 	mixin ecrs.relation.Relates!"file";
 }
 
-/// The files a block's `std.import` declarations name, resolved to their input entities, in declaration order. An input, written by the commit that parses them, or by evaluation once paths are comptime values.
+/// The files a block's `std.import` declarations name, resolved to their input entities, in declaration order.
+/// An input, written by the commit that parses them, or by evaluation once paths are comptime values.
 struct Imports {
 	mixin ecrs.relation.Relates;
 }
@@ -86,7 +77,8 @@ struct LexicalPosition {
 	Position at; /// The key.
 }
 
-/// The entities the parse made for a declaration besides its nested declarations: its function types written in place and their parameters, parents first. A rebuild reuses them in order, so their ids survive it.
+/// The entities the parse made for a declaration besides its nested declarations: its function types written in place and their parameters, parents first.
+/// A rebuild reuses them in order, so their ids survive it.
 struct ParsedParts {
 	mixin ecrs.relation.Relates;
 }
@@ -94,7 +86,8 @@ struct ParsedParts {
 
 // --- locations ---------------------------------------------------------------
 
-/// Where a parsed entity's text is, relative to its `Parent`'s start: a declaration's to its enclosing declaration's, a parameter's to its function type's. A file's root block has the whole file.
+/// Where a parsed entity's text is, relative to its `Parent`'s start: a declaration's to its enclosing declaration's, a parameter's to its function type's.
+/// A file's root block has the whole file.
 struct SourceSpan {
 	uint offset; /// Bytes from the parent's start.
 	uint length; /// Bytes long.
@@ -102,7 +95,7 @@ struct SourceSpan {
 
 /// The location a source annotation wrote on its declaration (`AT-Source`), which replaces the derived one.
 struct SourceAnnotation {
-	diagnose.Detailed location; /// The annotated range; its file name is interned, so it outlives the text it was parsed from.
+	diagnose.LineColumnRange location; /// The annotated range; its file name is interned, so it outlives the text it was parsed from.
 }
 
 
@@ -139,7 +132,8 @@ struct StoredError {
 /// `StoredError.opening` when no bracket is left open.
 enum uint noOpening = uint.max;
 
-/// The syntax errors found directly in a block when it was last parsed: held by the innermost block-valued declaration enclosing them, or by the file's root block, with offsets from its start, so they move with its span. A commit replaces them whenever it reparses the block and leaves them alone when it skips it as unchanged.
+/// The syntax errors found directly in a block when it was last parsed: held by the innermost block-valued declaration enclosing them, or by the file's root block, with offsets from its start, so they move with its span.
+/// A commit replaces them whenever it reparses the block and leaves them alone when it skips it as unchanged.
 struct SyntaxErrors {
 	StoredError* errors = null; /// In source order; an owned fp dynarray.
 

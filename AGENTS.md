@@ -25,7 +25,7 @@ Three reference codebases guide implementation (`rustc-architecture.md` summariz
 1. **Demand-Driven Queries (rustc Model):**
    - The compiler is a collection of pure, memoized queries (`query(Key) -> Value`).
    - Query instances are entities.
-     Their keys, values, dependencies and revisions are components, and every component a query writes is listed in its `Produces` component and removed when the query re-runs with a new value or is evicted.
+     Their keys, values, dependencies and revisions are components, and every component a query writes is listed in its `Outputs` component and removed when the query re-runs with a new value or is evicted.
    - Every semantic pass, type check, lowering, and comptime execution runs on demand.
    - Cycle detection is built into the query engine to report recursion errors cleanly.
    - Comptime reads inside a level are ordered (`C-Order`, `M-Lexical`) and keyed by ⟨entity, lexical position⟩; queries against a frozen level are keyed by entity alone (`L-Freeze`).
@@ -121,6 +121,8 @@ The D rules are forwarded from libfp's `AGENTS.md`; they apply to every D, Pytho
 - Keep examples short, and make them correct against the current API: they should compile and pass as written under `-betterC`.
   Check them with `python3 tests/doctest.py`, which compiles and runs every example and reports public definitions missing documentation or an example.
   With no arguments it checks `source/**/*.d`; pass files and `-I dir` import paths for the modules those sources import.
+- Examples see their own module unqualified, as user code would; anything else needs its full name.
+- When a platform `static if` or `version` gives an API several implementations, document the first branch's definitions; an `else` branch reimplementing the same API needs no second copy.
 - Generate DOIR documentation with `uv run tools/doir_doc.py`, which writes a Markdown page per file to `bin/docs`, and check DOIR comments against these rules with `uv run tools/doir_doc.py --check`.
 - A Python tool's module docstring says how to run it, as a usage line (`uv run tests/parse_diff.py [file.doir...]`).
 - Documentation is not a free-standing comment, so the 25-word cap does not apply to it, but keep it as brief as the definition allows.
@@ -137,26 +139,38 @@ The D rules are forwarded from libfp's `AGENTS.md`; they apply to every D, Pytho
 - Avoid one-line wrappers: a function whose body only forwards to another call, fixing an argument or two or reaching into a field, adds a name to learn and hides the call it stands for.
   Write the call out at each use, even when it is long; a long call is not a reason to wrap it.
   Write a function only when it adds something, such as a check, a loop, or a name for an operation the spec or `standard.doir` defines.
-  The exception is a wrapper the spec requires, as `RF-Wrapper` requires each `std.types` and `std.functions` entry to wrap its `std.meta` hook.
+  Before keeping a wrapper, see whether renaming what it wraps would make the direct call read as well.
+  The exception is a wrapper the spec requires, as `RF-Wrapper` requires each `std.types` and `std.functions` entry to wrap its `std.meta` hook, or a protocol does (a hook found by name, an accessor of a private field); in D, mark it `// wrapper: <reason>` on the line above its documentation comment.
 - Name D in camelCase, and Python and DOIR in snake_case, with Python classes in PascalCase and DOIR function and type aliases ending `_t` (`modifier_t`).
-  Add a trailing underscore only when the plain name is a keyword of its language (`out_`, `in_`, `with_`).
+  Add a trailing underscore only when the plain name is a keyword of its language (`out_`, `in_`, `with_`, `null_`, `string_`).
   D names that mirror `standard.doir` or the spec keep their spec spelling (`std.meta.entity`, `compiler.base_type_t`).
+- Make names document themselves, so neither a comment nor a wrapper is needed to explain them:
+  - Spell words out: no C-heritage names or abbreviations (`allocate`, not `malloc`; `context`, not `ctx`; `array`, not `da`).
+  - Name the effect or the result, not the mechanism (`lockForReading`, not `readLock`; `wordEnd` for a function returning where a word ends).
+  - Do not repeat what the qualified module path or the types already say: calls are always qualified, so `fp.pointer.allocate` needs no `Memory`.
+  - Name a sentinel for what it means where it is used, and split a sentinel that would mean two things (`notInterned` and `refused`, not one `none`).
+  - Purpose suffixes read `ForReading`/`ForWriting` (`lockForWriting`, `getForWriting`, `mapForWriting`).
+  - Keep the words every reader already knows: `free`, `length`, `find`, `insert`, `hash`, `create`, `contains`, `pushBack`, `pushFront`, `removeAt`.
 - Indent with tabs.
-- In D, under a `@nogc nothrow:` label, do not repeat those attributes on the declarations it already covers, including struct members and `version` blocks.
+- In D, under a `@nogc nothrow:` label, do not repeat those attributes on the declarations the label covers: every declaration at that scope, including those inside `version` and `static if` blocks.
+  Function attributes do not propagate into aggregate declarations, so members of a non-template struct, class or union, and hooks of a non-template struct declared inside a function or `unittest`, must state `@nogc nothrow` themselves, or calls from `@nogc` code fail to compile.
+  Members of a template struct need no repetition because their attributes are inferred.
 
 ### Failure and invariants
 
-- Every function that can fail says in its documentation how it reports failure (null, `false`, `fp.pointer.notFound`, `fp.pointer.allocationRefused`, `None`, the exception it raises), and what state it leaves its arguments in; prefer leaving them as they were.
+- Every function that can fail says in its documentation how it reports failure (null, `false`, an empty `Nullable`, `fp.pointer.notFound`, `fp.pointer.allocationRefused`, `None`, the exception it raises), and what state it leaves its arguments in; prefer leaving them as they were.
 - Do not return a `bool` with the result in an `out` parameter (`bool find(…, out T x)`): return `std.typecons.Nullable!T`, null on failure, so the result cannot be read without the check.
   Several results go in a struct the `Nullable` holds.
 - Never drop the result of a call that can fail: check it, or discard it explicitly when failure is impossible or harmless there, with `cast(void)` in D and `_ = …` in Python.
   Tests assert on it.
 - When a limit on one value follows from another (such as a bit position), name the constant once, derive the others from it, and `assert` the limit where the value is accepted.
 - Put test-only code, such as helper functions and globals the tests use, inside `version(unittest)` in D, and in the test files rather than the modules they test in Python.
+- `tests/runner.d` runs only the modules it lists, so add a new module with unittests to its `modules` list.
+- Keep test coverage as close to 100% as possible: add a test for every new branch and failure path, and check with `python3 tools/coverage.py`; an uncovered line needs a reason, such as being unreachable or platform-specific.
 
 ### Diagnostics
 
-- Every diagnostic the compiler reports to the user carries at least one annotation (`diagnose.Diagnostic.Annotation`) pointing at the offending item, and a hint saying how to fix it, as that annotation's message or as the diagnostic's `additionalNote`.
+- Every diagnostic the compiler reports to the user carries at least one annotation (`diagnose.Diagnostic.Annotation`) pointing at the offending item, and a hint saying how to fix it, as that annotation's message or as the diagnostic's `note`.
   "Expected `}`" alone is not enough; "insert `}` here to close the namespace opened above" is.
 - When other items are involved, such as the earlier import in a `WF-Unique` clash or the opening brace of an unclosed block, point an annotation at each, saying what part it plays.
 - A diagnostic with no source location, such as a file that cannot be read, still gives a hint.
@@ -177,6 +191,23 @@ When functions use each other in a cycle, define first the one that more of the 
 - Prefer merging a new test case into an existing test (a D `unittest` block, a Python test function) covering the same section over adding a new one; add one only when no existing test fits.
   A DOIR test is a file of its own, named as `tests/conformance.py` or `tests/parse_diff.py` describes.
 - Prefer grouping components together in a file in `source/doir/components` rather than scattering components through every file.
+
+### Layering
+
+DOIR is the top of a stack: libfp at the bottom, bc-threads on it, libdiagnose, libECRS, Mizu and bc-fetch on those, and DOIR on all of them.
+Every library in the stack forwards these rules from libfp's `AGENTS.md`.
+
+- Put code in the lowest library that has everything it needs.
+  A library above may hold only what is specific to it: threads in bc-threads, entities in libECRS, diagnostics in libdiagnose, networking in bc-fetch, the language in DOIR.
+  Before writing a helper, search the libraries below for it; if it is missing, add it there, with a test, rather than locally.
+- Only libfp, bc-threads, bc-fetch and Mizu's FFI layer (`mizu.ffi`, which loads and calls into native libraries) import `core.sys.*` or `core.stdc.*`, or call OS APIs; everything else reaches the OS and the C runtime through them (`fp.pointer.copy` and `fill`, `fp.string.sliceTerminated`, `fp.io.print` and `abort`).
+- View a plain field atomically through `bc.platform.asShared`, never a hand-written `cast(shared …)`.
+- Hold owned memory in a struct through `fp.lifecycle.Owned` rather than hand-written `finalize` and `copyTo` hooks.
+- Compare and hash a value through `fp.lifecycle.equal` and `fp.lifecycle.contentHash`, which use its hooks if it declares them.
+  Never `memcmp` or hash a struct's raw bytes: its padding is in them.
+- Write a component in place only through `ecrs.context.getForWriting`, `findForWriting`, `ensureComponent` or `setComponent`, which count the change and journal it; `getComponent` and `findComponent` are for reading.
+- Check these rules with `python3 tools/lint.py`, which every library keeps a copy of, each with its own `CONFIG` and the same `PUSHED` registry.
+  When code moves into a lower library, add the pattern it replaced to `PUSHED` in every copy, with the replacement as its hint, so the old way cannot come back.
 
 ### Bugs
 

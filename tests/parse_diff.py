@@ -3,11 +3,14 @@
 # requires-python = ">=3.11"
 # dependencies = ["pe>=0.6"]
 # ///
-"""The differential test of the parser against `doir.peg` (`roadmap.md` Phase 2): runs `bin/doir --syntax` and pe over each file, and checks that both accept or both reject it, and that they report the first syntax error on the same line. A file named `*.accept.doir` must also be accepted. A `*.reject.doir` file in `tests/syntax`, or in `tests/conformance` with a case starting `syntax` (`<Rule-Tag>.syntax….reject.doir`), must be rejected; any other conformance reject case must parse, as its rule waits for the compiler.
+"""The differential test of the parser against `doir.peg` (`roadmap.md` Phase 2): runs `bin/doir --syntax` and pe over each file, and checks that both accept or both reject it, and that they report the first syntax error on the same line.
+A file named `*.accept.doir` must also be accepted.
+A `*.reject.doir` file in `tests/syntax`, or in `tests/conformance` with a case starting `syntax` (`<Rule-Tag>.syntax….reject.doir`), must be rejected; any other conformance reject case must parse, as its rule waits for the compiler.
 
     uv run tests/parse_diff.py [file.doir...]
 
-With no files it checks the corpus (`standard.doir`, `test.doir`, `test_call.doir`), `tests/conformance` and `tests/syntax`. Build `bin/doir` first (`dub build --compiler=ldc2`).
+With no files it checks the corpus (`standard.doir`, `test.doir`, `test_call.doir`), `tests/conformance` and `tests/syntax`.
+Build `bin/doir` first (`dub build --compiler=ldc2`).
 """
 
 import pathlib
@@ -26,12 +29,12 @@ DOIR = ROOT / "bin" / "doir"
 
 def grammar_line(parser, path):
 	"""The line of pe's first syntax error in `path`, or None if it parses."""
-	src = path.read_text(encoding="utf-8")
+	with open(path, encoding="utf-8", newline="") as file:  # keep a lone `\r`, which universal newlines would turn into `\n`
+		src = file.read()
 	try:
 		doir_grammar.parse(parser, src)
 	except pe.ParseError as exc:
-		pos = doir_grammar.line_starts(src)[exc.lineno] + exc.offset if exc.lineno is not None else len(src)
-		return doir_grammar.line_at(src, pos)
+		return doir_grammar.line_at(src, doir_grammar.error_position(src, exc))
 	return None
 
 

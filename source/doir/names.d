@@ -1,4 +1,5 @@
-/// A block's named entries indexed by name (`WF-Unique`, `R-Unqual`), so finding the entry a name reaches costs a binary search instead of a scan of the block. The index is a query keyed by the block (`EntriesByName`): it re-runs when the block's entries change, and keeps its old `ChangedAt` when they change without changing which entity each name reaches (early cutoff), so a lookup through it is not re-run by an edit that adds or replaces only `_` entries.
+/// A block's named entries indexed by name (`WF-Unique`, `R-Unqual`), so finding the entry a name reaches costs a binary search instead of a scan of the block.
+/// The index is a query keyed by the block (`EntriesByName`): it re-runs when the block's entries change, and keeps its old `ChangedAt` when they change without changing which entity each name reaches (early cutoff), so a lookup through it is not re-run by an edit that adds or replaces only `_` entries.
 ///
 /// Examples:
 /// ---
@@ -20,7 +21,7 @@
 /// ---
 module doir.names;
 
-static import core.stdc.stdlib;
+static import std.algorithm.sorting;
 
 static import fp.dynarray;
 
@@ -50,22 +51,17 @@ private struct Named {
 	EntityId e;
 }
 
-private extern(C) int compareNamed(const(void)* a, const(void)* b) @trusted {
-	auto x = cast(const(Named)*) a, y = cast(const(Named)*) b;
-	if (x.name != y.name) return x.name.value < y.name.value ? -1 : 1;
-	return x.index < y.index ? -1 : x.index > y.index;
-}
-
-// The name of `e`, or `noName` for a `_` entry. Reparse matches a named entry by its name, so an entity's name never changes in place.
+// The name of `e`, or `unnamed` for `_`. Reparse matches a named entry by name, so its name never changes in place.
 private doir.strings.StringId nameOf(ref doir.query.QueryEngine engine, EntityId e) {
 	auto n = ecrs.context.findComponent!(doir.components.ast.Name)(*engine.store, e);
-	return n is null ? doir.strings.noName : n.value;
+	return n is null ? doir.strings.unnamed : n.value;
 }
 
 
 // --- queries -----------------------------------------------------------------
 
-/// The query of a block's `Entries`, keyed by the block. It reads the block but none of its entries, since an entry's name never changes in place.
+/// The query of a block's `Entries`, keyed by the block.
+/// It reads the block but none of its entries, since an entry's name never changes in place.
 struct EntriesByName {
 	alias Key = ecrs.relation.Relation!1; /// The block: a file's root, a block-valued declaration or a namespace.
 	alias Value = Entries; /// Its named entries, sorted by name.
@@ -112,14 +108,14 @@ struct EntriesByName {
 		scope(exit) fp.dynarray.free(named);
 		foreach (i, e; fp.dynarray.slice(b.related)) {
 			immutable name = nameOf(engine, e);
-			if (name != doir.strings.noName && !fp.dynarray.pushBack(named, Named(name, cast(uint) i, e))) {
+			if (name != doir.strings.unnamed && !fp.dynarray.pushBack(named, Named(name, cast(uint) i, e))) {
 				doir.query.fail(engine);
 				return out_;
 			}
 		}
 		immutable n = fp.dynarray.length(named);
 		if (n == 0) return out_;
-		core.stdc.stdlib.qsort(named, n, Named.sizeof, &compareNamed);
+		std.algorithm.sorting.sort!((ref a, ref b) => a.name.value != b.name.value ? a.name.value < b.name.value : a.index < b.index)(named[0 .. n]);
 		if (fp.dynarray.reserve(out_.related, n) is null) {
 			doir.query.fail(engine);
 			return out_;
@@ -130,7 +126,8 @@ struct EntriesByName {
 	}
 }
 
-/// The entry of `block` named `name`, found through the block's `EntriesByName`, so the running query depends on the index rather than on the block. `invalidEntity` if none is, or if the index could not be built, which fails the running queries (`doir.query.fail`).
+/// The entry of `block` named `name`, found through the block's `EntriesByName`, so the running query depends on the index rather than on the block.
+/// `invalidEntity` if none is, or if the index could not be built, which fails the running queries (`doir.query.fail`).
 ///
 /// Examples:
 /// ---
@@ -150,7 +147,7 @@ struct EntriesByName {
 /// assert(entryNamed(engine, doir.source.rootOf(engine, file), doir.strings.intern(strings, "z")) == invalidEntity);
 /// ---
 EntityId entryNamed(ref doir.query.QueryEngine engine, EntityId block, doir.strings.StringId name) {
-	if (name == doir.strings.noName) return invalidEntity;
+	if (name == doir.strings.unnamed) return invalidEntity;
 	auto entries = doir.query.query!EntriesByName(engine, EntriesByName.Key([block]));
 	if (entries is null) return invalidEntity;
 	auto sorted = fp.dynarray.slice(entries.related);
@@ -182,7 +179,7 @@ unittest { // the last entry of a name wins; an edit that replaces only `_` entr
 	assert(entryNamed(engine, root, doir.strings.intern(strings, "a")) == entries[2]);
 	assert(entryNamed(engine, root, doir.strings.intern(strings, "b")) == entries[3]);
 	assert(entryNamed(engine, root, doir.strings.intern(strings, "c")) == invalidEntity);
-	assert(entryNamed(engine, root, doir.strings.noName) == invalidEntity);
+	assert(entryNamed(engine, root, doir.strings.unnamed) == invalidEntity);
 	immutable index = doir.query.find!EntriesByName(engine, EntriesByName.Key([root]));
 	immutable changed = ecrs.context.getComponent!(doir.components.query.ChangedAt)(store, index).revision;
 	assert(doir.source.commit(engine, strings, file, "b : T = 1\n_ : T = 5\na : T = 3\nb : T = 4\n") == 0);
@@ -204,9 +201,9 @@ unittest { // the last entry of a name wins; an edit that replaces only `_` entr
 		immutable rationedFile = doir.source.addFile(rationed, strings, "r.doir");
 		assert(doir.source.commit(rationed, strings, rationedFile, "b : T = 1\n_ : T = 2\na : T = 3\nb : T = 4\nc : T = 5\nd : T = 6\ne : T = 7\nf : T = 8\ng : T = 9\n") == 0);
 		immutable rationedRoot = doir.source.rootOf(rationed, rationedFile);
-		auto allocator = fp.testing.beginRationedAllocator(budget);
+		auto allocator = fp.testing.limitAllocations(budget);
 		auto built = doir.query.query!EntriesByName(rationed, EntriesByName.Key([rationedRoot]));
-		fp.testing.endRationedAllocator(allocator);
+		fp.testing.restoreAllocator(allocator);
 		if (built is null) {
 			assert(rationed.refused);
 			rationed.refused = false;

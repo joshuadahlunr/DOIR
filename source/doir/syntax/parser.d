@@ -1,6 +1,10 @@
 /// The recursive-descent parser over the lexer's tokens (`roadmap.md` Phase 2), its rules named as `doir.peg`'s so the two can be diffed: `_` skips newlines and trivia, `wsc` trivia only, and each rule restores the token position when it fails, as PEG does.
 ///
-/// It runs in two modes. `skim` parses a whole file into one `Record` per declaration, in preorder, with the declaration's tokens and its hash, and the syntax errors it recovered from; it reads only the tokens, so files can be skimmed in parallel. `describe` parses one record's tokens again into the writes that make its components, skipping its nested block, whose declarations have records of their own; it touches no store, so workers can run it, and `apply` replays the writes through `doir.builders`. `build` is the two together. The input commit (`doir.source`) matches records against the previous parse and builds only the ones that are new or changed.
+/// It runs in two modes.
+/// `skim` parses a whole file into one `Record` per declaration, in preorder, with the declaration's tokens and its hash, and the syntax errors it recovered from; it reads only the tokens, so files can be skimmed in parallel.
+/// `describe` parses one record's tokens again into the writes that make its components, skipping its nested block, whose declarations have records of their own; it touches no store, so workers can run it, and `apply` replays the writes through `doir.builders`.
+/// `build` is the two together.
+/// The input commit (`doir.source`) matches records against the previous parse and builds only the ones that are new or changed.
 ///
 /// Examples:
 /// ---
@@ -14,15 +18,17 @@
 module doir.syntax.parser;
 
 static import core.atomic;
-static import core.stdc.stdlib;
-static import core.stdc.string;
 static import std.typecons;
 
 static import fp.dynarray;
-static import fp.hash;
+static import fp.algorithms;
 static import fp.pointer;
 static import fp.string;
+static import fp.string.ascii;
+static import fp.string.numbers;
+static import fp.string.utf;
 version(unittest) static import fp.testing;
+version(unittest) static import bc.platform;
 
 static import diagnose;
 static import ecrs.context;
@@ -42,8 +48,17 @@ public import doir.syntax.lexer : Token, TokenKind;
 
 // --- types and layout --------------------------------------------------------
 
-/// The token index that names no token.
+/// The token index that names no token, where a token is absent: no source annotation, no default, no nested record.
 enum uint noToken = uint.max;
+
+/// `Record.name` for a `_` declaration, which has no name token.
+enum uint unnamed = noToken;
+
+/// `Record.blockOpen` and `Record.blockClose` for a declaration whose value is not a block.
+enum uint noBlock = noToken;
+
+/// `SyntaxError.declaration` for an error outside every declaration.
+enum uint outsideDeclaration = noToken;
 
 /// How deeply blocks and function types may nest before the parser reports it rather than recurse further.
 enum uint maxNesting = 256;
@@ -53,16 +68,16 @@ struct Record {
 	uint first; /// The index of its first token.
 	uint terminator; /// The index of its `Terminator` token (a newline, `;` or the `end`).
 	uint end; /// The index of the record after its last nested one; its nested records are those between it and `end`.
-	uint name = noToken; /// The index of its name token, or `noToken` for `_`.
-	uint blockOpen = noToken; /// The `{` of its block value, or `noToken`.
-	uint blockClose = noToken; /// The `}` of its block value, or `noToken`.
+	uint name = unnamed; /// The index of its name token, or `unnamed` for `_`.
+	uint blockOpen = noBlock; /// The `{` of its block value, or `noBlock`.
+	uint blockClose = noBlock; /// The `}` of its block value, or `noBlock`.
 	uint spanStart; /// The byte offset of its first token.
 	uint spanEnd; /// The byte offset after its last token before the terminator.
 	ulong hash; /// Its non-trivia tokens, its nested declarations each replaced by a placeholder, and its terminator left out.
 }
 
 /// Which part of a declaration the parser was reading when a syntax error stopped it, so the error can say what belongs there.
-enum Where : ubyte {
+enum Reading : ubyte {
 	declaration, /// The start of a declaration: its name, or `export` or `language`.
 	colon, /// After a declaration's name, where `:` goes.
 	type, /// After `:`, where the declared type goes.
@@ -95,11 +110,12 @@ struct SyntaxError {
 	string message; /// For `literal`, why.
 	string fix; /// For `literal`, how to fix it.
 	uint expected; /// For `syntax`, a bit `1 << kind` for each `TokenKind` the parse tried at `at`.
-	Where where; /// For `syntax`, what the parse was reading at `at`.
-	uint declaration = noToken; /// For `syntax`, the first token of the declaration being read, or `noToken`.
+	Reading where; /// For `syntax`, what the parse was reading at `at`.
+	uint declaration = outsideDeclaration; /// For `syntax`, the first token of the declaration being read, or `outsideDeclaration`.
 }
 
-/// A skimmed file: its tokens, its records in preorder and its syntax errors. Plain data, released by `free`.
+/// A skimmed file: its tokens, its records in preorder and its syntax errors.
+/// Plain data, released by `free`.
 struct Syntax {
 	Token* tokens = null; /// Every token, trivia included, ending with `end`.
 	Record* records = null; /// One per declaration, in preorder.
@@ -154,20 +170,20 @@ char* describe(ref const Syntax syntax, const(char)[] source, SyntaxError error)
 		case SyntaxError.Kind.syntax:
 			immutable t = syntax.tokens[error.token];
 			const where = whereText[error.where];
-			if (t.kind == TokenKind.end) return fp.string.createFromConcatenation("syntax error, the file ends ", where);
-			if (t.kind == TokenKind.newline) return fp.string.createFromConcatenation("syntax error, the line ends ", where);
-			if (t.kind == TokenKind.unterminated) return fp.string.makeDynamic(unclosed[t.attempted] ? unclosed[t.attempted] : "syntax error, this token is never finished");
-			if (splitArrow(syntax, source, error)) return fp.string.makeDynamic("syntax error, the arrow `->` is split by a space");
-			if (t.kind == TokenKind.invalid) return fp.string.makeDynamic("syntax error, DOIR has no use for this character");
+			if (t.kind == TokenKind.end) return fp.string.joined("syntax error, the file ends ", where).get(null);
+			if (t.kind == TokenKind.newline) return fp.string.joined("syntax error, the line ends ", where).get(null);
+			if (t.kind == TokenKind.unterminated) return fp.string.clone(unclosed[t.attempted] ? unclosed[t.attempted] : "syntax error, this token is never finished").get(null);
+			if (splitArrowHead(syntax, source, error) != fp.pointer.notFound) return fp.string.clone("syntax error, the arrow `->` is split by a space").get(null);
+			if (t.kind == TokenKind.invalid) return fp.string.clone("syntax error, DOIR has no use for this character").get(null);
 			auto spelled = doir.syntax.lexer.text(t, source);
 			if (spelled.length > 32) spelled = spelled[0 .. 32];
-			return fp.string.createFromConcatenation("syntax error, unexpected '", spelled, "' ", where);
+			return fp.string.joined("syntax error, unexpected '", spelled, "' ", where).get(null);
 		case SyntaxError.Kind.nesting:
-			return fp.string.makeDynamic("blocks and function types nest too deeply");
+			return fp.string.clone("blocks and function types nest too deeply").get(null);
 		case SyntaxError.Kind.language:
-			return fp.string.createFromConcatenation("I-Language: no frontend is registered for language ", doir.syntax.lexer.text(syntax.tokens[error.token], source));
+			return fp.string.joined("I-Language: no frontend is registered for language ", doir.syntax.lexer.text(syntax.tokens[error.token], source)).get(null);
 		case SyntaxError.Kind.literal:
-			return fp.string.makeDynamic(error.message);
+			return fp.string.clone(error.message).get(null);
 	}
 }
 
@@ -194,21 +210,21 @@ private ContextHint contextHint(ref const Syntax syntax, SyntaxError error) {
 	immutable sameLine = before > 0 && syntax.tokens[before - 1].kind != TokenKind.newline;
 	immutable ended = unexpected == TokenKind.newline || unexpected == TokenKind.end || unexpected == TokenKind.semicolon;
 	switch (error.where) {
-		case Where.afterType:
-			return startsValue(unexpected) && (error.expected & (1u << TokenKind.equals)) ? "insert `=` here" : null;
-		case Where.type, Where.returnType:
-			return error.expected & (1u << TokenKind.identifier) ? "insert a type or `_` here" : null;
-		case Where.parameterType:
-			return error.expected & (1u << TokenKind.identifier) ? "insert a type here" : null;
-		case Where.value:
-			return ended ? "insert a value here, such as `0`, a name or a block in braces" : "replace this with a value: a constant, a name, a call, a block or a function type";
-		case Where.colon:
-			return unexpected == TokenKind.equals ? "insert `: _` here" : null;
-		case Where.afterParameter:
-			return unexpected == TokenKind.identifier && sameLine ? "insert `,` here" : null;
-		case Where.callArgument:
-			if (unexpected == TokenKind.identifier && sameLine) return "insert `,` here";
-			return constantKinds & (1u << unexpected) ? "replace this constant with the name of a declaration that holds it" : null;
+		case Reading.afterType:
+			return startsValue(unexpected) && (error.expected & (1u << TokenKind.equals)) ? ContextHint("insert `=` here", "=") : ContextHint.init;
+		case Reading.type, Reading.returnType:
+			return error.expected & (1u << TokenKind.identifier) ? ContextHint("insert a type or `_` here", "_") : ContextHint.init;
+		case Reading.parameterType:
+			return error.expected & (1u << TokenKind.identifier) ? ContextHint("insert a type here") : ContextHint.init;
+		case Reading.value:
+			return ContextHint(ended ? "insert a value here, such as `0`, a name or a block in braces" : "replace this with a value: a constant, a name, a call, a block or a function type");
+		case Reading.colon:
+			return unexpected == TokenKind.equals ? ContextHint("insert `: _` here", ": _") : ContextHint.init;
+		case Reading.afterParameter:
+			return unexpected == TokenKind.identifier && sameLine ? ContextHint("insert `,` here", ",") : ContextHint.init;
+		case Reading.callArgument:
+			if (unexpected == TokenKind.identifier && sameLine) return ContextHint("insert `,` here", ",");
+			return constantKinds & (1u << unexpected) ? ContextHint("replace this constant with the name of a declaration that holds it") : ContextHint.init;
 		default:
 			return ContextHint.init;
 	}
@@ -275,23 +291,23 @@ private immutable string[TokenKind.max + 1] closing = [
 	TokenKind.languageBody: "close the block with `}`",
 ];
 
-// Where each `Where` is, as a message ends: "unexpected '{' after the declared type".
-private immutable string[Where.max + 1] whereText = [
-	Where.declaration: "where a declaration should start",
-	Where.colon: "after the declaration's name",
-	Where.type: "where the declared type should be",
-	Where.afterType: "after the declared type",
-	Where.value: "where the value after `=` should be",
-	Where.afterValue: "after the declaration's value",
-	Where.parameter: "in a parameter list",
-	Where.parameterColon: "after a parameter's name",
-	Where.parameterType: "where a parameter's type should be",
-	Where.afterParameter: "after a parameter",
-	Where.parameterDefault: "where a parameter's default value should be",
-	Where.returnType: "where the return type after `->` should be",
-	Where.callArgument: "in a call's arguments",
-	Where.block: "inside a block",
-	Where.language: "in a `language` block",
+// Where each `Reading` is, as a message ends: "unexpected '{' after the declared type".
+private immutable string[Reading.max + 1] whereText = [
+	Reading.declaration: "where a declaration should start",
+	Reading.colon: "after the declaration's name",
+	Reading.type: "where the declared type should be",
+	Reading.afterType: "after the declared type",
+	Reading.value: "where the value after `=` should be",
+	Reading.afterValue: "after the declaration's value",
+	Reading.parameter: "in a parameter list",
+	Reading.parameterColon: "after a parameter's name",
+	Reading.parameterType: "where a parameter's type should be",
+	Reading.afterParameter: "after a parameter",
+	Reading.parameterDefault: "where a parameter's default value should be",
+	Reading.returnType: "where the return type after `->` should be",
+	Reading.callArgument: "in a call's arguments",
+	Reading.block: "inside a block",
+	Reading.language: "in a `language` block",
 ];
 
 // What a message calls a token that `unterminated` says started as each kind and never finished.
@@ -319,20 +335,28 @@ private ExpectedNames expectedNames(uint expected) {
 	ExpectedNames names;
 	foreach (kind; 0 .. TokenKind.max + 1) {
 		if (!(expected & (1u << kind)) || (allConstants && (constantKinds & (1u << kind)))) continue;
-		if (auto name = spelling[kind]) names[n++] = name;
+		if (auto name = spelling[kind]) names.items[names.length++] = name;
 	}
-	if (allConstants) names[n++] = "a constant";
-	if (n == 0) return fp.string.makeDynamic(expected & (1u << TokenKind.end) ? "remove everything from here to the end of the file" : "remove this, or finish the declaration before it");
-	char* out_ = fp.string.makeDynamic("insert ");
+	if (allConstants) names.items[names.length++] = "a constant";
+	return names;
+}
+
+// "insert A, B or C here" for the kinds in `expected`; the end of the file cannot be inserted.
+private char* expectedHint(uint expected) {
+	const names = expectedNames(expected);
+	immutable n = names.length;
+	if (n == 0) return fp.string.clone(expected & (1u << TokenKind.end) ? "remove everything from here to the end of the file" : "remove this, or finish the declaration before it").get(null);
+	char* out_ = fp.string.clone("insert ").get(null);
 	bool ok = out_ !is null;
 	foreach (i; 0 .. n)
-		ok = ok && (i == 0 || fp.string.concatenate(out_, i + 1 == n ? " or " : ", ") !is null) && fp.string.concatenate(out_, names[i]) !is null;
-	if (ok && fp.string.concatenate(out_, " here") !is null) return out_;
+		ok = ok && (i == 0 || fp.string.concatenate(out_, i + 1 == n ? " or " : ", ")) && fp.string.concatenate(out_, names.items[i]);
+	if (ok && fp.string.concatenate(out_, " here")) return out_;
 	fp.string.free(out_);
 	return null;
 }
 
-/// Writes how to fix `error` in `syntax`, parsed from `source`, to `out_`, a new fp string, or null if allocation fails. A diagnostic draws it at `error.at`.
+/// Writes how to fix `error` in `syntax`, parsed from `source`, to `out_`, a new fp string, or null if allocation fails.
+/// A diagnostic draws it at `error.at`.
 ///
 /// Examples:
 /// ---
@@ -349,32 +373,87 @@ char* hint(ref const Syntax syntax, const(char)[] source, SyntaxError error) {
 	final switch (error.kind) {
 		case SyntaxError.Kind.syntax:
 			immutable t = syntax.tokens[error.token];
-			if (t.kind == TokenKind.unterminated) return fp.string.makeDynamic(closing[t.attempted] ? closing[t.attempted] : "finish or remove this token");
-			if (splitArrow(syntax, source, error)) return fp.string.makeDynamic("remove the space between `-` and `>`");
-			if (t.kind == TokenKind.invalid) return fp.string.makeDynamic("remove this character; no token starts with it");
-			if (auto specific = contextHint(syntax, error)) return fp.string.makeDynamic(specific);
+			if (t.kind == TokenKind.unterminated) return fp.string.clone(closing[t.attempted] ? closing[t.attempted] : "finish or remove this token").get(null);
+			if (splitArrowHead(syntax, source, error) != fp.pointer.notFound) return fp.string.clone("remove the space between `-` and `>`").get(null);
+			if (t.kind == TokenKind.invalid) return fp.string.clone("remove this character; no token starts with it").get(null);
+			if (auto specific = contextHint(syntax, error).text) return fp.string.clone(specific).get(null);
 			immutable open = opening(syntax, error);
-			if (open != fp.pointer.notFound) return fp.string.createFromConcatenation("insert `", source[open] == '{' ? "}" : ")", "` here to close the `", source[open .. open + 1], "` left open");
+			if (open != fp.pointer.notFound) return fp.string.joined("insert `", source[open] == '{' ? "}" : ")", "` here to close the `", source[open .. open + 1], "` left open").get(null);
 			return expectedHint(error.expected);
 		case SyntaxError.Kind.nesting:
-			return fp.string.format("move some of these blocks or function types into declarations of their own; at most %u may nest", maxNesting);
+			return fp.string.format("move some of these blocks or function types into declarations of their own; at most %u may nest", maxNesting).get(null);
 		case SyntaxError.Kind.language:
-			return fp.string.makeDynamic("remove this block, or rewrite it in DOIR");
+			return fp.string.clone("remove this block, or rewrite it in DOIR").get(null);
 		case SyntaxError.Kind.literal:
-			return fp.string.makeDynamic(error.fix);
+			return fp.string.clone(error.fix).get(null);
 	}
+}
+
+// `text`, inserted at `at` in `source`, as a fix: `,` and `)` against the token before them, and a space on either side where DOIR is written with one, as `x : T = {`.
+private doir.components.source.SyntaxFix insertion(const(char)[] source, size_t reported, size_t at, string text) {
+	if (text == "," || text == ")")
+		while (at > 0 && (source[at - 1] == ' ' || source[at - 1] == '\t')) --at;
+	immutable before = at > 0 ? source[at - 1] : '\n', after = at < source.length ? source[at] : '\n';
+	immutable bracket = text == "(" || text == ")" || text == "}";
+	immutable separator = text == "," || text == ":" || text == ";";
+	immutable offset = cast(int) (cast(ptrdiff_t) at - cast(ptrdiff_t) reported);
+	return doir.components.source.SyntaxFix(offset, offset, text, !fp.string.ascii.isWhitespace(before) && !bracket && !separator, !fp.string.ascii.isWhitespace(after) && !bracket);
+}
+
+/// The edits that `hint` states exactly for `error` in `syntax`, parsed from `source`: each token in backquotes it offers to insert, and a split arrow written together. A hint that needs the author to choose, such as "insert a type here", offers none.
+///
+/// Examples:
+/// ---
+/// Syntax syntax;
+/// scope(exit) free(syntax);
+/// immutable source = "f : (a: T\n";
+/// cast(void) skim(source, syntax);
+/// const offered = fixes(syntax, source, syntax.errors[0]);
+/// assert(offered.length == 1 && offered.items[0].text == ")");
+/// ---
+doir.components.source.SyntaxFixes fixes(ref const Syntax syntax, const(char)[] source, SyntaxError error) {
+	// Each token spelled as its text in backquotes, as `=`, is one a fix can insert; a hint lists at most all of them.
+	static assert(() {
+		size_t n = 0;
+		foreach (name; spelling) if (name.length && name[0] == '`') ++n;
+		return n;
+	}() <= doir.components.source.maxSyntaxFixes);
+	doir.components.source.SyntaxFixes out_;
+	if (error.kind != SyntaxError.Kind.syntax) return out_;
+	immutable t = syntax.tokens[error.token];
+	if (t.kind == TokenKind.unterminated || t.kind == TokenKind.invalid) {
+		immutable head = splitArrowHead(syntax, source, error);
+		if (head != fp.pointer.notFound) out_.items[out_.length++] = doir.components.source.SyntaxFix(cast(int) (t.start - error.at), cast(int) (head + 1 - error.at), "->");
+		return out_;
+	}
+	if (auto inserted = contextHint(syntax, error).inserted) {
+		out_.items[out_.length++] = insertion(source, error.at, error.at, inserted);
+		return out_;
+	}
+	if (contextHint(syntax, error).text !is null) return out_;
+	immutable open = opening(syntax, error);
+	if (open != fp.pointer.notFound) {
+		out_.items[out_.length++] = insertion(source, error.at, error.at, source[open] == '{' ? "}" : ")");
+		return out_;
+	}
+	const names = expectedNames(error.expected);
+	foreach (name; names.items[0 .. names.length])
+		if (name[0] == '`') out_.items[out_.length++] = insertion(source, error.at, error.at, name[1 .. $ - 1]);
+	return out_;
 }
 
 // `source` from declaration `first` to `at`, the part an example rewrites, or null when it is too long or spans lines to quote.
 private const(char)[] writtenSoFar(ref const Syntax syntax, const(char)[] source, uint first, uint at) {
-	if (first == noToken) return null;
+	if (first == outsideDeclaration) return null;
 	auto written = source[syntax.tokens[first].start .. at];
-	while (written.length && (written[$ - 1] == ' ' || written[$ - 1] == '\t')) written = written[0 .. $ - 1];
+	written = fp.string.trimEnd(written, " \t");
 	if (written.length == 0 || written.length > 48 || fp.string.contains(written, "\n", 0)) return null;
 	return written;
 }
 
-/// Writes an explanation of `error` in `syntax`, parsed from `source`, for someone new to DOIR, to a new fp string: how DOIR writes what the parse was reading, with an example, quoting the declaration where that helps. A diagnostic shows it as its closing note, after the hint. Returns null if allocation fails.
+/// Writes an explanation of `error` in `syntax`, parsed from `source`, for someone new to DOIR, to a new fp string: how DOIR writes what the parse was reading, with an example, quoting the declaration where that helps.
+/// A diagnostic shows it as its closing note, after the hint.
+/// Returns null if allocation fails.
 ///
 /// Examples:
 /// ---
@@ -392,71 +471,67 @@ char* explain(ref const Syntax syntax, const(char)[] source, SyntaxError error) 
 		case SyntaxError.Kind.syntax:
 			break;
 		case SyntaxError.Kind.nesting:
-			return fp.string.makeDynamic("Each block or function type written inside another adds a level. Declaring the inner ones separately, under names of their own, keeps the nesting shallow.");
+			return fp.string.clone("Each block or function type written inside another adds a level. Declaring the inner ones separately, under names of their own, keeps the nesting shallow.").get(null);
 		case SyntaxError.Kind.language:
-			return fp.string.makeDynamic("A `language` block holds code in another language for a frontend to translate into DOIR, and this compiler has no frontend for that language.");
+			return fp.string.clone("A `language` block holds code in another language for a frontend to translate into DOIR, and this compiler has no frontend for that language.").get(null);
 		case SyntaxError.Kind.literal:
-			return fp.string.makeDynamic("DOIR stores every constant exactly, so a constant it cannot store exactly is an error rather than being rounded or cut short.");
+			return fp.string.clone("DOIR stores every constant exactly, so a constant it cannot store exactly is an error rather than being rounded or cut short.").get(null);
 	}
 	immutable t = syntax.tokens[error.token];
-	if (t.kind == TokenKind.unterminated) return fp.string.makeDynamic("Everything from where it starts to the end of the file was read as part of it, so errors reported after it may go away once it is closed.");
-	if (splitArrow(syntax, source, error)) return fp.string.makeDynamic("An arrow is the two characters `->` written together, as in `(a: std.u8) -> std.u8`. With a space between them, DOIR reads `-` and `>` as two characters, and neither means anything alone.");
-	if (t.kind == TokenKind.invalid) return fp.string.makeDynamic("DOIR code is made of names, constants, comments and the punctuation `:`, `=`, `,`, `(`, `)`, `{`, `}`, `->` and `;`. A stray character is often left over from another language or from pasted text.");
+	if (t.kind == TokenKind.unterminated) return fp.string.clone("Everything from where it starts to the end of the file was read as part of it, so errors reported after it may go away once it is closed.").get(null);
+	if (splitArrowHead(syntax, source, error) != fp.pointer.notFound) return fp.string.clone("An arrow is the two characters `->` written together, as in `(a: std.u8) -> std.u8`. With a space between them, DOIR reads `-` and `>` as two characters, and neither means anything alone.").get(null);
+	if (t.kind == TokenKind.invalid) return fp.string.clone("DOIR code is made of names, constants, comments and the punctuation `:`, `=`, `,`, `(`, `)`, `{`, `}`, `->` and `;`. A stray character is often left over from another language or from pasted text.").get(null);
 	final switch (error.where) {
-		case Where.declaration:
-			return fp.string.makeDynamic("Each line of DOIR declares one name, written `name : type = value`, as in `count : std.u8 = 5`; the `= value` part is optional. A line starts with the name it declares.");
-		case Where.colon:
-			if (t.kind == TokenKind.equals) return fp.string.makeDynamic("Every declaration names its type between its name and `=`, as in `count : std.u8 = 5`. Write `_` as the type to have the compiler work it out: `count : _ = 5`.");
-			return fp.string.makeDynamic("A declaration's name is followed by `:` and its type, as in `count : std.u8`. A name cannot contain spaces; join words with `_`, as in `item_count`.");
-		case Where.type:
-			if (t.kind == TokenKind.equals) return fp.string.makeDynamic("Every declaration names its type between `:` and `=`. Write `_` there to have the compiler work the type out, as in `count : _ = 5`.");
-			return fp.string.makeDynamic("After `:` comes the declared type: a name such as `std.u8` or `namespace`, or a function type such as `(a: std.u8) -> std.u8`.");
-		case Where.afterType:
+		case Reading.declaration:
+			return fp.string.clone("Each line of DOIR declares one name, written `name : type = value`, as in `count : std.u8 = 5`; the `= value` part is optional. A line starts with the name it declares.").get(null);
+		case Reading.colon:
+			if (t.kind == TokenKind.equals) return fp.string.clone("Every declaration names its type between its name and `=`, as in `count : std.u8 = 5`. Write `_` as the type to have the compiler work it out: `count : _ = 5`.").get(null);
+			return fp.string.clone("A declaration's name is followed by `:` and its type, as in `count : std.u8`. A name cannot contain spaces; join words with `_`, as in `item_count`.").get(null);
+		case Reading.type:
+			if (t.kind == TokenKind.equals) return fp.string.clone("Every declaration names its type between `:` and `=`. Write `_` there to have the compiler work the type out, as in `count : _ = 5`.").get(null);
+			return fp.string.clone("After `:` comes the declared type: a name such as `std.u8` or `namespace`, or a function type such as `(a: std.u8) -> std.u8`.").get(null);
+		case Reading.afterType:
 			if (startsValue(t.kind)) {
 				const written = writtenSoFar(syntax, source, error.declaration, error.at);
 				const what = t.kind == TokenKind.leftBrace ? "A block in braces is a value, and a declaration's value" : "A declaration's value";
 				const next = t.kind == TokenKind.leftBrace ? "{" : doir.syntax.lexer.text(t, source);
-				if (written is null || next.length > 32) return fp.string.createFromConcatenation(what, " comes after `=`, as in `count : std.u8 = 5`.");
-				return fp.string.createFromConcatenation(what, " comes after `=`: write `", written, " = ", next, "`.");
+				if (written is null || next.length > 32) return fp.string.joined(what, " comes after `=`, as in `count : std.u8 = 5`.").get(null);
+				return fp.string.joined(what, " comes after `=`: write `", written, " = ", next, "`.").get(null);
 			}
-			return fp.string.makeDynamic("A declaration ends at the end of its line or at `;`. Between its type and its end there can only be `=` and a value, as in `count : std.u8 = 5`; anything else goes on a line of its own.");
-		case Where.value:
-			return fp.string.makeDynamic("After `=` comes the declaration's value: a constant such as `5` or `\"text\"`, the name of another declaration, a call such as `add(a, b)`, a block in braces, or a function type. To declare a name without a value, leave out the `=`.");
-		case Where.afterValue:
-			return fp.string.makeDynamic("A declaration holds one value and ends at the end of its line or at `;`. Put the next declaration on a line of its own, or separate the two with `;`.");
-		case Where.parameter:
-			return fp.string.makeDynamic("A function type lists its parameters between `(` and `)`, each written `name : type` and separated by `,`, as in `(a: std.u8, b: std.u8) -> std.u8`; `()` takes none.");
-		case Where.parameterColon:
-			return fp.string.makeDynamic("Each parameter is written `name : type`, as in `(count: std.u8)`, so its name needs `:` and a type after it.");
-		case Where.parameterType:
-			return fp.string.makeDynamic("A parameter's type follows its `:`, as in `(count: std.u8)`.");
-		case Where.afterParameter:
-			return fp.string.makeDynamic("Separate parameters with `,` and close the list with `)`, as in `(a: std.u8, b: std.u8)`. A default value follows `=`, as in `(a: std.u8 = 0)`.");
-		case Where.parameterDefault:
-			return fp.string.makeDynamic("A parameter's default value is a constant or the name of a declaration, as in `(a: std.u8 = 0)`.");
-		case Where.returnType:
-			return fp.string.makeDynamic("After `->` comes the type the function returns, as in `(a: std.u8) -> std.u8`, or `_` to have the compiler work it out.");
-		case Where.callArgument:
-			return fp.string.makeDynamic("A call's arguments are names of declarations, separated by `,`, as in `add(a, b)`. To pass a constant, declare it first, as in `five : std.u8 = 5`, and pass `five`.");
-		case Where.block:
-			return fp.string.makeDynamic("Every `{` needs a matching `}`. The declarations between them belong to the block, one per line or separated by `;`.");
-		case Where.language:
-			return fp.string.makeDynamic("A `language` block is written `language \"name\" { ... }`: the language's name in quotes, then its code in braces.");
+			return fp.string.clone("A declaration ends at the end of its line or at `;`. Between its type and its end there can only be `=` and a value, as in `count : std.u8 = 5`; anything else goes on a line of its own.").get(null);
+		case Reading.value:
+			return fp.string.clone("After `=` comes the declaration's value: a constant such as `5` or `\"text\"`, the name of another declaration, a call such as `add(a, b)`, a block in braces, or a function type. To declare a name without a value, leave out the `=`.").get(null);
+		case Reading.afterValue:
+			return fp.string.clone("A declaration holds one value and ends at the end of its line or at `;`. Put the next declaration on a line of its own, or separate the two with `;`.").get(null);
+		case Reading.parameter:
+			return fp.string.clone("A function type lists its parameters between `(` and `)`, each written `name : type` and separated by `,`, as in `(a: std.u8, b: std.u8) -> std.u8`; `()` takes none.").get(null);
+		case Reading.parameterColon:
+			return fp.string.clone("Each parameter is written `name : type`, as in `(count: std.u8)`, so its name needs `:` and a type after it.").get(null);
+		case Reading.parameterType:
+			return fp.string.clone("A parameter's type follows its `:`, as in `(count: std.u8)`.").get(null);
+		case Reading.afterParameter:
+			return fp.string.clone("Separate parameters with `,` and close the list with `)`, as in `(a: std.u8, b: std.u8)`. A default value follows `=`, as in `(a: std.u8 = 0)`.").get(null);
+		case Reading.parameterDefault:
+			return fp.string.clone("A parameter's default value is a constant or the name of a declaration, as in `(a: std.u8 = 0)`.").get(null);
+		case Reading.returnType:
+			return fp.string.clone("After `->` comes the type the function returns, as in `(a: std.u8) -> std.u8`, or `_` to have the compiler work it out.").get(null);
+		case Reading.callArgument:
+			return fp.string.clone("A call's arguments are names of declarations, separated by `,`, as in `add(a, b)`. To pass a constant, declare it first, as in `five : std.u8 = 5`, and pass `five`.").get(null);
+		case Reading.block:
+			return fp.string.clone("Every `{` needs a matching `}`. The declarations between them belong to the block, one per line or separated by `;`.").get(null);
+		case Reading.language:
+			return fp.string.clone("A `language` block is written `language \"name\" { ... }`: the language's name in quotes, then its code in braces.").get(null);
 	}
 }
 
 
 // --- literals ----------------------------------------------------------------
 
-private uint hexValue(char c) {
-	return c <= '9' ? c - '0' : (c | 0x20) - 'a' + 10;
-}
-
 // The `StringChar` at `s[i]`, which the lexer matched: its value, an escaped byte (`\x`, octal) flagged by `isByte`.
 private uint stringChar(const(char)[] s, ref size_t i, out bool isByte, out bool overflow) {
 	if (s[i] != '\\') {
 		bool valid;
-		return fp.string.decodeUtf8(s, i, valid);
+		return fp.string.utf.decode(s, i, valid);
 	}
 	immutable e = s[i + 1];
 	i += 2;
@@ -473,8 +548,8 @@ private uint stringChar(const(char)[] s, ref size_t i, out bool isByte, out bool
 			immutable base = e == 'x' ? 16 : 8;
 			if (e != 'x') --i;
 			ulong value = 0;
-			while (i < s.length && (base == 16 ? fp.string.isHexDigit(s[i]) : (s[i] >= '0' && s[i] <= '7'))) {
-				value = value * base + hexValue(s[i++]);
+			while (i < s.length && (base == 16 ? fp.string.ascii.isHexDigit(s[i]) : (s[i] >= '0' && s[i] <= '7'))) {
+				value = value * base + fp.string.numbers.hexDigitValue(s[i++]);
 				if (value > 0x10FFFF) overflow = true;
 			}
 			isByte = true;
@@ -482,7 +557,7 @@ private uint stringChar(const(char)[] s, ref size_t i, out bool isByte, out bool
 		case 'u', 'U':
 			immutable n = e == 'u' ? 4 : 8;
 			uint value = 0;
-			foreach (k; 0 .. n) value = value * 16 + hexValue(s[i++]);
+			foreach (k; 0 .. n) value = value * 16 + fp.string.numbers.hexDigitValue(s[i++]);
 			if (value > 0x10FFFF || (value >= 0xD800 && value <= 0xDFFF)) overflow = true;
 			return value;
 		default: return e; // ' " ? \ %
@@ -499,9 +574,9 @@ private string decodeString(const(char)[] content, char** out_, ref bool refused
 		if (overflow || (isByte && value > 0xFF)) return "V-Literal: an escape in a string must be a byte or a Unicode scalar value";
 		if (out_ is null) continue;
 		bool appended;
-		if (content[start] != '\\') appended = fp.string.concatenate(*out_, content[start .. i]) !is null;
-		else if (isByte || value < 0x80) appended = fp.string.append(*out_, cast(char) value) !is null;
-		else appended = fp.string.appendCodepoint(*out_, value) == fp.string.Utf8Error.none;
+		if (content[start] != '\\') appended = fp.string.concatenate(*out_, content[start .. i]);
+		else if (isByte || value < 0x80) appended = fp.string.append(*out_, cast(char) value);
+		else appended = fp.string.utf.append(*out_, value) == fp.string.utf.EncodeError.none;
 		if (!appended) {
 			refused = true;
 			return null;
@@ -510,34 +585,22 @@ private string decodeString(const(char)[] content, char** out_, ref bool refused
 	return null;
 }
 
-// An integer literal's value; `overflow` if it needs more than 64 bits.
+// An integer literal's magnitude, its leading `-` left out; `overflow` if it needs more than 64 bits, or a negative that needs more than 63.
 private ulong integerValue(const(char)[] s, out bool overflow) {
+	immutable negative = s.length > 0 && s[0] == '-';
+	size_t i = negative ? 1 : 0;
 	uint base = 10;
-	size_t i = 0;
-	if (s.length > 2 && s[0] == '0' && s[1] == 'x') { base = 16; i = 2; }
-	else if (s.length > 2 && s[0] == '0' && s[1] == 'b') { base = 2; i = 2; }
-	else if (s.length > 1 && s[0] == '0') { base = 8; i = 1; }
+	if (s.length - i > 2 && s[i] == '0' && s[i + 1] == 'x') { base = 16; i += 2; }
+	else if (s.length - i > 2 && s[i] == '0' && s[i + 1] == 'b') { base = 2; i += 2; }
+	else if (s.length - i > 1 && s[i] == '0') { base = 8; i += 1; }
 	ulong value = 0;
 	for (; i < s.length; ++i) {
-		immutable d = hexValue(s[i]);
+		immutable d = fp.string.numbers.hexDigitValue(s[i]);
 		if (value > (ulong.max - d) / base) overflow = true;
 		value = value * base + d;
 	}
+	if (negative && value > (ulong(1) << 63)) overflow = true;
 	return value;
-}
-
-// Null if copying a long literal is refused.
-private std.typecons.Nullable!double floatValue(const(char)[] s) @trusted {
-	char[64] buffer = void;
-	if (s.length < buffer.length) {
-		core.stdc.string.memcpy(buffer.ptr, s.ptr, s.length);
-		buffer[s.length] = 0;
-		return typeof(return)(core.stdc.stdlib.strtod(buffer.ptr, null));
-	}
-	auto copy = fp.string.makeDynamic(s);
-	if (copy is null) return typeof(return).init;
-	scope(exit) fp.string.free(copy);
-	return typeof(return)(core.stdc.stdlib.strtod(copy, null));
 }
 
 // The content of a raw string token, between its delimiters.
@@ -550,24 +613,24 @@ private const(char)[] rawContent(const(char)[] s) {
 
 /// The interned name an identifier spells: `%"text"` names `text`, its escapes decoded (spec Part I); any other spells itself.
 ///
-/// Returns `noName` if allocation fails, leaving `strings` as it was.
+/// Returns `refused` if allocation fails, leaving `strings` as it was.
 ///
 /// Examples:
 /// ---
 /// static import doir.strings;
 /// doir.strings.Strings strings;
 /// scope(exit) doir.strings.free(strings);
-/// assert(nameOf(`%"a b"`, strings) == doir.strings.intern(strings, "a b"));
-/// assert(doir.strings.text(strings, nameOf("std.u8", strings)) == "std.u8");
+/// assert(internSpelling(`%"a b"`, strings) == doir.strings.intern(strings, "a b"));
+/// assert(doir.strings.text(strings, internSpelling("std.u8", strings)) == "std.u8");
 /// ---
-doir.strings.StringId nameOf(const(char)[] spelled, ref doir.strings.Strings strings) {
+doir.strings.StringId internSpelling(const(char)[] spelled, ref doir.strings.Strings strings) {
 	doir.strings.StringId id;
 	if (spelled.length >= 3 && spelled[0] == '%' && spelled[1] == '"') {
 		char* decoded = null;
 		scope(exit) fp.string.free(decoded);
 		bool refused = false;
 		cast(void) decodeString(spelled[2 .. $ - 1], &decoded, refused);
-		if (refused) return doir.strings.noName;
+		if (refused) return doir.strings.refused;
 		id = doir.strings.intern(strings, fp.string.slice(decoded));
 	} else id = doir.strings.intern(strings, spelled);
 	return id;
@@ -583,7 +646,7 @@ struct Builder {
 	EntityId declaration = invalidEntity; /// The declaration's entity, with no parsed components.
 	const(EntityId)[] reuse; /// Entities to build parts into before making new ones; each must have no parsed components.
 	EntityId* parts = null; /// Out: every part built, in order, parents first; an fp dynarray the caller frees.
-	diagnose.Detailed annotation; /// Out: the declaration's `SourceAnnotation`, if `annotated`.
+	diagnose.LineColumnRange annotation; /// Out: the declaration's `SourceAnnotation`, if `annotated`.
 	bool annotated; /// Out: whether it has one.
 }
 
@@ -612,12 +675,13 @@ struct Write {
 	uint from, count; /// A span's start and length from its parent's start; a call's arguments in `Description.arguments`.
 }
 
-/// What `describe` records of one declaration: the writes `build` would make, in order, and how many part entities they need. Plain data, released by `free`; it holds no entity, so any thread may make one.
+/// What `describe` records of one declaration: the writes `build` would make, in order, and how many part entities they need.
+/// Plain data, released by `free`; it holds no entity, so any thread may make one.
 struct Description {
 	Write* writes = null; /// In order; an fp dynarray.
 	doir.strings.StringId* arguments = null; /// Calls' arguments, which `Write.from` and `Write.count` slice; an fp dynarray.
 	uint parts; /// The part entities the writes name, from `firstPart`.
-	diagnose.Detailed annotation; /// The declaration's `SourceAnnotation`, if `annotated`.
+	diagnose.LineColumnRange annotation; /// The declaration's `SourceAnnotation`, if `annotated`.
 	bool annotated; /// Whether it has one.
 }
 
@@ -635,16 +699,6 @@ void free(ref Description d) {
 	d = Description.init;
 }
 
-private Write write(Write.Kind kind, EntityId target, TypeRef type = TypeRef.init, doir.strings.StringId name = doir.strings.noName, EntityId other = invalidEntity) {
-	Write w;
-	w.kind = kind;
-	w.target = target;
-	w.type = type;
-	w.name = name;
-	w.other = other;
-	return w;
-}
-
 private struct Parser {
 	const(char)[] source;
 	const(Token)[] tokens;
@@ -653,119 +707,114 @@ private struct Parser {
 	uint furthestToken;
 	bool failed; // whether any failure was noted in the current statement
 	uint expected; // the kinds tried at `furthest`, as `SyntaxError.expected`
-	Where where; // what the rules are reading now
-	Where furthestWhere; // what they were reading at `furthest`
-	uint declaration = noToken; // the first token of the innermost declaration being read
-	uint furthestDeclaration = noToken; // `declaration` at `furthest`
+	Reading where; // what the rules are reading now
+	Reading furthestWhere; // what they were reading at `furthest`
+	uint declaration = outsideDeclaration; // the first token of the innermost declaration being read
+	uint furthestDeclaration = outsideDeclaration; // `declaration` at `furthest`
 	bool tooDeep;
 	bool refused; // an allocation was refused; every rule stops and the entry point returns false
 	uint depth;
 	Syntax* syntax; // skimming
-	Description* build; // describing a record to build; null while skimming or validating
+	Description* description; // describing a record to build; null while skimming or validating
 	doir.strings.Strings* strings; // where a description's names are interned
 	const(Record)* record; // the record being built
 	uint record_; // the record being skimmed
 }
 
-private bool refuse(ref Parser p) {
-	p.refused = true;
+private bool refuse(ref Parser parser) {
+	parser.refused = true;
 	return false;
 }
 
-private void note(ref Parser p, TokenKind expected) {
+private void note(ref Parser parser, TokenKind expected) {
 	static assert(TokenKind.max < SyntaxError.expected.sizeof * 8, "SyntaxError.expected holds a bit per TokenKind");
-	immutable t = p.tokens[p.pos];
+	immutable t = parser.tokens[parser.pos];
 	// `_` and `wsc` try a comment between any two tokens, so an unclosed one fails at its end wherever it is.
 	immutable reached = t.attempted == expected || t.attempted == TokenKind.longComment;
 	immutable at = t.kind == TokenKind.unterminated && reached ? t.start + t.length : t.start;
-	if (p.failed && at == p.furthest) p.expected |= 1u << expected;
-	else if (!p.failed || at > p.furthest) p.expected = 1u << expected;
-	if (!p.failed || at >= p.furthest) {
-		p.furthest = at;
-		p.furthestToken = cast(uint) p.pos;
-		p.furthestWhere = p.where;
-		p.furthestDeclaration = p.declaration;
-		p.failed = true;
+	if (parser.failed && at == parser.furthest) parser.expected |= 1u << expected;
+	else if (!parser.failed || at > parser.furthest) parser.expected = 1u << expected;
+	if (!parser.failed || at >= parser.furthest) {
+		parser.furthest = at;
+		parser.furthestToken = cast(uint) parser.pos;
+		parser.furthestWhere = parser.where;
+		parser.furthestDeclaration = parser.declaration;
+		parser.failed = true;
 	}
 }
 
-private bool at(ref Parser p, TokenKind kind) {
-	if (p.tokens[p.pos].kind == kind) return true;
-	note(p, kind);
+private bool currentIs(ref Parser parser, TokenKind kind) {
+	if (parser.tokens[parser.pos].kind == kind) return true;
+	note(parser, kind);
 	return false;
 }
 
-private bool atWord(ref Parser p, TokenKind kind, const(char)[] word) {
-	immutable t = p.tokens[p.pos];
-	if (t.kind == kind && doir.syntax.lexer.text(t, p.source) == word) return true;
-	note(p, kind);
+private bool atWord(ref Parser parser, TokenKind kind, const(char)[] word) {
+	immutable t = parser.tokens[parser.pos];
+	if (t.kind == kind && doir.syntax.lexer.text(t, parser.source) == word) return true;
+	note(parser, kind);
 	return false;
 }
 
 // `wsc`
-private void skipWsc(ref Parser p) {
-	while (doir.syntax.lexer.isTrivia(p.tokens[p.pos].kind)) ++p.pos;
+private void skipTrivia(ref Parser parser) {
+	while (doir.syntax.lexer.isTrivia(parser.tokens[parser.pos].kind)) ++parser.pos;
 }
 
 // `_`
-private void skip_(ref Parser p) {
-	while (doir.syntax.lexer.isTrivia(p.tokens[p.pos].kind) || p.tokens[p.pos].kind == TokenKind.newline) ++p.pos;
+private void skipBlank(ref Parser parser) {
+	while (doir.syntax.lexer.isTrivia(parser.tokens[parser.pos].kind) || parser.tokens[parser.pos].kind == TokenKind.newline) ++parser.pos;
 }
 
-// The byte offset after the last non-trivia token before `p.pos`.
-private uint lastEnd(ref Parser p, size_t from) {
-	size_t i = p.pos;
-	while (i > from && (doir.syntax.lexer.isTrivia(p.tokens[i - 1].kind) || p.tokens[i - 1].kind == TokenKind.newline)) --i;
-	immutable t = p.tokens[i - 1];
+// The byte offset after the last non-trivia token before `parser.pos`.
+private uint lastEnd(ref Parser parser, size_t from) {
+	size_t i = parser.pos;
+	while (i > from && (doir.syntax.lexer.isTrivia(parser.tokens[i - 1].kind) || parser.tokens[i - 1].kind == TokenKind.newline)) --i;
+	immutable t = parser.tokens[i - 1];
 	return t.start + t.length;
 }
 
-private bool enter(ref Parser p) {
-	if (p.depth >= maxNesting) {
-		p.tooDeep = true;
+private bool enter(ref Parser parser) {
+	if (parser.depth >= maxNesting) {
+		parser.tooDeep = true;
 		return false;
 	}
-	++p.depth;
+	++parser.depth;
 	return true;
 }
 
-private void error(ref Parser p, SyntaxError.Kind kind, uint at, uint token, string message = null, string fix = null, uint expected = 0) {
-	if (p.syntax is null) return;
+private void error(ref Parser parser, SyntaxError.Kind kind, uint at, uint token, string message = null, string fix = null, uint expected = 0) {
+	if (parser.syntax is null) return;
 	auto e = SyntaxError(kind, at, token, message, fix, expected);
 	if (kind == SyntaxError.Kind.syntax) {
-		e.where = p.furthestWhere;
-		e.declaration = p.furthestDeclaration;
+		e.where = parser.furthestWhere;
+		e.declaration = parser.furthestDeclaration;
 	}
-	if (!fp.dynarray.pushBack(p.syntax.errors, e)) p.refused = true;
+	if (!fp.dynarray.pushBack(parser.syntax.errors, e)) parser.refused = true;
 }
 
-// The intern functions return `noName` and set `p.refused` if allocation fails.
-private doir.strings.StringId intern(ref Parser p, size_t token) {
-	immutable id = nameOf(doir.syntax.lexer.text(p.tokens[token], p.source), *p.strings);
-	if (id == doir.strings.noName) p.refused = true;
+// The intern functions return `refused` and set `parser.refused` if allocation fails.
+private doir.strings.StringId intern(ref Parser parser, size_t token) {
+	immutable id = internSpelling(doir.syntax.lexer.text(parser.tokens[token], parser.source), *parser.strings);
+	if (id == doir.strings.refused) parser.refused = true;
 	return id;
 }
 
-private doir.strings.StringId intern(ref Parser p, const(char)[] spelled) {
-	immutable id = doir.strings.intern(*p.strings, spelled);
-	if (id == doir.strings.noName) p.refused = true;
+private doir.strings.StringId intern(ref Parser parser, const(char)[] spelled) {
+	immutable id = doir.strings.intern(*parser.strings, spelled);
+	if (id == doir.strings.refused) parser.refused = true;
 	return id;
 }
 
-private bool record(ref Parser p, Write w) {
-	return fp.dynarray.pushBack(p.build.writes, w) || refuse(p);
+private bool record(ref Parser parser, Write write) {
+	return fp.dynarray.pushBack(parser.description.writes, write) || refuse(parser);
 }
 
-// The next part, as a `Write` names it; `apply` makes or reuses its entity.
-private EntityId takePart(ref Parser p) {
-	return cast(EntityId) (firstPart + p.build.parts++);
-}
-
-private bool setSpan(ref Parser p, EntityId e, uint parentStart, uint start, uint end) {
-	auto w = write(Write.Kind.span, e);
-	w.from = start - parentStart;
-	w.count = end - start;
-	return record(p, w);
+private bool setSpan(ref Parser parser, EntityId e, uint parentStart, uint start, uint end) {
+	auto write = Write(kind: Write.Kind.span, target: e);
+	write.from = start - parentStart;
+	write.count = end - start;
+	return record(parser, write);
 }
 
 /// A parsed type position: a name, or a function type written in place.
@@ -774,15 +823,15 @@ private struct ParsedType {
 	EntityId entity = invalidEntity; // while building, the function type
 }
 
-private bool isName(ref Parser p, ParsedType type, const(char)[] word) {
-	return type.name != noToken && doir.syntax.lexer.text(p.tokens[type.name], p.source) == word;
+private bool isName(ref Parser parser, ParsedType type, const(char)[] word) {
+	return type.name != unnamed && doir.syntax.lexer.text(parser.tokens[type.name], parser.source) == word;
 }
 
-// Calls `f` with the type as a `Write` takes it: the interned name or the function type part. Returns `f`'s result, or false on refused interning.
-private bool withType(alias f)(ref Parser p, ParsedType type) {
-	if (type.entity != invalidEntity) return f(TypeRef(doir.strings.noName, type.entity));
-	immutable name = intern(p, type.name);
-	return name != doir.strings.noName && f(TypeRef(name));
+// Calls `f` with the type as a `Write` holds it: the interned name or function type part. False on refused interning.
+private bool withType(alias f)(ref Parser parser, ParsedType type) {
+	if (type.entity != invalidEntity) return f(TypeRef(doir.strings.unnamed, type.entity));
+	immutable name = intern(parser, type.name);
+	return name != doir.strings.refused && f(TypeRef(name));
 }
 
 /// A parsed constant's payload.
@@ -790,223 +839,226 @@ private struct ParsedConstant {
 	doir.components.ast.ConstantVal value;
 }
 
-// Constant <- FloatConstant / IntegerConstant / RawString / '"' StringChar* '"' / '\'' StringChar '\''
-private std.typecons.Nullable!ParsedConstant constant(ref Parser p) {
-	immutable t = p.tokens[p.pos];
-	const spelled = doir.syntax.lexer.text(t, p.source);
+// Constant <- '-'? FloatConstant / '-'? IntegerConstant / RawString / '"' StringChar* '"' / '\'' StringChar '\''
+private std.typecons.Nullable!ParsedConstant constant(ref Parser parser) {
+	immutable t = parser.tokens[parser.pos];
+	const spelled = doir.syntax.lexer.text(t, parser.source);
 	ParsedConstant out_;
 	switch (t.kind) {
 		case TokenKind.float_:
-			immutable value = floatValue(spelled);
+			// The lexer admits only spellings `parseFloat` reads, so null means copying a long literal was refused (V-Literal rounds the rest).
+			immutable value = fp.string.numbers.parseFloat(spelled);
 			if (value.isNull) {
-				cast(void) refuse(p);
+				cast(void) refuse(parser);
 				return typeof(return).init;
 			}
-			out_.value = doir.components.ast.ConstantVal.float_(value.get);
+			out_.value = doir.components.ast.ConstantVal.float_(value.get.value);
 			break;
 		case TokenKind.integer:
 			bool overflow;
-			out_.value = doir.components.ast.ConstantVal.integer(integerValue(spelled, overflow));
-			if (overflow) error(p, SyntaxError.Kind.literal, t.start, cast(uint) p.pos, "V-Literal: an integer literal must fit in 64 bits", "write a value below 2^64");
+			immutable negative = spelled.length > 0 && spelled[0] == '-';
+			immutable magnitude = integerValue(spelled, overflow);
+			out_.value = negative ? doir.components.ast.ConstantVal.negativeInteger(magnitude) : doir.components.ast.ConstantVal.integer(magnitude);
+			if (overflow) error(parser, SyntaxError.Kind.literal, t.start, cast(uint) parser.pos, "V-Literal: an integer literal must fit in 64 bits", negative ? "write a value at or above -2^63" : "write a value below 2^64");
 			break;
 		case TokenKind.rawString, TokenKind.string_:
 			const content = t.kind == TokenKind.rawString ? rawContent(spelled) : spelled[1 .. $ - 1];
-			if (p.build is null) {
+			if (parser.description is null) {
 				if (t.kind == TokenKind.string_) {
 					bool unused;
 					immutable problem = decodeString(content, null, unused);
-					if (problem !is null) error(p, SyntaxError.Kind.literal, t.start, cast(uint) p.pos, problem, "keep `\\x` and octal escapes at or below 0xFF, and `\\u` and `\\U` escapes to Unicode scalar values");
+					if (problem !is null) error(parser, SyntaxError.Kind.literal, t.start, cast(uint) parser.pos, problem, "keep `\\x` and octal escapes at or below 0xFF, and `\\u` and `\\U` escapes to Unicode scalar values");
 				}
 				break;
 			}
 			doir.strings.StringId bytes;
-			if (t.kind == TokenKind.rawString) bytes = intern(p, content);
+			if (t.kind == TokenKind.rawString) bytes = intern(parser, content);
 			else {
 				char* decoded = null;
 				scope(exit) fp.string.free(decoded);
 				bool refused = false;
 				cast(void) decodeString(content, &decoded, refused);
 				if (refused) {
-					cast(void) refuse(p);
+					cast(void) refuse(parser);
 					return typeof(return).init;
 				}
-				bytes = intern(p, fp.string.slice(decoded));
+				bytes = intern(parser, fp.string.slice(decoded));
 			}
-			if (bytes == doir.strings.noName) return typeof(return).init;
+			if (bytes == doir.strings.refused) return typeof(return).init;
 			out_.value = doir.components.ast.ConstantVal.bytes(bytes);
 			break;
 		case TokenKind.character:
 			size_t i = 1;
 			bool isByte, overflow;
 			out_.value = doir.components.ast.ConstantVal.integer(stringChar(spelled, i, isByte, overflow));
-			if (overflow) error(p, SyntaxError.Kind.literal, t.start, cast(uint) p.pos, "V-Literal: a character literal must be a Unicode scalar value", "use a code point up to U+10FFFF, outside the surrogates U+D800 to U+DFFF");
+			if (overflow) error(parser, SyntaxError.Kind.literal, t.start, cast(uint) parser.pos, "V-Literal: a character literal must be a Unicode scalar value", "use a code point up to U+10FFFF, outside the surrogates U+D800 to U+DFFF");
 			break;
 		default:
-			foreach (kind; [TokenKind.float_, TokenKind.integer, TokenKind.rawString, TokenKind.string_, TokenKind.character]) note(p, kind);
+			foreach (kind; [TokenKind.float_, TokenKind.integer, TokenKind.rawString, TokenKind.string_, TokenKind.character]) note(parser, kind);
 			return typeof(return).init;
 	}
-	++p.pos;
+	++parser.pos;
 	return typeof(return)(out_);
 }
 
 // Parses in skimming mode and rewinds, so a build makes no part for a function type that does not parse whole.
-private bool validates(alias rule)(ref Parser p) {
-	immutable save = p.pos;
-	auto build = p.build;
-	p.build = null;
-	immutable ok = rule(p);
-	p.build = build;
-	p.pos = save;
+private bool validates(alias rule)(ref Parser parser) {
+	immutable save = parser.pos;
+	auto build = parser.description;
+	parser.description = null;
+	immutable ok = rule(parser);
+	parser.description = build;
+	parser.pos = save;
 	return ok;
 }
 
 // Type <- FunctionType / Identifier; a function type is built as a part owned by `owner`, whose span starts at `ownerStart`.
-private std.typecons.Nullable!ParsedType type(ref Parser p, EntityId owner, uint ownerStart) {
-	if (p.tokens[p.pos].kind == TokenKind.leftParen) {
-		if (p.build is null) {
-			if (functionType(p, invalidEntity, 0)) return typeof(return)(ParsedType.init);
-		} else if (validates!(q => functionType(q, invalidEntity, 0))(p)) {
-			immutable start = p.tokens[p.pos].start;
-			immutable e = takePart(p);
-			immutable typeName = intern(p, "type");
-			if (typeName == doir.strings.noName) return typeof(return).init;
-			if (!record(p, write(Write.Kind.inPlaceFunctionType, e, TypeRef(typeName), doir.strings.noName, owner))) return typeof(return).init;
-			if (!functionType(p, e, start)) {
-				assert(p.refused, "doir.parser: a validated function type did not build");
+private std.typecons.Nullable!ParsedType type(ref Parser parser, EntityId owner, uint ownerStart) {
+	if (parser.tokens[parser.pos].kind == TokenKind.leftParen) {
+		if (parser.description is null) {
+			if (functionType(parser, invalidEntity, 0)) return typeof(return)(ParsedType.init);
+		} else if (validates!(q => functionType(q, invalidEntity, 0))(parser)) {
+			immutable start = parser.tokens[parser.pos].start;
+			// The next part, which `apply` makes or reuses.
+			immutable e = cast(EntityId) (firstPart + parser.description.parts++);
+			immutable typeName = intern(parser, "type");
+			if (typeName == doir.strings.refused) return typeof(return).init;
+			if (!record(parser, Write(kind: Write.Kind.inPlaceFunctionType, target: e, type: TypeRef(typeName), other: owner))) return typeof(return).init;
+			if (!functionType(parser, e, start)) {
+				assert(parser.refused, "doir.parser: a validated function type did not build");
 				return typeof(return).init;
 			}
-			if (!setSpan(p, e, ownerStart, start, lastEnd(p, 0))) return typeof(return).init;
+			if (!setSpan(parser, e, ownerStart, start, lastEnd(parser, 0))) return typeof(return).init;
 			return typeof(return)(ParsedType(noToken, e));
 		}
-		if (p.refused) return typeof(return).init;
+		if (parser.refused) return typeof(return).init;
 	}
-	if (!at(p, TokenKind.identifier)) return typeof(return).init;
-	return typeof(return)(ParsedType(cast(uint) p.pos++));
+	if (!currentIs(parser, TokenKind.identifier)) return typeof(return).init;
+	return typeof(return)(ParsedType(cast(uint) parser.pos++));
 }
 
-// parameter <- Identifier _ ':'_ deducible_type
-// deducible_type <- ('deduced' _ 'type' _) / (Type _ ('='_ (Constant / Identifier) _)?)
-private bool parameter(ref Parser p, EntityId ft, uint ftStart) {
-	immutable start = p.pos;
-	p.where = Where.parameter;
-	if (!at(p, TokenKind.identifier)) return false;
-	immutable name = cast(uint) p.pos++;
-	skip_(p);
-	p.where = Where.parameterColon;
-	if (!at(p, TokenKind.colon)) { p.pos = start; return false; }
-	++p.pos;
-	skip_(p);
-	p.where = Where.parameterType;
+// parameter <- Identifier _ ':'_ deducible_type; deducible_type <- ('deduced' _ 'type' _) / (Type _ ('='_ (Constant / Identifier) _)?)
+private bool parameter(ref Parser parser, EntityId functionType, uint ftStart) {
+	immutable start = parser.pos;
+	parser.where = Reading.parameter;
+	if (!currentIs(parser, TokenKind.identifier)) return false;
+	immutable name = cast(uint) parser.pos++;
+	skipBlank(parser);
+	parser.where = Reading.parameterColon;
+	if (!currentIs(parser, TokenKind.colon)) { parser.pos = start; return false; }
+	++parser.pos;
+	skipBlank(parser);
+	parser.where = Reading.parameterType;
 
 	bool deduced = false;
-	if (atWord(p, TokenKind.keyword, "deduced")) {
-		immutable save = p.pos;
-		++p.pos;
-		skip_(p);
-		if (atWord(p, TokenKind.identifier, "type")) {
-			++p.pos;
-			skip_(p);
+	if (atWord(parser, TokenKind.keyword, "deduced")) {
+		immutable save = parser.pos;
+		++parser.pos;
+		skipBlank(parser);
+		if (atWord(parser, TokenKind.identifier, "type")) {
+			++parser.pos;
+			skipBlank(parser);
 			deduced = true;
-		} else p.pos = save;
+		} else parser.pos = save;
 	}
 
 	ParsedType paramType;
 	ParsedConstant defaultConstant;
 	uint defaultName = noToken;
 	bool hasDefault = false;
-	// The parameter's entity is taken before its type's, so its parts stay in parent-first order.
-	immutable e = p.build is null ? invalidEntity : takePart(p);
-	if (p.refused) return false;
+	// The parameter's entity is taken before its type's, so its parts stay parent-first; `apply` makes or reuses the next.
+	immutable e = parser.description is null ? invalidEntity : cast(EntityId) (firstPart + parser.description.parts++);
+	if (parser.refused) return false;
 	if (!deduced) {
-		auto parsedType = type(p, ft, ftStart);
+		auto parsedType = type(parser, functionType, ftStart);
 		if (parsedType.isNull) {
-			assert(p.build is null || p.refused);
-			p.pos = start;
+			assert(parser.description is null || parser.refused);
+			parser.pos = start;
 			return false;
 		}
 		paramType = parsedType.get;
-		skip_(p);
-		immutable save = p.pos;
-		p.where = Where.afterParameter;
-		if (at(p, TokenKind.equals)) {
-			++p.pos;
-			skip_(p);
-			p.where = Where.parameterDefault;
-			auto parsedDefault = constant(p);
+		skipBlank(parser);
+		immutable save = parser.pos;
+		parser.where = Reading.afterParameter;
+		if (currentIs(parser, TokenKind.equals)) {
+			++parser.pos;
+			skipBlank(parser);
+			parser.where = Reading.parameterDefault;
+			auto parsedDefault = constant(parser);
 			if (!parsedDefault.isNull) {
 				defaultConstant = parsedDefault.get;
 				hasDefault = true;
-			} else if (p.refused) return false;
-			else if (at(p, TokenKind.identifier)) { defaultName = cast(uint) p.pos++; hasDefault = true; }
-			if (hasDefault) skip_(p);
-			else p.pos = save;
+			} else if (parser.refused) return false;
+			else if (currentIs(parser, TokenKind.identifier)) { defaultName = cast(uint) parser.pos++; hasDefault = true; }
+			if (hasDefault) skipBlank(parser);
+			else parser.pos = save;
 		}
 	}
-	if (p.build is null) return true;
+	if (parser.description is null) return true;
 
-	immutable unnamed = doir.syntax.lexer.text(p.tokens[name], p.source) == "_";
-	immutable named = unnamed ? doir.strings.noName : intern(p, name);
-	if (p.refused) return false;
+	immutable unnamed = doir.syntax.lexer.text(parser.tokens[name], parser.source) == "_";
+	immutable named = unnamed ? doir.strings.unnamed : intern(parser, name);
+	if (parser.refused) return false;
 	bool ok;
 	if (deduced) {
-		immutable deducedType = intern(p, doir.components.ast.deducedTypeName);
-		ok = deducedType != doir.strings.noName && record(p, write(Write.Kind.parameter, e, TypeRef(deducedType), named, ft));
-	} else ok = withType!(t => record(p, write(Write.Kind.parameter, e, t, named, ft)))(p, paramType);
+		immutable deducedType = intern(parser, doir.components.ast.deducedTypeName);
+		ok = deducedType != doir.strings.refused && record(parser, Write(kind: Write.Kind.parameter, target: e, type: TypeRef(deducedType), name: named, other: functionType));
+	} else ok = withType!(t => record(parser, Write(kind: Write.Kind.parameter, target: e, type: t, name: named, other: functionType)))(parser, paramType);
 	if (ok && hasDefault && defaultName != noToken) {
-		immutable value = intern(p, defaultName);
-		ok = value != doir.strings.noName && record(p, write(Write.Kind.defaultName, e, TypeRef.init, value));
+		immutable value = intern(parser, defaultName);
+		ok = value != doir.strings.refused && record(parser, Write(kind: Write.Kind.defaultName, target: e, name: value));
 	} else if (ok && hasDefault) {
-		auto w = write(Write.Kind.defaultValue, e);
-		w.value = defaultConstant.value;
-		ok = record(p, w);
+		auto write = Write(kind: Write.Kind.defaultValue, target: e);
+		write.value = defaultConstant.value;
+		ok = record(parser, write);
 	}
-	if (!ok) return refuse(p);
-	return setSpan(p, e, ftStart, p.tokens[start].start, lastEnd(p, start));
+	if (!ok) return refuse(parser);
+	return setSpan(parser, e, ftStart, parser.tokens[start].start, lastEnd(parser, start));
 }
 
-// FunctionType <- '('_ (parameter (','_ parameter)*)? ')' (_ '->'_ Type)?; while building, its parameters and return type go on `ft`.
-private bool functionType(ref Parser p, EntityId ft, uint ftStart) {
-	if (!at(p, TokenKind.leftParen)) return false;
-	if (!enter(p)) return false;
-	scope(exit) --p.depth;
-	immutable start = p.pos;
-	++p.pos;
-	skip_(p);
-	immutable any = parameter(p, ft, ftStart);
+// FunctionType <- '('_ (parameter (','_ parameter)*)? ')' (_ '->'_ Type)?; while building, its parameters and return type go on `functionType`.
+private bool functionType(ref Parser parser, EntityId functionType, uint ftStart) {
+	if (!currentIs(parser, TokenKind.leftParen)) return false;
+	if (!enter(parser)) return false;
+	scope(exit) --parser.depth;
+	immutable start = parser.pos;
+	++parser.pos;
+	skipBlank(parser);
+	immutable any = parameter(parser, functionType, ftStart);
 	if (any) {
 		for (;;) {
-			immutable save = p.pos;
-			p.where = Where.afterParameter;
-			if (!at(p, TokenKind.comma)) break;
-			++p.pos;
-			skip_(p);
-			if (!parameter(p, ft, ftStart)) {
-				if (p.refused) return false;
-				p.pos = save;
+			immutable save = parser.pos;
+			parser.where = Reading.afterParameter;
+			if (!currentIs(parser, TokenKind.comma)) break;
+			++parser.pos;
+			skipBlank(parser);
+			if (!parameter(parser, functionType, ftStart)) {
+				if (parser.refused) return false;
+				parser.pos = save;
 				break;
 			}
 		}
-	} else if (p.refused) return false;
-	p.where = any ? Where.afterParameter : Where.parameter;
-	if (!at(p, TokenKind.rightParen)) {
-		p.pos = start;
+	} else if (parser.refused) return false;
+	parser.where = any ? Reading.afterParameter : Reading.parameter;
+	if (!currentIs(parser, TokenKind.rightParen)) {
+		parser.pos = start;
 		return false;
 	}
-	++p.pos;
-	immutable save = p.pos;
-	skip_(p);
-	if (at(p, TokenKind.arrow)) {
-		++p.pos;
-		skip_(p);
-		p.where = Where.returnType;
-		auto returned = type(p, ft, ftStart);
+	++parser.pos;
+	immutable save = parser.pos;
+	skipBlank(parser);
+	if (currentIs(parser, TokenKind.arrow)) {
+		++parser.pos;
+		skipBlank(parser);
+		parser.where = Reading.returnType;
+		auto returned = type(parser, functionType, ftStart);
 		if (!returned.isNull) {
-			if (p.build is null || withType!(t => record(p, write(Write.Kind.returnType, ft, t)))(p, returned.get)) return true;
-			return refuse(p);
+			if (parser.description is null || withType!(t => record(parser, Write(kind: Write.Kind.returnType, target: functionType, type: t)))(parser, returned.get)) return true;
+			return refuse(parser);
 		}
-		if (p.refused) return false;
+		if (parser.refused) return false;
 	}
-	p.pos = save;
+	parser.pos = save;
 	return true;
 }
 
@@ -1018,76 +1070,76 @@ private struct ParsedCall {
 }
 
 // function_call <- (('flatten' / 'inline' / 'tail') _)? Identifier _ '('_ (Identifier _ (','_ Identifier _)*)? ')' wsc
-private bool functionCall(ref Parser p, ref ParsedCall out_) {
-	immutable start = p.pos;
-	if (p.tokens[p.pos].kind == TokenKind.keyword) {
-		const word = doir.syntax.lexer.text(p.tokens[p.pos], p.source);
+private bool functionCall(ref Parser parser, ref ParsedCall out_) {
+	immutable start = parser.pos;
+	if (parser.tokens[parser.pos].kind == TokenKind.keyword) {
+		const word = doir.syntax.lexer.text(parser.tokens[parser.pos], parser.source);
 		if (word == "flatten") out_.flags = doir.components.ast.Flags.Flatten;
 		else if (word == "inline") out_.flags = doir.components.ast.Flags.Inline;
 		else if (word == "tail") out_.flags = doir.components.ast.Flags.Tail;
 		if (out_.flags) {
-			++p.pos;
-			skip_(p);
+			++parser.pos;
+			skipBlank(parser);
 		}
-	} else note(p, TokenKind.keyword);
-	if (!at(p, TokenKind.identifier)) { p.pos = start; return false; }
-	out_.callee = cast(uint) p.pos++;
-	skip_(p);
-	if (!at(p, TokenKind.leftParen)) { p.pos = start; return false; }
-	++p.pos;
-	skip_(p);
-	p.where = Where.callArgument;
-	if (at(p, TokenKind.identifier)) {
-		if (!fp.dynarray.pushBack(out_.arguments, cast(uint) p.pos++)) return refuse(p);
-		skip_(p);
+	} else note(parser, TokenKind.keyword);
+	if (!currentIs(parser, TokenKind.identifier)) { parser.pos = start; return false; }
+	out_.callee = cast(uint) parser.pos++;
+	skipBlank(parser);
+	if (!currentIs(parser, TokenKind.leftParen)) { parser.pos = start; return false; }
+	++parser.pos;
+	skipBlank(parser);
+	parser.where = Reading.callArgument;
+	if (currentIs(parser, TokenKind.identifier)) {
+		if (!fp.dynarray.pushBack(out_.arguments, cast(uint) parser.pos++)) return refuse(parser);
+		skipBlank(parser);
 		for (;;) {
-			immutable save = p.pos;
-			if (!at(p, TokenKind.comma)) break;
-			++p.pos;
-			skip_(p);
-			if (!at(p, TokenKind.identifier)) {
-				p.pos = save;
+			immutable save = parser.pos;
+			if (!currentIs(parser, TokenKind.comma)) break;
+			++parser.pos;
+			skipBlank(parser);
+			if (!currentIs(parser, TokenKind.identifier)) {
+				parser.pos = save;
 				break;
 			}
-			if (!fp.dynarray.pushBack(out_.arguments, cast(uint) p.pos++)) return refuse(p);
-			skip_(p);
+			if (!fp.dynarray.pushBack(out_.arguments, cast(uint) parser.pos++)) return refuse(parser);
+			skipBlank(parser);
 		}
 	}
-	if (!at(p, TokenKind.rightParen)) { p.pos = start; return false; }
-	++p.pos;
-	skipWsc(p);
+	if (!currentIs(parser, TokenKind.rightParen)) { parser.pos = start; return false; }
+	++parser.pos;
+	skipTrivia(parser);
 	return true;
 }
 
 // Block <- '{'_ assignment* '}'; while skimming, each failed assignment is reported and skipped.
-private bool block(ref Parser p) {
-	if (!at(p, TokenKind.leftBrace)) return false;
-	if (p.build !is null) {
-		assert(p.pos == p.record.blockOpen);
-		p.pos = p.record.blockClose + 1;
+private bool block(ref Parser parser) {
+	if (!currentIs(parser, TokenKind.leftBrace)) return false;
+	if (parser.description !is null) {
+		assert(parser.pos == parser.record.blockOpen);
+		parser.pos = parser.record.blockClose + 1;
 		return true;
 	}
-	if (!enter(p)) return false;
-	scope(exit) --p.depth;
-	immutable start = p.pos;
-	immutable owner = p.record_;
-	++p.pos;
-	skip_(p);
+	if (!enter(parser)) return false;
+	scope(exit) --parser.depth;
+	immutable start = parser.pos;
+	immutable owner = parser.record_;
+	++parser.pos;
+	skipBlank(parser);
 	for (;;) {
-		immutable t = p.tokens[p.pos].kind;
+		immutable t = parser.tokens[parser.pos].kind;
 		if (t == TokenKind.rightBrace) break;
 		if (t == TokenKind.end) {
-			p.where = Where.block;
-			note(p, TokenKind.rightBrace);
-			p.pos = start;
+			parser.where = Reading.block;
+			note(parser, TokenKind.rightBrace);
+			parser.pos = start;
 			return false;
 		}
-		statement(p);
-		if (p.refused) return false;
+		statement(parser);
+		if (parser.refused) return false;
 	}
-	p.syntax.records[owner].blockOpen = cast(uint) start;
-	p.syntax.records[owner].blockClose = cast(uint) p.pos;
-	++p.pos;
+	parser.syntax.records[owner].blockOpen = cast(uint) start;
+	parser.syntax.records[owner].blockClose = cast(uint) parser.pos;
+	++parser.pos;
 	return true;
 }
 
@@ -1095,25 +1147,27 @@ private bool block(ref Parser p) {
 private enum Value : ubyte { none, constant, block, call, reference, functionType }
 
 // change_language <- 'language' _ '"' StringChar* '"'_ matching_braces _
-private bool changeLanguage(ref Parser p) {
-	immutable start = p.pos;
-	++p.pos;
-	skip_(p);
-	p.where = Where.language;
-	if (!at(p, TokenKind.string_)) { p.pos = start; return false; }
-	immutable name = cast(uint) p.pos++;
-	skip_(p);
-	if (!at(p, TokenKind.languageBody)) { p.pos = start; return false; }
-	++p.pos;
-	skip_(p);
-	error(p, SyntaxError.Kind.language, p.tokens[start].start, name);
+private bool changeLanguage(ref Parser parser) {
+	immutable start = parser.pos;
+	++parser.pos;
+	skipBlank(parser);
+	parser.where = Reading.language;
+	if (!currentIs(parser, TokenKind.string_)) { parser.pos = start; return false; }
+	immutable name = cast(uint) parser.pos++;
+	skipBlank(parser);
+	if (!currentIs(parser, TokenKind.languageBody)) { parser.pos = start; return false; }
+	++parser.pos;
+	skipBlank(parser);
+	error(parser, SyntaxError.Kind.language, parser.tokens[start].start, name);
 	return true;
 }
 
-/// Where a `Record.hash` starts, before `hashLevel` mixes in its tokens.
+/// Where a `Record.hash` starts, before `hashTokens` mixes in its tokens.
 enum ulong hashStart = 0xcbf29ce484222325;
 
-/// Mixes into `h` tokens `from` to `to` of `syntax`, skimmed from `source`, as a `Record.hash` covers them: each record from `child` on whose first token it reaches, and those after it at its level, is one placeholder, its terminator included; trivia, newlines and semicolons are left out. A hash split across several skims, as a commit that chunks a block's contents makes it, carries `h` from one to the next. It cannot fail.
+/// Mixes into `h` tokens `from` to `to` of `syntax`, skimmed from `source`, as a `Record.hash` covers them: each record from `child` on whose first token it reaches, and those after it at its level, is one placeholder, its terminator included; trivia, newlines and semicolons are left out.
+/// A hash split across several skims, as a commit that chunks a block's contents makes it, carries `h` from one to the next.
+/// It cannot fail.
 ///
 /// Examples:
 /// ---
@@ -1121,277 +1175,286 @@ enum ulong hashStart = 0xcbf29ce484222325;
 /// scope(exit) free(syntax);
 /// assert(skim("ns : namespace = {\n\tx : T\n}\n", syntax));
 /// immutable r = syntax.records[0];
-/// assert(hashLevel(hashStart, syntax, "ns : namespace = {\n\tx : T\n}\n", r.first, r.terminator, 1) == r.hash);
+/// assert(hashTokens(hashStart, syntax, "ns : namespace = {\n\tx : T\n}\n", r.first, r.terminator, 1) == r.hash);
 /// ---
-ulong hashLevel(ulong h, ref const Syntax syntax, const(char)[] source, size_t from, size_t to, size_t child = noToken) {
+ulong hashTokens(ulong h, ref const Syntax syntax, const(char)[] source, size_t from, size_t to, size_t child = noToken) {
 	auto records = fp.dynarray.slice(syntax.records);
 	size_t t = from;
 	while (t < to) {
 		if (child < records.length && t == records[child].first) {
-			h = fp.hash.mix(h, 0x9e3779b97f4a7c15);
+			h = fp.algorithms.combine(h, 0x9e3779b97f4a7c15);
 			t = records[child].terminator + 1;
 			child = records[child].end;
 			continue;
 		}
 		immutable token = syntax.tokens[t++];
 		if (doir.syntax.lexer.isTrivia(token.kind) || token.kind == TokenKind.newline || token.kind == TokenKind.semicolon) continue;
-		h = fp.hash.mix(h, token.kind);
-		h = fp.hash.mix(h, fp.hash.murmur(cast(const(ubyte)[]) doir.syntax.lexer.text(token, source)));
+		h = fp.algorithms.combine(h, token.kind);
+		h = fp.algorithms.combine(h, fp.algorithms.hashBytes(cast(const(ubyte)[]) doir.syntax.lexer.text(token, source)));
 	}
 	return h;
 }
 
-// The hash of record `r`: its non-trivia tokens, each nested record a placeholder, the terminator left out.
-private ulong hashOf(ref Parser p, size_t r) {
-	auto records = p.syntax.records;
-	return hashLevel(hashStart, *p.syntax, p.source, records[r].first, records[r].terminator, r + 1 < records[r].end ? r + 1 : noToken);
+// A SourceInfo token's parts: its file, first and last line and column, and whether a number needs more than 64 bits.
+private struct AnnotationText {
+	const(char)[] file;
+	ulong[4] values;
+	bool overflow;
 }
 
-// SourceInfo's location, its file name interned. Null if interning is refused.
-private std.typecons.Nullable!(diagnose.Detailed) annotation(ref Parser p, size_t token) {
-	auto s = doir.syntax.lexer.text(p.tokens[token], p.source);
+// Reads SourceInfo token `s`, which the lexer has matched.
+private AnnotationText readAnnotation(const(char)[] s) {
+	AnnotationText read;
 	size_t i = 1;
-	const(char)[] file;
 	// As the lexer decided: the quoted form only if the first quote after `<"` is followed by `:`.
-	immutable quote = s[1] == '"' ? fp.string.find(s, "\"", 2) : size_t.max;
-	if (quote != size_t.max && quote + 1 < s.length && s[quote + 1] == ':') {
-		immutable close = quote;
-		file = s[2 .. close];
-		i = close + 2;
+	immutable quote = s[1] == '"' ? fp.string.find(s, "\"", 2) : fp.pointer.notFound;
+	if (quote != fp.pointer.notFound && quote + 1 < s.length && s[quote + 1] == ':') {
+		read.file = s[2 .. quote];
+		i = quote + 2;
 	} else {
 		immutable colon = fp.string.find(s, ":", 1);
-		file = s[1 .. colon];
+		read.file = s[1 .. colon];
 		i = colon + 1;
 	}
-	ulong[4] values;
-	bool[2] ranged;
 	foreach (part; 0 .. 2) {
-		immutable first = doir.syntax.lexer.integerAt(s, i);
-		bool overflow;
-		values[part * 2] = integerValue(s[i .. first], overflow);
+		immutable first = doir.syntax.lexer.integerEnd(s, i);
+		bool overflow; // `integerValue` clears it, so each number's is gathered into `read`
+		read.values[part * 2] = integerValue(s[i .. first], overflow);
+		read.overflow |= overflow;
 		i = first;
-		values[part * 2 + 1] = values[part * 2];
+		read.values[part * 2 + 1] = read.values[part * 2];
 		if (s[i] == '-') {
-			immutable second = doir.syntax.lexer.integerAt(s, i + 1);
-			if (second != size_t.max) {
-				values[part * 2 + 1] = integerValue(s[i + 1 .. second], overflow);
+			immutable second = doir.syntax.lexer.integerEnd(s, i + 1);
+			if (second != fp.pointer.notFound) {
+				read.values[part * 2 + 1] = integerValue(s[i + 1 .. second], overflow);
+				read.overflow |= overflow;
 				i = second;
 			}
 		}
 		++i;
 	}
-	immutable name = intern(p, file);
-	if (name == doir.strings.noName) return typeof(return).init;
-	return typeof(return)(diagnose.Detailed(doir.strings.text(*p.strings, name),
-		diagnose.Pair(cast(size_t) values[0], cast(size_t) values[2]), diagnose.Pair(cast(size_t) values[1], cast(size_t) values[3])));
+	return read;
+}
+
+// SourceInfo's location, its file name interned. Null if interning is refused.
+private std.typecons.Nullable!(diagnose.LineColumnRange) annotation(ref Parser parser, size_t token) {
+	const read = readAnnotation(doir.syntax.lexer.text(parser.tokens[token], parser.source));
+	immutable name = intern(parser, read.file);
+	if (name == doir.strings.refused) return typeof(return).init;
+	return typeof(return)(diagnose.LineColumnRange(doir.strings.text(*parser.strings, name),
+		diagnose.LineColumn(cast(size_t) read.values[0], cast(size_t) read.values[2]), diagnose.LineColumn(cast(size_t) read.values[1], cast(size_t) read.values[3])));
 }
 
 // assignment <- change_language / ('export' _)? Identifier _ ':'_ Type wsc (_ '='_ assignment_value)? (SourceInfo wsc)? Terminator _
 // assignment_value <- Constant wsc / Block wsc / function_call / Identifier wsc / Type wsc
-private bool assignment(ref Parser p) {
-	immutable start = p.pos;
-	p.where = Where.declaration;
-	if (atWord(p, TokenKind.keyword, "language")) return changeLanguage(p);
-	immutable outerDeclaration = p.declaration;
-	p.declaration = cast(uint) start;
-	scope(exit) p.declaration = outerDeclaration;
+private bool assignment(ref Parser parser) {
+	immutable start = parser.pos;
+	parser.where = Reading.declaration;
+	if (atWord(parser, TokenKind.keyword, "language")) return changeLanguage(parser);
+	immutable outerDeclaration = parser.declaration;
+	parser.declaration = cast(uint) start;
+	scope(exit) parser.declaration = outerDeclaration;
 
 	// While skimming, the record is reserved first so it precedes its nested ones.
-	immutable outer = p.record_;
-	immutable r = p.syntax is null ? 0 : cast(uint) fp.dynarray.length(p.syntax.records);
-	if (p.syntax !is null) {
-		if (!fp.dynarray.pushBack(p.syntax.records, Record.init)) return refuse(p);
-		p.record_ = r;
+	immutable outer = parser.record_;
+	immutable r = parser.syntax is null ? 0 : cast(uint) fp.dynarray.length(parser.syntax.records);
+	if (parser.syntax !is null) {
+		if (!fp.dynarray.pushBack(parser.syntax.records, Record.init)) return refuse(parser);
+		parser.record_ = r;
 	}
-	scope(exit) p.record_ = outer;
+	scope(exit) parser.record_ = outer;
 	bool fail() {
-		p.pos = start;
-		if (p.syntax !is null) cast(void) fp.dynarray.popBackCount(p.syntax.records, fp.dynarray.length(p.syntax.records) - r);
+		parser.pos = start;
+		if (parser.syntax !is null) cast(void) fp.dynarray.removeLast(parser.syntax.records, fp.dynarray.length(parser.syntax.records) - r);
 		return false;
 	}
 
-	immutable e = p.build is null ? invalidEntity : declarationRef;
-	immutable declStart = p.tokens[start].start;
+	immutable e = parser.description is null ? invalidEntity : declarationRef;
+	immutable declStart = parser.tokens[start].start;
 	bool exported = false;
-	if (atWord(p, TokenKind.keyword, "export")) {
-		++p.pos;
-		skip_(p);
+	if (atWord(parser, TokenKind.keyword, "export")) {
+		++parser.pos;
+		skipBlank(parser);
 		exported = true;
 	}
-	if (!at(p, TokenKind.identifier)) return fail();
-	immutable name = cast(uint) p.pos++;
-	skip_(p);
-	p.where = Where.colon;
-	if (!at(p, TokenKind.colon)) return fail();
-	++p.pos;
-	skip_(p);
-	p.where = Where.type;
-	auto parsedType = type(p, e, declStart);
-	if (parsedType.isNull) return p.refused ? false : fail();
+	if (!currentIs(parser, TokenKind.identifier)) return fail();
+	immutable name = cast(uint) parser.pos++;
+	skipBlank(parser);
+	parser.where = Reading.colon;
+	if (!currentIs(parser, TokenKind.colon)) return fail();
+	++parser.pos;
+	skipBlank(parser);
+	parser.where = Reading.type;
+	auto parsedType = type(parser, e, declStart);
+	if (parsedType.isNull) return parser.refused ? false : fail();
 	immutable declared = parsedType.get;
-	skipWsc(p);
+	skipTrivia(parser);
 
 	Value value = Value.none;
 	ParsedConstant constantValue;
 	ParsedCall call;
 	scope(exit) fp.dynarray.free(call.arguments);
 	uint reference = noToken;
-	immutable beforeValue = p.pos;
-	skip_(p);
-	p.where = Where.afterType;
-	if (at(p, TokenKind.equals)) {
-		++p.pos;
-		skip_(p);
-		p.where = Where.value;
-		auto parsedConstant = constant(p);
+	immutable beforeValue = parser.pos;
+	skipBlank(parser);
+	parser.where = Reading.afterType;
+	if (currentIs(parser, TokenKind.equals)) {
+		++parser.pos;
+		skipBlank(parser);
+		parser.where = Reading.value;
+		auto parsedConstant = constant(parser);
 		if (!parsedConstant.isNull) {
 			constantValue = parsedConstant.get;
 			value = Value.constant;
-		} else if (block(p)) value = Value.block;
-		else if (functionCall(p, call)) value = Value.call;
-		else if (at(p, TokenKind.identifier)) {
-			reference = cast(uint) p.pos++;
+		} else if (block(parser)) value = Value.block;
+		else if (functionCall(parser, call)) value = Value.call;
+		else if (currentIs(parser, TokenKind.identifier)) {
+			reference = cast(uint) parser.pos++;
 			value = Value.reference;
-		} else if (p.tokens[p.pos].kind == TokenKind.leftParen) {
-			if (p.build is null) {
-				if (functionType(p, invalidEntity, 0)) value = Value.functionType;
-			} else if (validates!(q => functionType(q, invalidEntity, 0))(p)) {
-				if (!withType!(t => record(p, write(Write.Kind.functionType, e, t)))(p, declared)) return refuse(p);
-				if (!functionType(p, e, declStart)) {
-					assert(p.refused, "doir.parser: a validated function type did not build");
+		} else if (parser.tokens[parser.pos].kind == TokenKind.leftParen) {
+			if (parser.description is null) {
+				if (functionType(parser, invalidEntity, 0)) value = Value.functionType;
+			} else if (validates!(q => functionType(q, invalidEntity, 0))(parser)) {
+				if (!withType!(t => record(parser, Write(kind: Write.Kind.functionType, target: e, type: t)))(parser, declared)) return refuse(parser);
+				if (!functionType(parser, e, declStart)) {
+					assert(parser.refused, "doir.parser: a validated function type did not build");
 					return false;
 				}
 				value = Value.functionType;
 			}
 		}
-		if (p.refused) return false;
-		if (value == Value.none) p.pos = beforeValue;
-		else if (value != Value.call) skipWsc(p);
-	} else p.pos = beforeValue;
-	p.where = value == Value.none ? Where.afterType : Where.afterValue;
+		if (parser.refused) return false;
+		if (value == Value.none) parser.pos = beforeValue;
+		else if (value != Value.call) skipTrivia(parser);
+	} else parser.pos = beforeValue;
+	parser.where = value == Value.none ? Reading.afterType : Reading.afterValue;
 
 	uint info = noToken;
-	if (at(p, TokenKind.sourceInfo)) {
-		info = cast(uint) p.pos++;
-		skipWsc(p);
+	if (currentIs(parser, TokenKind.sourceInfo)) {
+		info = cast(uint) parser.pos++;
+		skipTrivia(parser);
 	}
-	immutable terminatorKind = p.tokens[p.pos].kind;
+	immutable terminatorKind = parser.tokens[parser.pos].kind;
 	if (terminatorKind != TokenKind.newline && terminatorKind != TokenKind.semicolon && terminatorKind != TokenKind.end) {
-		note(p, TokenKind.newline);
+		note(parser, TokenKind.newline);
 		return fail();
 	}
-	immutable terminator = cast(uint) p.pos;
-	immutable spanEnd = lastEnd(p, start);
-	if (terminatorKind != TokenKind.end) ++p.pos;
-	skip_(p);
+	immutable terminator = cast(uint) parser.pos;
+	immutable spanEnd = lastEnd(parser, start);
+	if (terminatorKind != TokenKind.end) ++parser.pos;
+	skipBlank(parser);
 
-	if (p.syntax !is null) {
-		auto record = &p.syntax.records[r];
+	if (parser.syntax !is null) {
+		if (info != noToken && readAnnotation(doir.syntax.lexer.text(parser.tokens[info], parser.source)).overflow)
+			error(parser, SyntaxError.Kind.literal, parser.tokens[info].start, info, "AT-Source: a source annotation's lines and columns must fit in 64 bits", "write the line and column where the declaration is in its file");
+		auto record = &parser.syntax.records[r];
 		record.first = cast(uint) start;
 		record.terminator = terminator;
-		record.end = cast(uint) fp.dynarray.length(p.syntax.records);
-		record.name = doir.syntax.lexer.text(p.tokens[name], p.source) == "_" ? noToken : name;
+		record.end = cast(uint) fp.dynarray.length(parser.syntax.records);
+		record.name = doir.syntax.lexer.text(parser.tokens[name], parser.source) == "_" ? unnamed : name;
 		record.spanStart = declStart;
 		record.spanEnd = spanEnd;
-		record.hash = hashOf(p, r);
+		record.hash = hashTokens(hashStart, *parser.syntax, parser.source, record.first, record.terminator, r + 1 < record.end ? r + 1 : noToken);
 	}
-	if (p.build is null) return true;
+	if (parser.description is null) return true;
 
 	bool ok = true;
 	final switch (value) {
 		case Value.none:
-			ok = withType!(t => record(p, write(Write.Kind.valueless, e, t)))(p, declared);
+			ok = withType!(t => record(parser, Write(kind: Write.Kind.valueless, target: e, type: t)))(parser, declared);
 			break;
 		case Value.constant:
 			ok = withType!((t) {
-				auto w = write(Write.Kind.constant, e, t);
-				w.value = constantValue.value;
-				return record(p, w);
-			})(p, declared);
+				auto write = Write(kind: Write.Kind.constant, target: e, type: t);
+				write.value = constantValue.value;
+				return record(parser, write);
+			})(parser, declared);
 			break;
 		case Value.block:
-			if (isName(p, declared, "namespace")) ok = record(p, write(Write.Kind.namespace, e));
-			else if (isName(p, declared, "type")) ok = withType!(t => record(p, write(Write.Kind.aggregate, e, t)))(p, declared);
-			else ok = withType!(t => record(p, write(Write.Kind.block, e, t)))(p, declared);
+			if (isName(parser, declared, "namespace")) ok = record(parser, Write(kind: Write.Kind.namespace, target: e));
+			else if (isName(parser, declared, "type")) ok = withType!(t => record(parser, Write(kind: Write.Kind.aggregate, target: e, type: t)))(parser, declared);
+			else ok = withType!(t => record(parser, Write(kind: Write.Kind.block, target: e, type: t)))(parser, declared);
 			break;
 		case Value.call:
-			immutable from = cast(uint) fp.dynarray.length(p.build.arguments);
+			immutable from = cast(uint) fp.dynarray.length(parser.description.arguments);
 			foreach (a; fp.dynarray.slice(call.arguments)) {
-				immutable argument = intern(p, a);
-				if (argument == doir.strings.noName || !fp.dynarray.pushBack(p.build.arguments, argument)) return refuse(p);
+				immutable argument = intern(parser, a);
+				if (argument == doir.strings.refused || !fp.dynarray.pushBack(parser.description.arguments, argument)) return refuse(parser);
 			}
-			immutable callee = intern(p, call.callee);
-			if (callee == doir.strings.noName) return false;
+			immutable callee = intern(parser, call.callee);
+			if (callee == doir.strings.refused) return false;
 			ok = withType!((t) {
-				auto w = write(Write.Kind.call, e, t, callee);
-				w.from = from;
-				w.count = cast(uint) (fp.dynarray.length(p.build.arguments) - from);
-				return record(p, w);
-			})(p, declared);
+				auto write = Write(kind: Write.Kind.call, target: e, type: t, name: callee);
+				write.from = from;
+				write.count = cast(uint) (fp.dynarray.length(parser.description.arguments) - from);
+				return record(parser, write);
+			})(parser, declared);
 			if (ok && call.flags) {
-				auto w = write(Write.Kind.flags, e);
-				w.flags = call.flags;
-				ok = record(p, w);
+				auto write = Write(kind: Write.Kind.flags, target: e);
+				write.flags = call.flags;
+				ok = record(parser, write);
 			}
 			break;
 		case Value.reference:
-			immutable target = intern(p, reference);
-			if (target == doir.strings.noName) return false;
-			if (isName(p, declared, "alias")) ok = record(p, write(Write.Kind.alias_, e, TypeRef.init, target));
-			else ok = withType!(t => record(p, write(Write.Kind.reference, e, t, target)))(p, declared);
+			immutable target = intern(parser, reference);
+			if (target == doir.strings.refused) return false;
+			if (isName(parser, declared, "alias")) ok = record(parser, Write(kind: Write.Kind.alias_, target: e, name: target));
+			else ok = withType!(t => record(parser, Write(kind: Write.Kind.reference, target: e, type: t, name: target)))(parser, declared);
 			break;
 		case Value.functionType:
 			break;
 	}
 	if (ok && exported) {
-		auto w = write(Write.Kind.flags, e);
-		w.flags = doir.components.ast.Flags.Export;
-		ok = record(p, w);
+		auto write = Write(kind: Write.Kind.flags, target: e);
+		write.flags = doir.components.ast.Flags.Export;
+		ok = record(parser, write);
 	}
-	if (!ok) return refuse(p);
+	if (!ok) return refuse(parser);
 	if (info != noToken) {
-		auto location = annotation(p, info);
+		auto location = annotation(parser, info);
 		if (location.isNull) return false;
-		p.build.annotation = location.get;
-		p.build.annotated = true;
+		parser.description.annotation = location.get;
+		parser.description.annotated = true;
 	}
 	return true;
 }
 
 // One assignment; while skimming, a failed one is reported and skipped to the next terminator at its brace depth, or its block's end.
-private void statement(ref Parser p) {
-	immutable start = p.pos;
-	p.failed = false;
-	p.tooDeep = false;
-	if (assignment(p) || p.refused) return;
+private void statement(ref Parser parser) {
+	immutable start = parser.pos;
+	parser.failed = false;
+	parser.tooDeep = false;
+	if (assignment(parser) || parser.refused) return;
 	// A block that fails where a statement inside it already did adds what it expected there to that error rather than repeating it.
-	auto last = p.syntax is null || fp.dynarray.length(p.syntax.errors) == 0 ? null : fp.dynarray.back(p.syntax.errors);
-	if (p.tooDeep) error(p, SyntaxError.Kind.nesting, p.tokens[start].start, cast(uint) start);
-	else if (last !is null && last.kind == SyntaxError.Kind.syntax && last.token == p.furthestToken) last.expected |= p.expected;
-	else error(p, SyntaxError.Kind.syntax, p.furthest, p.furthestToken, null, null, p.expected);
+	auto last = parser.syntax is null || fp.dynarray.length(parser.syntax.errors) == 0 ? null : fp.dynarray.back(parser.syntax.errors);
+	if (parser.tooDeep) error(parser, SyntaxError.Kind.nesting, parser.tokens[start].start, cast(uint) start);
+	else if (last !is null && last.kind == SyntaxError.Kind.syntax && last.token == parser.furthestToken) last.expected |= parser.expected;
+	else error(parser, SyntaxError.Kind.syntax, parser.furthest, parser.furthestToken, null, null, parser.expected);
 
 	size_t depth = 0;
 	for (;;) {
-		immutable t = p.tokens[p.pos].kind;
+		immutable t = parser.tokens[parser.pos].kind;
 		if (t == TokenKind.end) break;
 		if (t == TokenKind.leftBrace) ++depth;
 		else if (t == TokenKind.rightBrace) {
 			if (depth == 0) break;
 			--depth;
 		} else if ((t == TokenKind.newline || t == TokenKind.semicolon) && depth == 0) {
-			++p.pos;
+			++parser.pos;
 			break;
 		}
-		++p.pos;
+		++parser.pos;
 	}
-	if (p.pos == start && p.tokens[p.pos].kind != TokenKind.end) ++p.pos;
-	skip_(p);
+	if (parser.pos == start && parser.tokens[parser.pos].kind != TokenKind.end) ++parser.pos;
+	skipBlank(parser);
 }
 
 
 // --- entry points ------------------------------------------------------------
 
-/// Lexes and parses `source` into `out_`, which must be empty: a record for every declaration that parses, in preorder, and the syntax errors in the rest, each failed declaration skipped to the next terminator at its brace depth so its siblings still parse. Reads nothing but `source`. `depth` is how many blocks enclose `source`, when it is one declaration cut from a file, so `maxNesting` counts them.
+/// Lexes and parses `source` into `out_`, which must be empty: a record for every declaration that parses, in preorder, and the syntax errors in the rest, each failed declaration skipped to the next terminator at its brace depth so its siblings still parse.
+/// Reads nothing but `source`.
+/// `depth` is how many blocks enclose `source`, when it is one declaration cut from a file, so `maxNesting` counts them.
 ///
 /// Returns false if allocation fails, leaving `out_` empty.
 ///
@@ -1407,20 +1470,21 @@ bool skim(const(char)[] source, ref Syntax out_, uint depth = 0) {
 	assert(out_.tokens is null && out_.records is null && out_.errors is null);
 	out_.tokens = doir.syntax.lexer.lex(source);
 	if (out_.tokens is null) return false;
-	Parser p;
-	p.source = source;
-	p.tokens = fp.dynarray.slice(out_.tokens);
-	p.syntax = &out_;
-	p.record_ = uint.max;
-	p.depth = depth;
-	skip_(p);
-	while (!p.refused && p.tokens[p.pos].kind != TokenKind.end) statement(p);
-	if (!p.refused) return true;
+	Parser parser;
+	parser.source = source;
+	parser.tokens = fp.dynarray.slice(out_.tokens);
+	parser.syntax = &out_;
+	parser.record_ = uint.max;
+	parser.depth = depth;
+	skipBlank(parser);
+	while (!parser.refused && parser.tokens[parser.pos].kind != TokenKind.end) statement(parser);
+	if (!parser.refused) return true;
 	free(out_);
 	return false;
 }
 
-/// Records what `build` would write for record `r` of `syntax`, skimmed from `source`, into `out_`, which must be empty: its type, value, flags, parts and their spans, but not its `Name`, `Parent`, span or nested declarations, which the commit writes. It reads no store and interns names in `strings`, which any thread may do at once, so workers can describe a commit's declarations while it writes the store.
+/// Records what `build` would write for record `r` of `syntax`, skimmed from `source`, into `out_`, which must be empty: its type, value, flags, parts and their spans, but not its `Name`, `Parent`, span or nested declarations, which the commit writes.
+/// It reads no store and interns names in `strings`, which any thread may do at once, so workers can describe a commit's declarations while it writes the store.
 ///
 /// Returns false if allocation fails, leaving `out_` partly recorded for the caller to free.
 ///
@@ -1440,16 +1504,16 @@ bool skim(const(char)[] source, ref Syntax out_, uint depth = 0) {
 /// assert(d.parts == 2 && d.writes[0].kind == Write.Kind.inPlaceFunctionType); // the function type and its parameter
 /// ---
 bool describe(ref const Syntax syntax, const(char)[] source, size_t r, ref doir.strings.Strings strings, ref Description out_) {
-	version(unittest) core.atomic.atomicOp!"+="(*cast(shared(size_t)*) &builds, 1);
-	Parser p;
-	p.source = source;
-	p.tokens = fp.dynarray.slice(syntax.tokens);
-	p.build = &out_;
-	p.strings = &strings;
-	p.record = &syntax.records[r];
-	p.pos = syntax.records[r].first;
-	if (assignment(p)) return true;
-	assert(p.refused, "doir.parser: a skimmed record did not describe");
+	version(unittest) core.atomic.atomicOp!"+="(bc.platform.asShared(builds), 1);
+	Parser parser;
+	parser.source = source;
+	parser.tokens = fp.dynarray.slice(syntax.tokens);
+	parser.description = &out_;
+	parser.strings = &strings;
+	parser.record = &syntax.records[r];
+	parser.pos = syntax.records[r].first;
+	if (assignment(parser)) return true;
+	assert(parser.refused, "doir.parser: a skimmed record did not describe");
 	return false;
 }
 
@@ -1458,7 +1522,8 @@ private bool withRef(alias f)(TypeRef type, const(EntityId)[] parts) {
 	return type.part == invalidEntity ? f(type.name) : f(parts[type.part - firstPart]);
 }
 
-/// Writes `d` into `builder.declaration` through `doir.builders`, making or reusing its parts as `build` does. It must run where the store may be changed, and may not run on several threads at once.
+/// Writes `d` into `builder.declaration` through `doir.builders`, making or reusing its parts as `build` does.
+/// It must run where the store may be changed, and may not run on several threads at once.
 ///
 /// Returns false if allocation fails, leaving the declaration and `builder.parts` partly built; the parts taken so far are still listed there.
 ///
@@ -1498,29 +1563,29 @@ bool apply(ref const Description d, ref Builder builder) @trusted {
 	EntityId entity(EntityId named) {
 		return named == declarationRef ? builder.declaration : parts[named - firstPart];
 	}
-	foreach (w; fp.dynarray.slice(d.writes)) {
-		immutable e = entity(w.target);
+	foreach (write; fp.dynarray.slice(d.writes)) {
+		immutable e = entity(write.target);
 		bool ok;
-		final switch (w.kind) with (Write.Kind) {
+		final switch (write.kind) with (Write.Kind) {
 			case span:
 				// Set rather than written in place: a reused part keeps its span, and the commit's transaction must be able to restore it.
-				ok = ecrs.context.setComponent!(doir.components.source.SourceSpan)(*store, e, doir.components.source.SourceSpan(w.from, w.count));
+				ok = ecrs.context.setComponent!(doir.components.source.SourceSpan)(*store, e, doir.components.source.SourceSpan(write.from, write.count));
 				break;
-			case inPlaceFunctionType: ok = withRef!(t => doir.builders.attachInPlaceFunctionType(*store, e, entity(w.other), t))(w.type, parts); break;
-			case parameter: ok = withRef!(t => doir.builders.attachParameter(*store, e, entity(w.other), w.name, t))(w.type, parts); break;
-			case defaultValue: ok = doir.builders.setDefault(*store, e, w.value); break;
-			case defaultName: ok = doir.builders.setDefault(*store, e, w.name); break;
-			case returnType: ok = withRef!(t => doir.builders.setReturnType(*store, e, t))(w.type, parts); break;
-			case functionType: ok = withRef!(t => doir.builders.attachFunctionType(*store, e, t))(w.type, parts); break;
-			case valueless: ok = withRef!(t => doir.builders.attachValueless(*store, e, t))(w.type, parts); break;
-			case constant: ok = withRef!(t => doir.builders.attachConstant(*store, e, t, w.value))(w.type, parts); break;
+			case inPlaceFunctionType: ok = withRef!(t => doir.builders.attachInPlaceFunctionType(*store, e, entity(write.other), t))(write.type, parts); break;
+			case parameter: ok = withRef!(t => doir.builders.attachParameter(*store, e, entity(write.other), write.name, t))(write.type, parts); break;
+			case defaultValue: ok = doir.builders.setDefault(*store, e, write.value); break;
+			case defaultName: ok = doir.builders.setDefault(*store, e, write.name); break;
+			case returnType: ok = withRef!(t => doir.builders.setReturnType(*store, e, t))(write.type, parts); break;
+			case functionType: ok = withRef!(t => doir.builders.attachFunctionType(*store, e, t))(write.type, parts); break;
+			case valueless: ok = withRef!(t => doir.builders.attachValueless(*store, e, t))(write.type, parts); break;
+			case constant: ok = withRef!(t => doir.builders.attachConstant(*store, e, t, write.value))(write.type, parts); break;
 			case namespace: ok = doir.builders.attachNamespace(*store, e).block != invalidEntity; break;
-			case aggregate: ok = withRef!(t => doir.builders.attachAggregate(*store, e, t).block != invalidEntity)(w.type, parts); break;
-			case block: ok = withRef!(t => doir.builders.attachBlock(*store, e, t).block != invalidEntity)(w.type, parts); break;
-			case call: ok = withRef!(t => doir.builders.attachCall(*store, e, t, w.name, d.arguments[w.from .. w.from + w.count]))(w.type, parts); break;
-			case alias_: ok = doir.builders.attachAlias(*store, e, w.name); break;
-			case reference: ok = withRef!(t => doir.builders.attachReference(*store, e, t, w.name))(w.type, parts); break;
-			case flags: ok = doir.builders.addFlags(*store, e, w.flags); break;
+			case aggregate: ok = withRef!(t => doir.builders.attachAggregate(*store, e, t).block != invalidEntity)(write.type, parts); break;
+			case block: ok = withRef!(t => doir.builders.attachBlock(*store, e, t).block != invalidEntity)(write.type, parts); break;
+			case call: ok = withRef!(t => doir.builders.attachCall(*store, e, t, write.name, d.arguments[write.from .. write.from + write.count]))(write.type, parts); break;
+			case alias_: ok = ecrs.context.setComponent!(doir.components.ast.LookupAlias)(*store, e, doir.components.ast.LookupAlias(write.name)); break;
+			case reference: ok = withRef!(t => doir.builders.attachReference(*store, e, t, write.name))(write.type, parts); break;
+			case flags: ok = doir.builders.addFlags(*store, e, write.flags); break;
 		}
 		if (!ok) return false;
 	}
@@ -1529,7 +1594,8 @@ bool apply(ref const Description d, ref Builder builder) @trusted {
 	return true;
 }
 
-/// Writes record `r` of `syntax`, skimmed from `source`, into `builder.declaration` through `doir.builders`: `describe`, then `apply`. Parts reuse `builder.reuse` in order before new entities are made; each gets its `SourceSpan`.
+/// Writes record `r` of `syntax`, skimmed from `source`, into `builder.declaration` through `doir.builders`: `describe`, then `apply`.
+/// Parts reuse `builder.reuse` in order before new entities are made; each gets its `SourceSpan`.
 ///
 /// Returns false if allocation fails, leaving the declaration and `builder.parts` partly built; the parts taken so far are still listed there.
 ///
@@ -1559,7 +1625,8 @@ bool build(ref const Syntax syntax, const(char)[] source, size_t r, ref Builder 
 	return describe(syntax, source, r, *builder.strings, d) && apply(d, builder);
 }
 
-/// The components `build` writes, which a rebuild removes first. `Name` and `Parent` are among them, written by the builders on parts and by the commit on declarations.
+/// The components `build` writes, which a rebuild removes first.
+/// `Name` and `Parent` are among them, written by the builders on parts and by the commit on declarations.
 alias ParsedComponents = imported!"std.meta".AliasSeq!(doir.components.ast.Name, doir.components.ast.Parent, doir.components.ast.Block, doir.components.ast.TypeOf, doir.components.ast.TypeDefinition, doir.components.ast.FunctionInputs, doir.components.ast.FunctionReturn, doir.components.ast.ConstantVal, doir.components.ast.Flags, doir.components.ast.LookupTypeOf, doir.components.ast.LookupFunctionReturn, doir.components.ast.LookupCall, doir.components.ast.LookupFunctionInputs, doir.components.ast.LookupAlias, doir.components.ast.LookupValue, doir.components.source.SourceAnnotation);
 
 /// Removes every component the parse wrote on `e`, leaving what queries produced on it.
@@ -1623,9 +1690,9 @@ version(unittest) {
 			b.store = ecrs.context.create();
 			assert(skim(source, b.syntax));
 			b.builder = Builder(&b.store, &b.strings, ecrs.context.addEntity(b.store));
-			auto allocator = fp.testing.beginRationedAllocator(budget);
+			auto allocator = fp.testing.limitAllocations(budget);
 			immutable built = build(b.syntax, source, 0, b.builder);
-			fp.testing.endRationedAllocator(allocator);
+			fp.testing.restoreAllocator(allocator);
 			if (!built) continue;
 			assert(fp.dynarray.length(b.builder.parts) == fp.dynarray.length(whole.builder.parts));
 			assert(b.builder.annotated == whole.builder.annotated);
@@ -1644,7 +1711,7 @@ unittest { // skimming: records in preorder, hashes that ignore trivia, and reco
 	assert(fp.dynarray.length(a.records) == 4 && a.records[0].end == 3 && a.records[3].end == 4);
 	assert(a.records[0].hash == b.records[0].hash && a.records[1].hash != b.records[1].hash);
 	assert(a.records[2].hash == b.records[2].hash && a.records[3].hash == b.records[3].hash);
-	assert(a.records[2].name != noToken && a.records[0].blockOpen != noToken);
+	assert(a.records[2].name != unnamed && a.records[0].blockOpen != noBlock);
 
 	// The span covers the declaration's text, and not its terminator.
 	immutable source = "x : T = 5 ; # c\n_ : _ = std.return(x) <f:1:2>\n";
@@ -1653,7 +1720,7 @@ unittest { // skimming: records in preorder, hashes that ignore trivia, and reco
 	assert(skim(source, c) && fp.dynarray.length(c.records) == 2);
 	assert(source[c.records[0].spanStart .. c.records[0].spanEnd] == "x : T = 5");
 	assert(source[c.records[1].spanStart .. c.records[1].spanEnd] == "_ : _ = std.return(x) <f:1:2>");
-	assert(c.records[1].name == noToken);
+	assert(c.records[1].name == unnamed);
 
 	// Newlines: one ends a declaration after its type or value, not before `=`, `->` or inside `(...)`.
 	Syntax d;
@@ -1688,12 +1755,34 @@ unittest { // skimming: records in preorder, hashes that ignore trivia, and reco
 	assert(fp.string.slice(message) == "I-Language: no frontend is registered for language \"c\"");
 	char* literal = describe(g, foreign, g.errors[1]);
 	scope(exit) fp.string.free(literal);
-	assert(fp.string.slice(literal) == "V-Literal: an integer literal must fit in 64 bits", "write a value below 2^64");
+	char* literalFix = hint(g, foreign, g.errors[1]);
+	scope(exit) fp.string.free(literalFix);
+	assert(fp.string.slice(literal) == "V-Literal: an integer literal must fit in 64 bits" && fp.string.slice(literalFix) == "write a value below 2^64");
+
+	// A negative integer has one bit fewer for its magnitude, and says so.
+	Syntax low;
+	scope(exit) free(low);
+	immutable belowRange = "small : i64 = -9223372036854775809\n";
+	assert(skim(belowRange, low) && fp.dynarray.length(low.errors) == 1 && low.errors[0].kind == SyntaxError.Kind.literal);
+	char* lowFix = hint(low, belowRange, low.errors[0]);
+	scope(exit) fp.string.free(lowFix);
+	assert(fp.string.slice(lowFix) == "write a value at or above -2^63");
+
+	// So are source annotations whose numbers do not fit, in a line or a column, at its start or its end (AT-Source).
+	foreach (huge; ["x : T = 1 <a.doir:99999999999999999999:1>\n", "x : T = 1 <\"a\":1:2-99999999999999999999>\n"]) {
+		Syntax annotated;
+		scope(exit) free(annotated);
+		assert(skim(huge, annotated) && fp.dynarray.length(annotated.errors) == 1 && annotated.errors[0].kind == SyntaxError.Kind.literal);
+		char* why = describe(annotated, huge, annotated.errors[0]), fix = hint(annotated, huge, annotated.errors[0]);
+		scope(exit) { fp.string.free(why); fp.string.free(fix); }
+		assert(fp.string.startsWith(why, "AT-Source:") && fp.string.slice(fix) == "write the line and column where the declaration is in its file");
+	}
+
 
 	// Too deep a nesting is reported rather than overflowing the stack.
 	char* deep = null;
 	scope(exit) fp.string.free(deep);
-	foreach (i; 0 .. maxNesting + 1) assert(fp.string.concatenate(deep, "x : T = {\n") !is null);
+	foreach (i; 0 .. maxNesting + 1) assert(fp.string.concatenate(deep, "x : T = {\n"));
 	Syntax h;
 	scope(exit) free(h);
 	assert(skim(fp.string.slice(deep), h) && fp.dynarray.length(h.errors) >= 1 && h.errors[0].kind == SyntaxError.Kind.nesting);
@@ -1798,9 +1887,9 @@ unittest { // skimming: records in preorder, hashes that ignore trivia, and reco
 	}
 	assert(listed(1u << TokenKind.end, "remove everything from here to the end of the file") && listed(1u << TokenKind.end | 1u << TokenKind.newline, "insert a line break here"));
 	for (size_t budget = 0;; ++budget) {
-		auto allocator = fp.testing.beginRationedAllocator(budget);
+		auto allocator = fp.testing.limitAllocations(budget);
 		char* fix = expectedHint(1u << TokenKind.comma | 1u << TokenKind.rightParen);
-		fp.testing.endRationedAllocator(allocator);
+		fp.testing.restoreAllocator(allocator);
 		scope(exit) fp.string.free(fix);
 		if (fix !is null) {
 			assert(fp.string.slice(fix) == "insert `,` or `)` here");
@@ -1844,9 +1933,9 @@ unittest { // skimming: records in preorder, hashes that ignore trivia, and reco
 	for (size_t budget = 0;; ++budget) {
 		Syntax rationed;
 		scope(exit) free(rationed);
-		auto allocator = fp.testing.beginRationedAllocator(budget);
+		auto allocator = fp.testing.limitAllocations(budget);
 		immutable skimmed = skim(everything, rationed);
-		fp.testing.endRationedAllocator(allocator);
+		fp.testing.restoreAllocator(allocator);
 		if (skimmed) {
 			assert(fp.dynarray.length(rationed.records) == fp.dynarray.length(whole.records) && fp.dynarray.length(rationed.errors) == fp.dynarray.length(whole.errors));
 			break;
@@ -1865,13 +1954,28 @@ unittest { // building: each declaration form writes its builder components
 		assert(doir.strings.text(b.strings, ecrs.context.getComponent!(doir.components.ast.LookupTypeOf)(b.store, b.builder.declaration).name) == "std.u8");
 	}
 	{
+		// Negative constants keep their sign, as a two's-complement integer or a negative float.
+		Built b;
+		scope(exit) release(b);
+		buildOne(b, "negative : i32 = -42\n");
+		auto value = ecrs.context.getComponent!(doir.components.ast.ConstantVal)(b.store, b.builder.declaration);
+		assert(value.kind == doir.components.ast.ConstantVal.Kind.negativeInteger && value.integerValue == ulong.max - 41);
+	}
+	{
+		Built b;
+		scope(exit) release(b);
+		buildOne(b, "negative : f64 = -1.5\n");
+		auto value = ecrs.context.getComponent!(doir.components.ast.ConstantVal)(b.store, b.builder.declaration);
+		assert(value.kind == doir.components.ast.ConstantVal.Kind.float_ && value.floatValue == -1.5);
+	}
+	{
 		Built b;
 		scope(exit) release(b);
 		buildOne(b, "s : p = \"a\\tb\\u00e9\" <\"gen.doir\":3-4:5>\n");
 		auto bytes = ecrs.context.getComponent!(doir.components.ast.ConstantVal)(b.store, b.builder.declaration).bytesValue;
 		assert(doir.strings.text(b.strings, bytes) == "a\tb\xC3\xA9");
 		assert(b.builder.annotated && b.builder.annotation.file == "gen.doir");
-		assert(b.builder.annotation.start == diagnose.Pair(3, 5) && b.builder.annotation.end == diagnose.Pair(4, 5));
+		assert(b.builder.annotation.start == diagnose.LineColumn(3, 5) && b.builder.annotation.end == diagnose.LineColumn(4, 5));
 	}
 	{
 		Built b;
@@ -1892,7 +1996,7 @@ unittest { // building: each declaration form writes its builder components
 		buildOne(b, "h : f32 = 1.5 <f.doir:7:2>\n");
 		auto value = ecrs.context.getComponent!(doir.components.ast.ConstantVal)(b.store, b.builder.declaration);
 		assert(value.kind == doir.components.ast.ConstantVal.Kind.float_ && value.floatValue == 1.5);
-		assert(b.builder.annotation.file == "f.doir" && b.builder.annotation.start == diagnose.Pair(7, 2));
+		assert(b.builder.annotation.file == "f.doir" && b.builder.annotation.start == diagnose.LineColumn(7, 2));
 	}
 	{
 		// A float longer than the stack buffer.
@@ -1902,11 +2006,18 @@ unittest { // building: each declaration form writes its builder components
 		assert(ecrs.context.getComponent!(doir.components.ast.ConstantVal)(b.store, b.builder.declaration).floatValue == 2.5);
 	}
 	{
+		// V-Literal: a float too large for a double rounds to the nearest, an infinity, rather than failing.
+		Built b;
+		scope(exit) release(b);
+		buildOne(b, "i : f64 = -1e999\n");
+		assert(ecrs.context.getComponent!(doir.components.ast.ConstantVal)(b.store, b.builder.declaration).floatValue == -double.infinity);
+	}
+	{
 		Built b;
 		scope(exit) release(b);
 		buildOne(b, "sum : std.u8 = tail std.add(a, %\"b c\")\n");
 		assert(doir.strings.text(b.strings, ecrs.context.getComponent!(doir.components.ast.LookupCall)(b.store, b.builder.declaration).name) == "std.add");
-		auto args = ecrs.context.getComponent!(doir.components.ast.LookupFunctionInputs)(b.store, b.builder.declaration).names;
+		auto args = ecrs.context.getComponent!(doir.components.ast.LookupFunctionInputs)(b.store, b.builder.declaration).names.p;
 		assert(fp.dynarray.length(args) == 2 && doir.strings.text(b.strings, args[1]) == "b c");
 		assert(ecrs.context.getComponent!(doir.components.ast.Flags)(b.store, b.builder.declaration).flags == doir.components.ast.Flags.Tail);
 	}
@@ -1933,13 +2044,13 @@ unittest { // building: each declaration form writes its builder components
 		assert(fp.dynarray.length(inputs) == 4);
 		assert(doir.strings.text(b.strings, ecrs.context.getComponent!(doir.components.ast.LookupTypeOf)(b.store, inputs[0]).name) == doir.components.ast.deducedTypeName);
 		assert(ecrs.context.getComponent!(doir.components.ast.ConstantVal)(b.store, inputs[1]).integerValue == 0);
-		immutable ft = ecrs.context.getComponent!(doir.components.ast.TypeOf)(b.store, inputs[2]).type;
-		assert(ecrs.context.getComponent!(doir.components.ast.Parent)(b.store, ft).parent == e);
+		immutable functionType = ecrs.context.getComponent!(doir.components.ast.TypeOf)(b.store, inputs[2]).type;
+		assert(ecrs.context.getComponent!(doir.components.ast.Parent)(b.store, functionType).parent == e);
 		assert(!ecrs.context.hasComponent!(doir.components.ast.Name)(b.store, inputs[3]));
 		assert(doir.strings.text(b.strings, ecrs.context.getComponent!(doir.components.ast.LookupValue)(b.store, inputs[3]).name) == "z");
 		assert(doir.strings.text(b.strings, ecrs.context.getComponent!(doir.components.ast.LookupFunctionReturn)(b.store, b.builder.declaration).name) == "T");
 		// Parts come parents first: the parameters, and the function type before its own parameter.
-		assert(fp.dynarray.length(b.builder.parts) == 6 && b.builder.parts[3] == ft);
+		assert(fp.dynarray.length(b.builder.parts) == 6 && b.builder.parts[3] == functionType);
 		auto span = ecrs.context.getComponent!(doir.components.source.SourceSpan)(b.store, inputs[1]);
 		assert(b.syntax.tokens !is null);
 		immutable source = "id_t : type = (T: deduced type, v: T = 0, f: (x: T) -> T, _: u8 = z) -> T\n";
@@ -1973,6 +2084,7 @@ unittest { // building: each declaration form writes its builder components
 	// A refused allocation at any step of any form fails the build, rather than asserting or writing through a missing component.
 	foreach (source; [
 		"export six : std.u8 = 6\n",
+		"negative : i32 = -42\n",
 		"s : p = \"a\\tb\\u00e9\" <\"gen.doir\":3-4:5>\n",
 		"r : p = \"\"\"raw\"\"\"\n",
 		"w : f64 = 2.50000000000000000000000000000000000000000000000000000000000000000000\n",

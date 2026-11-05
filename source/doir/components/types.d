@@ -1,4 +1,5 @@
-/// The components that describe a type or a symbol beyond its layout: a function's or static's ABI symbol and the pointer or array a type is (`doir.spec.md` Part II §1). Every one holding an entity id mixes in `ecrs.relation.Relates` (`E-Remap`).
+/// The components that describe a type or a symbol beyond its layout: a function's or static's ABI symbol and the pointer or array a type is (`doir.spec.md` Part II §1).
+/// Every one holding an entity id mixes in `ecrs.relation.Relates` (`E-Remap`).
 ///
 /// Examples:
 /// ---

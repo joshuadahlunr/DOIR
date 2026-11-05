@@ -1,6 +1,9 @@
-/// Imports as finished files (`I-Import`): an import is a query keyed by the file and the importing level, whose value is the root of the file evaluated to completion and frozen, as `freezeLevel` freezes a level. The importer reads its entities by entity alone, its effects never enter the importer's logs, and two levels that import one file each get their own copy of its entities (`L-Tower`).
+/// Imports as finished files (`I-Import`): an import is a query keyed by the file and the importing level, whose value is the root of the file evaluated to completion and frozen, as `freezeLevel` freezes a level.
+/// The importer reads its entities by entity alone, its effects never enter the importer's logs, and two levels that import one file each get their own copy of its entities (`L-Tower`).
 ///
-/// The level supplies the semantics: its `LevelEvaluator` builds a file's entities through `createEntity` and `produce`, so the copy belongs to the import query, and runs its comptime. Two files that import each other are a cycle (`Q-Cycle`), as is an import whose path depends on the lookup it would answer. Editing an imported file re-runs its import, and early cutoff stops at importers whose reads of it are unchanged.
+/// The level supplies the semantics: its `LevelEvaluator` builds a file's entities through `createEntity` and `produce`, so the copy belongs to the import query, and runs its comptime.
+/// Two files that import each other are a cycle (`Q-Cycle`), as is an import whose path depends on the lookup it would answer.
+/// Editing an imported file re-runs its import, and early cutoff stops at importers whose reads of it are unchanged.
 ///
 /// Examples:
 /// ---
@@ -83,7 +86,10 @@ struct Import {
 	}
 }
 
-/// The exported declaration named `name` that one of `block`'s imports into `level` makes visible, or `invalidEntity` if none does (`I-Import`, `I-Export`). A lookup that misses `block`'s own declarations calls it, demanding the block's imports as a forward reference demands a declaration (`R-Order`), so the import is visible on every line. Two imports that make one name visible as different entities are a collision, reported (`WF-Unique`); the first is returned. An import that is a cycle (`Q-Cycle`) makes nothing visible.
+/// The exported declaration named `name` that one of `block`'s imports into `level` makes visible, or `invalidEntity` if none does (`I-Import`, `I-Export`).
+/// A lookup that misses `block`'s own declarations calls it, demanding the block's imports as a forward reference demands a declaration (`R-Order`), so the import is visible on every line.
+/// Two imports that make one name visible as different entities are a collision, reported (`WF-Unique`); the first is returned.
+/// An import that is a cycle (`Q-Cycle`) makes nothing visible.
 ///
 /// Examples:
 /// ---
@@ -162,8 +168,8 @@ version(unittest) {
 			immutable pushedU = fp.dynarray.pushBack(block.related, u);
 			assert(pushedU);
 		}
-		immutable pt = doir.engine.positions.between(engine.positions, doir.engine.positions.root, doir.engine.positions.none, doir.engine.positions.none);
-		immutable pm = doir.engine.positions.between(engine.positions, doir.engine.positions.root, pt, doir.engine.positions.none);
+		immutable pt = doir.engine.positions.between(engine.positions, doir.engine.positions.root, doir.engine.positions.end, doir.engine.positions.end);
+		immutable pm = doir.engine.positions.between(engine.positions, doir.engine.positions.root, pt, doir.engine.positions.end);
 		assert(doir.effects.applyFlags(engine, t, pm, modifier));
 		// Inside B, a read on t's own line still sees it unmodified.
 		assert(doir.effects.flagsAt(engine, t, pt).get == doir.components.ast.Flags.Export);
@@ -234,7 +240,7 @@ unittest { // an imported file arrives finished, once per level, and its edits s
 	modifier = doir.components.ast.Flags.ReadOnly;
 
 	// Two imports that make `t` visible as different entities collide (WF-Unique); the first, B's, still Packed from its last edit, wins.
-	assert(diagnose.count(manager) == 0);
+	assert(fp.dynarray.length(manager.diagnostics) == 0);
 	doir.query.beginRevision(engine);
 	fileC = doir.testing.addEntity(store);
 	doir.testing.addComponent!(doir.components.source.SourceFile)(store, fileC).path = doir.strings.intern(strings, "c.doir");
@@ -244,18 +250,18 @@ unittest { // an imported file arrives finished, once per level, and its edits s
 	assert(doir.query.markChanged(engine, fileC));
 	assert(doir.query.markChanged(engine, rootD.block));
 	assert(*doir.query.query!ReadImported(engine, ReadImported.Key([rootD.block, level])) == (doir.components.ast.Flags.Export | doir.components.ast.Flags.Packed));
-	assert(diagnose.count(manager) == 1);
+	assert(fp.dynarray.length(manager.diagnostics) == 1);
 	assert(fp.string.slice(manager.diagnostics[0].message) == "WF-Unique: two imports make the same name visible");
-	assert(fp.string.slice(manager.diagnostics[0].additionalNote) == "rename or stop exporting one of the two, or drop one of the imports"); // the evaluated entities have no location
+	assert(fp.string.slice(manager.diagnostics[0].note) == "rename or stop exporting one of the two, or drop one of the imports"); // the evaluated entities have no location
 	assert(findImported(engine, rootD.block, level, doir.strings.intern(strings, "u")) == invalidEntity); // I-Export
 
 	// A level without an evaluator cannot import, and the failed import makes nothing visible.
 	immutable bare = doir.testing.addEntity(store);
 	assert(doir.query.markChanged(engine, bare));
 	assert(*doir.query.query!ReadImported(engine, ReadImported.Key([rootA.block, bare])) == 0);
-	assert(diagnose.count(manager) == 2);
+	assert(fp.dynarray.length(manager.diagnostics) == 2);
 	assert(fp.string.slice(manager.diagnostics[1].message) == "I-Import: the importing level cannot evaluate files");
-	assert(fp.string.slice(manager.diagnostics[1].additionalNote) == "import the file from a level that declares an evaluator, or give this level one");
+	assert(fp.string.slice(manager.diagnostics[1].note) == "import the file from a level that declares an evaluator, or give this level one");
 	diagnose.clear(manager);
 
 	// Two files that import each other are a cycle.
@@ -266,8 +272,8 @@ unittest { // an imported file arrives finished, once per level, and its edits s
 	assert(doir.query.markChanged(engine, fileA));
 	assert(doir.query.markChanged(engine, fileB));
 	assert(doir.query.query!Import(engine, Import.Key([fileA, level])).root == invalidEntity);
-	assert(diagnose.count(manager) == 1);
+	assert(fp.dynarray.length(manager.diagnostics) == 1);
 	enum prefix = "Q-Cycle: a query needs its own answer: Import -> Import -> Import";
 	assert(fp.string.slice(manager.diagnostics[0].message) == prefix);
-	assert(fp.string.slice(manager.diagnostics[0].additionalNote) == doir.query.cycleHint);
+	assert(fp.string.slice(manager.diagnostics[0].note) == doir.query.cycleHint);
 }

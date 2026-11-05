@@ -1,6 +1,8 @@
-/// Source locations (`roadmap.md` Phase 2): every parsed entity's `SourceSpan`, relative to its parent's start, and the `SourceAnnotation` a declaration's `<file:line:column>` writes (`AT-Source`), which overrides it. Absolute locations are not stored: `locate` derives one on demand by adding the spans up the `Parent` chain to a file's root block, so moving text rewrites only the spans of what moved.
+/// Source locations (`roadmap.md` Phase 2): every parsed entity's `SourceSpan`, relative to its parent's start, and the `SourceAnnotation` a declaration's `<file:line:column>` writes (`AT-Source`), which overrides it.
+/// Absolute locations are not stored: `locate` derives one on demand by adding the spans up the `Parent` chain to a file's root block, so moving text rewrites only the spans of what moved.
 ///
-/// Spans are untracked: no query records a dependency on them, and a diagnostic names the entity it is about, its location resolved only when it is reported. The components are in `doir.components.source`.
+/// Spans are untracked: no query records a dependency on them, and a diagnostic names the entity it is about, its location resolved only when it is reported.
+/// The components are in `doir.components.source`.
 ///
 /// Examples:
 /// ---
@@ -18,7 +20,7 @@
 /// ecrs.context.addComponent!(doir.components.ast.Parent)(store, e).parent = root;
 /// *ecrs.context.addComponent!(doir.components.source.SourceSpan)(store, e) = doir.components.source.SourceSpan(6, 5);
 /// const where = locate(store, e).get;
-/// assert(where.start == diagnose.Pair(2, 1) && where.end == diagnose.Pair(2, 6));
+/// assert(where.start == diagnose.LineColumn(2, 1) && where.end == diagnose.LineColumn(2, 6));
 /// ---
 module doir.engine.locations;
 
@@ -43,7 +45,8 @@ public import ecrs.registry : EntityId, invalidEntity;
 
 private enum size_t maxHops = 64;
 
-/// The line and column of byte `at` in `file`'s text, found through the lines the text keeps (`fp.rope`). `at` may be the text's length.
+/// The line and column of byte `at` in `file`'s text, found through the lines the text keeps (`fp.rope`).
+/// `at` may be the text's length.
 ///
 /// Returns null if `file` has no text.
 ///
@@ -56,31 +59,32 @@ private enum size_t maxHops = 64;
 /// scope(exit) ecrs.context.free(store);
 /// immutable file = ecrs.context.addEntity(store);
 /// assert(ecrs.context.setComponent!(doir.components.source.SourceText)(store, file, doir.components.source.SourceText("f.doir", fp.rope.create("a\nbc\n").get)));
-/// assert(pairAt(store, file, 3).get == imported!"diagnose".Pair(2, 2));
+/// assert(lineColumnAt(store, file, 3).get == imported!"diagnose".LineColumn(2, 2));
 /// ---
-std.typecons.Nullable!(diagnose.Pair) pairAt(ref ecrs.context.Context store, EntityId file, size_t at) {
+std.typecons.Nullable!(diagnose.LineColumn) lineColumnAt(ref ecrs.context.Context store, EntityId file, size_t at) {
 	auto source = ecrs.context.findComponent!(doir.components.source.SourceText)(store, file);
 	if (source is null) return typeof(return).init;
 	immutable line = fp.rope.lineOf(source.text, at);
-	return typeof(return)(diagnose.Pair(line + 1, at - fp.rope.lineStart(source.text, line) + 1));
+	return typeof(return)(diagnose.LineColumn(line + 1, at - fp.rope.lineStart(source.text, line) + 1));
 }
 
-/// A byte range of a file, as `bytesOf` finds it.
+/// A byte range of a file, as `fileRange` finds it.
 struct FileBytes {
 	mixin ecrs.relation.Relates!"file";
-	diagnose.SourceLocation bytes; /// The range, the file named by its path.
+	diagnose.ByteRange bytes; /// The range, the file named by its path.
 }
 
-/// The file and byte range of `e`'s own span, its spans added up the `Parent` chain to its file's root block. Returns null if `e` has no span or its chain reaches no file.
+/// The file and byte range of `e`'s own span, its spans added up the `Parent` chain to its file's root block.
+/// Returns null if `e` has no span or its chain reaches no file.
 ///
 /// Examples:
 /// ---
 /// static import ecrs.context;
 /// auto store = ecrs.context.create();
 /// scope(exit) ecrs.context.free(store);
-/// assert(bytesOf(store, ecrs.context.addEntity(store)).isNull);
+/// assert(fileRange(store, ecrs.context.addEntity(store)).isNull);
 /// ---
-std.typecons.Nullable!FileBytes bytesOf(ref ecrs.context.Context store, EntityId e) {
+std.typecons.Nullable!FileBytes fileRange(ref ecrs.context.Context store, EntityId e) {
 	auto own = ecrs.context.findComponent!(doir.components.source.SourceSpan)(store, e);
 	if (own is null) return typeof(return).init;
 	size_t start = own.offset;
@@ -90,7 +94,7 @@ std.typecons.Nullable!FileBytes bytesOf(ref ecrs.context.Context store, EntityId
 			if (source is null) return typeof(return).init;
 			FileBytes out_;
 			out_.file = root.file;
-			out_.bytes = diagnose.SourceLocation(source.path, start, start + own.length);
+			out_.bytes = diagnose.ByteRange(source.path, start, start + own.length);
 			return typeof(return)(out_);
 		}
 		auto parent = ecrs.context.findComponent!(doir.components.ast.Parent)(store, at);
@@ -102,7 +106,8 @@ std.typecons.Nullable!FileBytes bytesOf(ref ecrs.context.Context store, EntityId
 	}
 }
 
-/// The location a diagnostic about `e` reports: its `SourceAnnotation`, else its span's lines and columns, else, for an entity without a span, that of the entity it was derived from (`Provenance`) or of its `Parent`. Returns null if none is found.
+/// The location a diagnostic about `e` reports: its `SourceAnnotation`, else its span's lines and columns, else, for an entity without a span, that of the entity it was derived from (`Provenance`) or of its `Parent`.
+/// Returns null if none is found.
 ///
 /// Examples:
 /// ---
@@ -112,18 +117,18 @@ std.typecons.Nullable!FileBytes bytesOf(ref ecrs.context.Context store, EntityId
 /// scope(exit) ecrs.context.free(store);
 /// assert(locate(store, ecrs.context.addEntity(store)).isNull);
 /// ---
-std.typecons.Nullable!(diagnose.Detailed) locate(ref ecrs.context.Context store, EntityId e) {
+std.typecons.Nullable!(diagnose.LineColumnRange) locate(ref ecrs.context.Context store, EntityId e) {
 	foreach (hop; 0 .. maxHops) {
 		if (e == invalidEntity) return typeof(return).init;
 		if (auto annotation = ecrs.context.findComponent!(doir.components.source.SourceAnnotation)(store, e)) return typeof(return)(annotation.location);
 		if (ecrs.context.hasComponent!(doir.components.source.SourceSpan)(store, e)) {
-			auto found = bytesOf(store, e);
+			auto found = fileRange(store, e);
 			if (found.isNull) return typeof(return).init;
-			auto start = pairAt(store, found.get.file, found.get.bytes.startByte);
+			auto start = lineColumnAt(store, found.get.file, found.get.bytes.startByte);
 			if (start.isNull) return typeof(return).init;
-			auto end = pairAt(store, found.get.file, found.get.bytes.endByte);
+			auto end = lineColumnAt(store, found.get.file, found.get.bytes.endByte);
 			if (end.isNull) return typeof(return).init;
-			return typeof(return)(diagnose.Detailed(found.get.bytes.file, start.get, end.get));
+			return typeof(return)(diagnose.LineColumnRange(found.get.bytes.file, start.get, end.get));
 		}
 		if (auto provenance = ecrs.context.findComponent!(doir.components.query.Provenance)(store, e)) e = provenance.origin;
 		else if (auto parent = ecrs.context.findComponent!(doir.components.ast.Parent)(store, e)) e = parent.parent;
@@ -150,13 +155,13 @@ unittest { // spans add up to the file; annotations win; derived entities and pa
 	place(ns, root, 0, cast(uint) text.length - 1);
 	place(declared, ns, 20, 9);
 	place(annotated, ns, 31, 9);
-	ecrs.context.addComponent!(doir.components.source.SourceAnnotation)(store, annotated).location = diagnose.Detailed("gen", diagnose.Pair(9, 2), diagnose.Pair(9, 2));
+	ecrs.context.addComponent!(doir.components.source.SourceAnnotation)(store, annotated).location = diagnose.LineColumnRange("gen", diagnose.LineColumn(9, 2), diagnose.LineColumn(9, 2));
 	ecrs.context.addComponent!(doir.components.query.Provenance)(store, derived).origin = declared;
 	ecrs.context.addComponent!(doir.components.ast.Parent)(store, part).parent = annotated;
 
-	const found = bytesOf(store, declared).get;
+	const found = fileRange(store, declared).get;
 	assert(text[found.bytes.startByte .. found.bytes.endByte] == "x : T = 1" && found.bytes.file == "a.doir" && found.file == file);
-	assert(locate(store, declared).get.start == diagnose.Pair(2, 2) && locate(store, declared).get.end == diagnose.Pair(2, 11));
+	assert(locate(store, declared).get.start == diagnose.LineColumn(2, 2) && locate(store, declared).get.end == diagnose.LineColumn(2, 11));
 	assert(locate(store, annotated).get.file == "gen" && locate(store, annotated).get.start.line == 9);
 	assert(locate(store, derived).get.start.line == 2);
 	assert(locate(store, part).get.file == "gen");
@@ -171,7 +176,15 @@ unittest { // spans add up to the file; annotations win; derived entities and pa
 	// New text brings its own lines.
 	static immutable moved = "\n\n" ~ text;
 	assert(ecrs.context.setComponent!(doir.components.source.SourceText)(store, file, doir.components.source.SourceText("a.doir", fp.rope.create(moved).get)));
-	ecrs.context.getComponent!(doir.components.source.SourceSpan)(store, root) = doir.components.source.SourceSpan(0, cast(uint) moved.length);
-	ecrs.context.getComponent!(doir.components.source.SourceSpan)(store, ns).offset = 2;
-	assert(locate(store, declared).get.start == diagnose.Pair(4, 2));
+	ecrs.context.getForWriting!(doir.components.source.SourceSpan)(store, root) = doir.components.source.SourceSpan(0, cast(uint) moved.length);
+	ecrs.context.getForWriting!(doir.components.source.SourceSpan)(store, ns).offset = 2;
+	assert(locate(store, declared).get.start == diagnose.LineColumn(4, 2));
+
+	static immutable crText = "a\rbc\r";
+	immutable crFile = ecrs.context.addEntity(store);
+	assert(ecrs.context.setComponent!(doir.components.source.SourceText)(store, crFile, doir.components.source.SourceText("cr.doir", fp.rope.create(crText).get)));
+	assert(lineColumnAt(store, crFile, 0).get == diagnose.LineColumn(1, 1));
+	assert(lineColumnAt(store, crFile, 2).get == diagnose.LineColumn(2, 1));
+	assert(lineColumnAt(store, crFile, 3).get == diagnose.LineColumn(2, 2));
+	assert(lineColumnAt(store, crFile, 5).get == diagnose.LineColumn(3, 1));
 }

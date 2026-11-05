@@ -7,7 +7,7 @@
 
 Proposed changes to DOIR's intermediate representation, drawn from modern IR designs.
 Every proposal keeps the libECRS store as the source of truth and lives inside it.
-A new IR is entities, relation components for its edges, and tags for its node kinds, all owned by the query that builds them, so removing that query's `Produces` list removes the IR (`roadmap.md` Phase 1); only input commits (a parse, a level freeze) write components no query owns.
+A new IR is entities, relation components for its edges, and tags for its node kinds, all owned by the query that builds them, so removing that query's `Outputs` list removes the IR (`roadmap.md` Phase 1); only input commits (a parse, a level freeze) write components no query owns.
 The only placement rule is that IR entities stay out of source-visible relations (block contents, scopes), since `std.types.field_count` and name lookup read those.
 
 ---

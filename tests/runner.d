@@ -1,8 +1,8 @@
+/// Runs every module's unittests, which `-betterC` has no built-in runner for, through `fp.testing.runTests`.
+/// Progress goes to the unbuffered `stderr`, so a test that hangs or aborts still shows how far the run got.
 module runner;
 
-static import core.stdc.stdio;
-
-private enum modules = [
+private alias modules = imported!"std.meta".AliasSeq!(
 	"doir.strings",
 	"doir.syntax.lexer",
 	"doir.syntax.parser",
@@ -23,29 +23,19 @@ private enum modules = [
 	"doir.source",
 	"doir.names",
 	"doir.checks",
+	"doir.schedules",
 	"doir.printer",
-];
+	"doir.bench",
+);
 
 private int runEveryTest() {
-	size_t total = 0;
-
-	static foreach (name; modules) {{
-		alias mod = mixin("imported!\"" ~ name ~ "\"");
-		alias tests = __traits(getUnitTests, mod);
-		cast(void) core.stdc.stdio.fprintf(core.stdc.stdio.stderr, "%s (%d tests)\n", name.ptr, cast(int) tests.length);
-		static foreach (i, test; tests) {
-			cast(void) core.stdc.stdio.fprintf(core.stdc.stdio.stderr, "  [%d] ", cast(int) i);
-			test();
-			cast(void) core.stdc.stdio.fprintf(core.stdc.stdio.stderr, "ok\n");
-			++total;
-		}
-	}}
-
-	cast(void) core.stdc.stdio.printf("doir: all %d tests passed.\n", cast(int) total);
+	cast(void) imported!"fp.testing".runTests!modules("doir");
 	return 0;
 }
 
+// `tools/coverage.py` builds this as ordinary D, since `-cov` registers its counters through druntime, which needs druntime's own `main`.
 version(DoirCoverage) {
+	// Stops druntime running every unittest itself before `main` runs them again.
 	shared static this() {
 		static import core.runtime;
 		core.runtime.Runtime.extendedModuleUnitTester = () => core.runtime.UnitTestResult(0, 0, true, false);

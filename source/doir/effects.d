@@ -1,8 +1,12 @@
-/// Positioned effect logs (`C-Order`, `M-Lexical`, `L-Freeze`). Comptime-mutable state, a declaration's flags, an overload set's members and the targets `compile_for` gave it, is a log of ⟨position, effect⟩ entries, never overwritten in place. A read at position k folds the entries before k in position order, so demand may evaluate a forward-referenced declaration early (`R-Order`) without an earlier read seeing its effects.
+/// Positioned effect logs (`C-Order`, `M-Lexical`, `L-Freeze`).
+/// Comptime-mutable state, a declaration's flags, an overload set's members and the targets `compile_for` gave it, is a log of ⟨position, effect⟩ entries, never overwritten in place.
+/// A read at position k folds the entries before k in position order, so demand may evaluate a forward-referenced declaration early (`R-Order`) without an earlier read seeing its effects.
 ///
-/// `freezeLevel` folds each log once into the plain component that cross-level queries read by entity alone: `FrozenFlags`, `Overloads` and `On`. The parser's `Flags` stays as it wrote it, the base every fold starts from, so a re-freeze after an edit drops an effect whose line was removed.
+/// `freezeLevel` folds each log once into the plain component that cross-level queries read by entity alone: `FrozenFlags`, `Overloads` and `On`.
+/// The parser's `Flags` stays as it wrote it, the base every fold starts from, so a re-freeze after an edit drops an effect whose line was removed.
 ///
-/// Each entry is owned by the query that wrote it, a comptime evaluation keyed by ⟨entity, position⟩, so a re-run replaces only its own entries. Logs hold entity ids only through `E-Remap` hooks, so renumbering covers them.
+/// Each entry is owned by the query that wrote it, a comptime evaluation keyed by ⟨entity, position⟩, so a re-run replaces only its own entries.
+/// Logs hold entity ids only through `E-Remap` hooks, so renumbering covers them.
 ///
 /// Examples:
 /// ---
@@ -16,7 +20,7 @@
 /// 	alias Value = bool;
 /// 	static bool compute(ref doir.query.QueryEngine engine, Key key) @nogc nothrow {
 /// 		immutable t = key.related[0];
-/// 		return applyFlags(engine, t, doir.engine.positions.between(engine.positions, doir.engine.positions.root, doir.engine.positions.none, doir.engine.positions.none), doir.components.ast.Flags.ReadOnly);
+/// 		return applyFlags(engine, t, doir.engine.positions.between(engine.positions, doir.engine.positions.root, doir.engine.positions.end, doir.engine.positions.end), doir.components.ast.Flags.ReadOnly);
 /// 	}
 /// }
 /// auto store = ecrs.context.create();
@@ -26,13 +30,14 @@
 /// immutable t = ecrs.context.addEntity(store);
 /// assert(*doir.query.query!Modify(engine, Modify.Key([t])));
 /// assert(flagsAt(engine, t, doir.engine.positions.root).get == 0);
-/// assert(flagsAt(engine, t, doir.engine.positions.none).get == doir.components.ast.Flags.ReadOnly);
+/// assert(flagsAt(engine, t, doir.engine.positions.end).get == doir.components.ast.Flags.ReadOnly);
 /// ---
 module doir.effects;
 
 static import std.typecons;
 
 static import fp.dynarray;
+static import fp.lifecycle;
 version(unittest) static import fp.testing;
 
 static import ecrs.context;
@@ -54,7 +59,9 @@ public import doir.engine.positions : Position;
 
 // --- writing effects ---------------------------------------------------------
 
-/// Adds `flags` to declaration `e` at position `at` on behalf of the running query, a comptime evaluation, which owns the effect (`M-Lexical`, `C-Order`). Reads at or before `at` do not see it. Returns false on a refused allocation, which fails the running queries (`doir.query.fail`).
+/// Adds `flags` to declaration `e` at position `at` on behalf of the running query, a comptime evaluation, which owns the effect (`M-Lexical`, `C-Order`).
+/// Reads at or before `at` do not see it.
+/// Returns false on a refused allocation, which fails the running queries (`doir.query.fail`).
 ///
 /// Examples:
 /// ---
@@ -67,7 +74,7 @@ public import doir.engine.positions : Position;
 /// 	alias Key = ecrs.relation.Relation!1;
 /// 	alias Value = bool;
 /// 	static bool compute(ref doir.query.QueryEngine engine, Key key) @nogc nothrow {
-/// 		return applyFlags(engine, key.related[0], doir.engine.positions.between(engine.positions, doir.engine.positions.root, doir.engine.positions.none, doir.engine.positions.none), doir.components.ast.Flags.Pure);
+/// 		return applyFlags(engine, key.related[0], doir.engine.positions.between(engine.positions, doir.engine.positions.root, doir.engine.positions.end, doir.engine.positions.end), doir.components.ast.Flags.Pure);
 /// 	}
 /// }
 /// auto store = ecrs.context.create();
@@ -76,14 +83,15 @@ public import doir.engine.positions : Position;
 /// scope(exit) doir.query.free(engine);
 /// immutable e = ecrs.context.addEntity(store);
 /// assert(*doir.query.query!Pure(engine, Pure.Key([e])));
-/// assert(flagsAt(engine, e, doir.engine.positions.none).get == doir.components.ast.Flags.Pure);
+/// assert(flagsAt(engine, e, doir.engine.positions.end).get == doir.components.ast.Flags.Pure);
 /// ---
 bool applyFlags(ref doir.query.QueryEngine engine, EntityId e, Position at, uint flags) {
-	assert(at != doir.engine.positions.none);
+	assert(at != doir.engine.positions.end);
 	return doir.engine.logs.append!(doir.components.effects.FlagsLog, uint)(engine, e, at, flags);
 }
 
-/// Adds `member` to overload set `set` at position `at` on behalf of the running query (`TF-Overload`, `C-Order`). Returns false on a refused allocation, as `applyFlags` does.
+/// Adds `member` to overload set `set` at position `at` on behalf of the running query (`TF-Overload`, `C-Order`).
+/// Returns false on a refused allocation, as `applyFlags` does.
 ///
 /// Examples:
 /// ---
@@ -97,7 +105,7 @@ bool applyFlags(ref doir.query.QueryEngine engine, EntityId e, Position at, uint
 /// 	alias Key = ecrs.relation.Relation!2;
 /// 	alias Value = bool;
 /// 	static bool compute(ref doir.query.QueryEngine engine, Key key) @nogc nothrow {
-/// 		return addOverload(engine, key.related[0], doir.engine.positions.between(engine.positions, doir.engine.positions.root, doir.engine.positions.none, doir.engine.positions.none), key.related[1]);
+/// 		return addOverload(engine, key.related[0], doir.engine.positions.between(engine.positions, doir.engine.positions.root, doir.engine.positions.end, doir.engine.positions.end), key.related[1]);
 /// 	}
 /// }
 /// auto store = ecrs.context.create();
@@ -108,15 +116,16 @@ bool applyFlags(ref doir.query.QueryEngine engine, EntityId e, Position at, uint
 /// assert(*doir.query.query!Add(engine, Add.Key([set, f])));
 /// EntityId* members = null;
 /// scope(exit) fp.dynarray.free(members);
-/// assert(entitiesAt!(doir.components.effects.OverloadsLog)(engine, set, doir.engine.positions.none, members));
+/// assert(entitiesAt!(doir.components.effects.OverloadsLog)(engine, set, doir.engine.positions.end, members));
 /// assert(fp.dynarray.slice(members) == [f]);
 /// ---
 bool addOverload(ref doir.query.QueryEngine engine, EntityId set, Position at, EntityId member) {
-	assert(at != doir.engine.positions.none);
+	assert(at != doir.engine.positions.end);
 	return doir.engine.logs.append!(doir.components.effects.OverloadsLog, ecrs.relation.Relation!1)(engine, set, at, ecrs.relation.Relation!1([member]));
 }
 
-/// Makes declaration `e` live on `target` from position `at` on behalf of the running query (`T-Live`, `C-Order`). Returns false on a refused allocation, as `applyFlags` does.
+/// Makes declaration `e` live on `target` from position `at` on behalf of the running query (`T-Live`, `C-Order`).
+/// Returns false on a refused allocation, as `applyFlags` does.
 ///
 /// Examples:
 /// ---
@@ -130,7 +139,7 @@ bool addOverload(ref doir.query.QueryEngine engine, EntityId set, Position at, E
 /// 	alias Key = ecrs.relation.Relation!2;
 /// 	alias Value = bool;
 /// 	static bool compute(ref doir.query.QueryEngine engine, Key key) @nogc nothrow {
-/// 		return liveOn(engine, key.related[0], doir.engine.positions.between(engine.positions, doir.engine.positions.root, doir.engine.positions.none, doir.engine.positions.none), key.related[1]);
+/// 		return liveOn(engine, key.related[0], doir.engine.positions.between(engine.positions, doir.engine.positions.root, doir.engine.positions.end, doir.engine.positions.end), key.related[1]);
 /// 	}
 /// }
 /// auto store = ecrs.context.create();
@@ -141,18 +150,20 @@ bool addOverload(ref doir.query.QueryEngine engine, EntityId set, Position at, E
 /// assert(*doir.query.query!Live(engine, Live.Key([e, gpu])));
 /// EntityId* targets = null;
 /// scope(exit) fp.dynarray.free(targets);
-/// assert(entitiesAt!(doir.components.effects.OnLog)(engine, e, doir.engine.positions.none, targets));
+/// assert(entitiesAt!(doir.components.effects.OnLog)(engine, e, doir.engine.positions.end, targets));
 /// assert(fp.dynarray.slice(targets) == [gpu]);
 /// ---
 bool liveOn(ref doir.query.QueryEngine engine, EntityId e, Position at, EntityId target) {
-	assert(at != doir.engine.positions.none);
+	assert(at != doir.engine.positions.end);
 	return doir.engine.logs.append!(doir.components.effects.OnLog, ecrs.relation.Relation!1)(engine, e, at, ecrs.relation.Relation!1([target]));
 }
 
 
 // --- positioned reads --------------------------------------------------------
 
-/// The flags of declaration `e` as a read at `at` sees them: the parser's `Flags` with every modifier strictly before `at` (`M-Lexical`, `L-Freeze`); `none` sees every modifier. Inside a query, records the reads it makes; a modifier owned by a query still running is a cycle (`Q-Cycle`), reported. Returns null if the answer may be incomplete: a refused allocation, which fails the running queries (`doir.query.fail`), or a modifier's query that could not be brought up to date, which is reported.
+/// The flags of declaration `e` as a read at `at` sees them: the parser's `Flags` with every modifier strictly before `at` (`M-Lexical`, `L-Freeze`); `none` sees every modifier.
+/// Inside a query, records the reads it makes; a modifier owned by a query still running is a cycle (`Q-Cycle`), reported.
+/// Returns null if the answer may be incomplete: a refused allocation, which fails the running queries (`doir.query.fail`), or a modifier's query that could not be brought up to date, which is reported.
 ///
 /// Examples:
 /// ---
@@ -167,7 +178,7 @@ bool liveOn(ref doir.query.QueryEngine engine, EntityId e, Position at, EntityId
 /// scope(exit) doir.query.free(engine);
 /// immutable e = ecrs.context.addEntity(store);
 /// assert(doir.builders.addFlags(store, e, doir.components.ast.Flags.Export));
-/// assert(flagsAt(engine, e, doir.engine.positions.none).get == doir.components.ast.Flags.Export);
+/// assert(flagsAt(engine, e, doir.engine.positions.end).get == doir.components.ast.Flags.Export);
 /// ---
 std.typecons.Nullable!uint flagsAt(ref doir.query.QueryEngine engine, EntityId e, Position at) {
 	auto own = ecrs.context.findComponent!(doir.components.ast.Flags)(*engine.store, e);
@@ -176,7 +187,8 @@ std.typecons.Nullable!uint flagsAt(ref doir.query.QueryEngine engine, EntityId e
 	return typeof(return)(out_);
 }
 
-/// Appends to `out_` the entities log `L` holds for `e` as a read at `at` sees them, in position order, each once: the members of overload set `e` for `OverloadsLog` (`TF-Overload`), or the targets `compile_for` gave declaration `e` for `OnLog` (`T-Live`) (`C-Order`). Records reads as `flagsAt` does, and returns false where it returns null or an append is refused.
+/// Appends to `out_` the entities log `L` holds for `e` as a read at `at` sees them, in position order, each once: the members of overload set `e` for `OverloadsLog` (`TF-Overload`), or the targets `compile_for` gave declaration `e` for `OnLog` (`T-Live`) (`C-Order`).
+/// Records reads as `flagsAt` does, and returns false where it returns null or an append is refused.
 ///
 /// Examples:
 /// ---
@@ -191,7 +203,7 @@ std.typecons.Nullable!uint flagsAt(ref doir.query.QueryEngine engine, EntityId e
 /// scope(exit) doir.query.free(engine);
 /// EntityId* members = null;
 /// scope(exit) fp.dynarray.free(members);
-/// assert(entitiesAt!(doir.components.effects.OverloadsLog)(engine, ecrs.context.addEntity(store), doir.engine.positions.none, members));
+/// assert(entitiesAt!(doir.components.effects.OverloadsLog)(engine, ecrs.context.addEntity(store), doir.engine.positions.end, members));
 /// assert(fp.dynarray.length(members) == 0);
 /// ---
 bool entitiesAt(L)(ref doir.query.QueryEngine engine, EntityId e, Position at, ref EntityId* out_) if (is(L == doir.components.effects.OverloadsLog) || is(L == doir.components.effects.OnLog)) {
@@ -210,7 +222,8 @@ bool entitiesAt(L)(ref doir.query.QueryEngine engine, EntityId e, Position at, r
 
 // --- freezing ----------------------------------------------------------------
 
-/// The flags of a frozen declaration, read by entity alone (`L-Freeze`): its `FrozenFlags`, or the parser's `Flags` if no freeze has folded a modifier into it. Records the read of `e`.
+/// The flags of a frozen declaration, read by entity alone (`L-Freeze`): its `FrozenFlags`, or the parser's `Flags` if no freeze has folded a modifier into it.
+/// Records the read of `e`.
 ///
 /// Examples:
 /// ---
@@ -233,34 +246,29 @@ uint flags(ref doir.query.QueryEngine engine, EntityId e) {
 	return 0;
 }
 
-private bool same(C)(ref const C a, ref const C b) {
-	static if (__traits(hasMember, C, "equal")) return C.equal(a, b);
-	else return a == b;
-}
-
-private void release(C)(ref C value) {
-	static if (__traits(hasMember, C, "finalize")) value.finalize();
-}
-
 // Takes over folded `value` as `e`'s frozen `C`; outside a query, an input commit marking a differing value changed. Returns false on refusal, releasing `value`.
 private bool writeFrozen(C)(ref doir.query.QueryEngine engine, EntityId e, ref C value) {
 	immutable inside = doir.query.currentQuery(engine) != invalidEntity;
 	bool changed = true;
-	auto slot = ecrs.context.findComponent!C(*engine.store, e);
+	auto slot = ecrs.context.findForWriting!C(*engine.store, e);
 	if (slot !is null) {
-		changed = !same(*slot, value);
-		release(*slot);
+		changed = !fp.lifecycle.equal(*slot, value);
+		fp.lifecycle.endLifetime(*slot);
 	} else slot = inside ? doir.query.produce!C(engine, e) : ecrs.context.addComponent!C(*engine.store, e);
 	if (slot is null) {
 		if (!inside) doir.query.fail(engine);
-		release(value);
+		fp.lifecycle.endLifetime(value);
 		return false;
 	}
 	*slot = value;
 	return !changed || inside || doir.query.markChanged(engine, e);
 }
 
-/// Folds every log on `e` into the plain component cross-level queries read: `FrozenFlags`, `Overloads` and `On` (`L-Freeze`). A log-less `e` gets none. Outside a query it is an input commit: call it after `beginRevision`, and it marks `e` changed when a folded value differs from the last freeze. Inside a query, such as an import (`I-Import`), the components it adds are that query's. Returns false if a fold was incomplete or an allocation was refused, which fails the running queries (see `flagsAt`); `e` may then hold some of its frozen components, from this freeze or the last.
+/// Folds every log on `e` into the plain component cross-level queries read: `FrozenFlags`, `Overloads` and `On` (`L-Freeze`).
+/// A log-less `e` gets none.
+/// Outside a query it is an input commit: call it after `beginRevision`, and it marks `e` changed when a folded value differs from the last freeze.
+/// Inside a query, such as an import (`I-Import`), the components it adds are that query's.
+/// Returns false if a fold was incomplete or an allocation was refused, which fails the running queries (see `flagsAt`); `e` may then hold some of its frozen components, from this freeze or the last.
 ///
 /// Examples:
 /// ---
@@ -277,23 +285,23 @@ private bool writeFrozen(C)(ref doir.query.QueryEngine engine, EntityId e, ref C
 /// ---
 bool freezeEntity(ref doir.query.QueryEngine engine, EntityId e) {
 	if (ecrs.context.hasComponent!(doir.components.effects.FlagsLog)(*engine.store, e)) {
-		immutable flags = flagsAt(engine, e, doir.engine.positions.none);
+		immutable flags = flagsAt(engine, e, doir.engine.positions.end);
 		if (flags.isNull) return false;
 		auto frozen = doir.components.effects.FrozenFlags(flags.get);
 		if (!writeFrozen(engine, e, frozen)) return false;
 	}
 	if (ecrs.context.hasComponent!(doir.components.effects.OverloadsLog)(*engine.store, e)) {
 		doir.components.effects.Overloads members;
-		if (!entitiesAt!(doir.components.effects.OverloadsLog)(engine, e, doir.engine.positions.none, members.related)) {
-			release(members);
+		if (!entitiesAt!(doir.components.effects.OverloadsLog)(engine, e, doir.engine.positions.end, members.related)) {
+			fp.lifecycle.endLifetime(members);
 			return false;
 		}
 		if (!writeFrozen(engine, e, members)) return false;
 	}
 	if (ecrs.context.hasComponent!(doir.components.effects.OnLog)(*engine.store, e)) {
 		doir.components.effects.On targets;
-		if (!entitiesAt!(doir.components.effects.OnLog)(engine, e, doir.engine.positions.none, targets.related)) {
-			release(targets);
+		if (!entitiesAt!(doir.components.effects.OnLog)(engine, e, doir.engine.positions.end, targets.related)) {
+			fp.lifecycle.endLifetime(targets);
 			return false;
 		}
 		if (!writeFrozen(engine, e, targets)) return false;
@@ -301,7 +309,8 @@ bool freezeEntity(ref doir.query.QueryEngine engine, EntityId e) {
 	return true;
 }
 
-/// Freezes `root` and every declaration below it, its blocks' contents and function types' parameters, as `freezeEntity` does (`L-Freeze`): once a level's comptime has terminated, every other reader sees one final answer. Returns false on the first entity `freezeEntity` fails on, or on a refused allocation of its own, which fails the running queries (`doir.query.fail`); the entities before it stay frozen.
+/// Freezes `root` and every declaration below it, its blocks' contents and function types' parameters, as `freezeEntity` does (`L-Freeze`): once a level's comptime has terminated, every other reader sees one final answer.
+/// Returns false on the first entity `freezeEntity` fails on, or on a refused allocation of its own, which fails the running queries (`doir.query.fail`); the entities before it stay frozen.
 ///
 /// Examples:
 /// ---
@@ -321,7 +330,7 @@ bool freezeLevel(ref doir.query.QueryEngine engine, EntityId root) {
 	bool grew = fp.dynarray.pushBack(pending, root);
 	while (grew && fp.dynarray.length(pending) > 0) {
 		immutable e = *fp.dynarray.back(pending);
-		cast(void) fp.dynarray.popBack(pending);
+		cast(void) fp.dynarray.removeLast(pending);
 		if (!freezeEntity(engine, e)) return false;
 		if (auto block = ecrs.context.findComponent!(doir.components.ast.Block)(*engine.store, e))
 			grew = fp.dynarray.concatenate(pending, fp.dynarray.slice(block.related));
@@ -421,10 +430,10 @@ unittest { // a read before a modifier's position sees the type unmodified, even
 	immutable t = doir.builders.pushAggregate(root, doir.strings.StringId(0), doir.strings.StringId(1)).block;
 	assert(doir.builders.addFlags(store, t, doir.components.ast.Flags.Export));
 	assert(doir.query.markChanged(engine, t));
-	immutable pt = doir.engine.positions.between(engine.positions, doir.engine.positions.root, doir.engine.positions.none, doir.engine.positions.none);
-	immutable px = doir.engine.positions.between(engine.positions, doir.engine.positions.root, pt, doir.engine.positions.none);
-	immutable pm = doir.engine.positions.between(engine.positions, doir.engine.positions.root, px, doir.engine.positions.none);
-	immutable py = doir.engine.positions.between(engine.positions, doir.engine.positions.root, pm, doir.engine.positions.none);
+	immutable pt = doir.engine.positions.between(engine.positions, doir.engine.positions.root, doir.engine.positions.end, doir.engine.positions.end);
+	immutable px = doir.engine.positions.between(engine.positions, doir.engine.positions.root, pt, doir.engine.positions.end);
+	immutable pm = doir.engine.positions.between(engine.positions, doir.engine.positions.root, px, doir.engine.positions.end);
+	immutable py = doir.engine.positions.between(engine.positions, doir.engine.positions.root, pm, doir.engine.positions.end);
 
 	// Demand runs the modifier on line 3 before the read on line 2.
 	modifierRuns = readRuns = 0;
@@ -470,9 +479,9 @@ unittest { // a read before a modifier's position sees the type unmodified, even
 		immutable fresh = doir.testing.addEntity(store);
 		assert(doir.builders.addFlags(store, fresh, doir.components.ast.Flags.Export));
 		assert(doir.query.markChanged(engine, fresh));
-		auto previous = fp.testing.beginRationedAllocator(n++);
+		auto previous = fp.testing.limitAllocations(n++);
 		auto applied = doir.query.query!Modifier(engine, Modifier.Key([fresh], pm));
-		fp.testing.endRationedAllocator(previous);
+		fp.testing.restoreAllocator(previous);
 		assert(applied is null ? engine.refused : *applied);
 		refused = engine.refused;
 		engine.refused = false;
@@ -492,9 +501,9 @@ unittest { // overload sets fold in position order; a read needing a running que
 	engine.diagnostics = &manager;
 
 	immutable set = doir.testing.addEntity(store), f = doir.testing.addEntity(store), g = doir.testing.addEntity(store);
-	immutable p1 = doir.engine.positions.between(engine.positions, doir.engine.positions.root, doir.engine.positions.none, doir.engine.positions.none);
-	immutable p2 = doir.engine.positions.between(engine.positions, doir.engine.positions.root, p1, doir.engine.positions.none);
-	immutable p3 = doir.engine.positions.between(engine.positions, doir.engine.positions.root, p2, doir.engine.positions.none);
+	immutable p1 = doir.engine.positions.between(engine.positions, doir.engine.positions.root, doir.engine.positions.end, doir.engine.positions.end);
+	immutable p2 = doir.engine.positions.between(engine.positions, doir.engine.positions.root, p1, doir.engine.positions.end);
+	immutable p3 = doir.engine.positions.between(engine.positions, doir.engine.positions.root, p2, doir.engine.positions.end);
 	assert(*doir.query.query!Overload(engine, Overload.Key([set, g], p2)));
 	assert(*doir.query.query!Overload(engine, Overload.Key([set, f], p1)));
 	EntityId* members = null;
@@ -510,8 +519,8 @@ unittest { // overload sets fold in position order; a read needing a running que
 
 	// Targets fold the same way, and freezing reaches a function type's parameters (T-Live, L-Freeze).
 	auto root = doir.builders.createRoot(store);
-	immutable ft = doir.builders.pushFunctionType(root, doir.strings.StringId(0), doir.strings.StringId(1));
-	immutable param = doir.builders.pushParameter(store, ft, doir.strings.StringId(2), doir.strings.StringId(3));
+	immutable functionType = doir.builders.pushFunctionType(root, doir.strings.StringId(0), doir.strings.StringId(1));
+	immutable param = doir.builders.pushParameter(store, functionType, doir.strings.StringId(2), doir.strings.StringId(3));
 	immutable cpu = doir.testing.addEntity(store), gpu = doir.testing.addEntity(store);
 	assert(*doir.query.query!LiveOn(engine, LiveOn.Key([param, gpu], p2)));
 	assert(*doir.query.query!LiveOn(engine, LiveOn.Key([param, cpu], p1)));
@@ -541,7 +550,7 @@ unittest { // overload sets fold in position order; a read needing a running que
 
 	immutable t = doir.testing.addEntity(store);
 	cast(void) doir.query.query!ModifyThenRead(engine, ModifyThenRead.Key([t], p1, p3));
-	assert(diagnose.count(manager) == 1);
+	assert(fp.dynarray.length(manager.diagnostics) == 1);
 	enum prefix = "Q-Cycle: a read needs an effect of a query that is still running: ModifyThenRead";
 	assert(fp.string.slice(manager.diagnostics[0].message)[0 .. prefix.length] == prefix);
 
@@ -554,9 +563,9 @@ unittest { // overload sets fold in position order; a read needing a running que
 		assert(*doir.query.query!Overload(engine, Overload.Key([x, f], p1)));
 		assert(*doir.query.query!LiveOn(engine, LiveOn.Key([x, cpu], p1)));
 		doir.query.beginRevision(engine);
-		auto previous = fp.testing.beginRationedAllocator(n);
+		auto previous = fp.testing.limitAllocations(n);
 		immutable frozen = freezeEntity(engine, x);
-		fp.testing.endRationedAllocator(previous);
+		fp.testing.restoreAllocator(previous);
 		assert(frozen || engine.refused);
 		refused = engine.refused;
 		engine.refused = false;
