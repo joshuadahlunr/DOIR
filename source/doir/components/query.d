@@ -1,4 +1,6 @@
-/// The components a query entity carries (`roadmap.md` Phase 1): its key and value, revisions, dependencies, what it produced and created, and the diagnostics it reported. `doir.query` reads and writes them. Every one holding an entity id mixes in `ecrs.relation.Relates` or forwards to one that does (`E-Remap`).
+/// The components a query entity carries (`roadmap.md` Phase 1): its key and value, revisions, dependencies, what it produced and created, and the diagnostics it reported.
+/// `doir.query` reads and writes them.
+/// Every one holding an entity id mixes in `ecrs.relation.Relates` or forwards to one that does (`E-Remap`).
 ///
 /// Examples:
 /// ---
@@ -35,25 +37,33 @@ struct ChangedAt {
 }
 
 /// The revision a query entity's value was last confirmed current in, and whether that confirmation still holds without checking its dependencies.
-struct VerifiedAt {
+struct Verification {
 	doir.query.Revision revision;
-	bool stale; /// Something it depends on changed since, as `doir.query.markChanged` pushes along `Dependents`. Accessed atomically.
-	bool reports; /// It or a query below it holds diagnostics, which reusing it reports. Accessed atomically.
-	bool reportsBelow; /// A query below it holds diagnostics, so reusing it walks its dependencies to report them, even when it is not stale. Accessed atomically.
+	/// Something it depends on changed since, as `doir.query.markChanged` pushes along `ReadBy`.
+	/// Accessed atomically.
+	bool stale;
+	/// It or a query below it holds diagnostics, which reusing it reports.
+	/// Accessed atomically.
+	bool reports;
+	/// A query below it holds diagnostics, so reusing it walks its dependencies to report them, even when it is not stale.
+	/// Accessed atomically.
+	bool reportsBelow;
 }
 
 /// The entities and query entities a query read during its last run.
-struct DependsOn {
+struct Reads {
 	mixin ecrs.relation.Relates;
 }
 
-/// The queries a query depends on that hold diagnostics, or have one below them that does, in the order it read them: what reusing it walks to, to report them again, instead of every dependency. Every query entity has one, so a worker confirming a query only writes it.
-struct ReportingBelow {
+/// The queries a query depends on that hold diagnostics, or have one below them that does, in the order it read them: what reusing it walks to, to report them again, instead of every dependency.
+/// Every query entity has one, so a worker confirming a query only writes it.
+struct ReportingReads {
 	mixin ecrs.relation.Relates;
 }
 
-/// The query entities that read an entity, so a change to it marks them stale. It may still list a query that no longer reads it, which costs that query one re-validation.
-struct Dependents {
+/// The query entities that read an entity, so a change to it marks them stale.
+/// It may still list a query that no longer reads it, which costs that query one re-validation.
+struct ReadBy {
 	mixin ecrs.relation.Relates;
 }
 
@@ -67,7 +77,7 @@ alias StripFunction = void function(ref ecrs.context.Context store, EntityId e, 
 alias HashFunction = size_t function(ref const ecrs.context.Context store, EntityId e, size_t component, EntityId owner) @nogc nothrow;
 
 /// One component a query wrote to `entity`, `component` being its libECRS component id, with how to remove and hash it.
-struct Produced {
+struct Output {
 	mixin ecrs.relation.Relates!"entity";
 	size_t component; /// The component written.
 	StripFunction strip; /// Removes it.
@@ -75,8 +85,8 @@ struct Produced {
 }
 
 /// Every component a query wrote during its last run, removed before it runs again and when it is evicted, and the hash of their contents at the end of that run.
-struct Produces {
-	Produced* items = null; /// What was written, in order.
+struct Outputs {
+	Output* items = null; /// What was written, in order.
 	size_t hash = 0; /// The contents' hash, which early cutoff compares.
 
 	/// The `E-Remap` hook libECRS finds by name.
@@ -84,30 +94,30 @@ struct Produces {
 	/// Examples:
 	/// ---
 	/// static import fp.dynarray;
-	/// Produces list;
+	/// Outputs list;
 	/// scope(exit) list.finalize();
-	/// assert(fp.dynarray.pushBack(list.items, Produced([1], 0)));
+	/// assert(fp.dynarray.pushBack(list.items, Output([1], 0)));
 	/// immutable EntityId[3] remap = [0, 2, 1];
-	/// Produces.remapEntities(list, remap[]);
+	/// Outputs.remapEntities(list, remap[]);
 	/// assert(list.items[0].entity == 2);
 	/// ---
-	static void remapEntities(ref Produces self, const(EntityId)[] remap) @nogc nothrow {
-		foreach (ref item; fp.dynarray.slice(self.items)) Produced.remapEntities(item, remap);
+	static void remapEntities(ref Outputs self, const(EntityId)[] remap) @nogc nothrow {
+		foreach (ref item; fp.dynarray.slice(self.items)) Output.remapEntities(item, remap);
 	}
 	/// Releases the list when the component is removed.
 	///
 	/// Examples:
 	/// ---
 	/// static import fp.dynarray;
-	/// Produces list;
-	/// assert(fp.dynarray.pushBack(list.items, Produced([1], 0)));
+	/// Outputs list;
+	/// assert(fp.dynarray.pushBack(list.items, Output([1], 0)));
 	/// list.finalize();
 	/// ---
 	void finalize() @nogc nothrow { fp.dynarray.free(items); }
 }
 
 /// The entities a query created, indexed by creation sequence number, so a re-run hands back the same ids.
-struct Creates {
+struct CreatedEntities {
 	mixin ecrs.relation.Relates;
 }
 
@@ -125,7 +135,8 @@ struct QueryAnnotation {
 	char* message = null; /// An owned fp string.
 }
 
-/// A diagnostic a query reported: the entity it is about, `subject`, or `invalidEntity`, how severe it is, its message, the hint saying how to fix it, and the other entities involved. Its locations are resolved from the entities only when it is reported.
+/// A diagnostic a query reported: the entity it is about, `subject`, or `invalidEntity`, how severe it is, its message, the hint saying how to fix it, and the other entities involved.
+/// Its locations are resolved from the entities only when it is reported.
 struct QueryDiagnostic {
 	mixin ecrs.relation.Relates!"subject";
 	diagnose.Kind kind; /// How severe it is.
@@ -140,7 +151,7 @@ struct QueryDiagnostic {
 /// ---
 /// static import fp.string;
 /// static import diagnose;
-/// auto d = QueryDiagnostic([1], diagnose.Kind.error, fp.string.makeDynamic("bad"));
+/// auto d = QueryDiagnostic([1], diagnose.Kind.error, fp.string.clone("bad").get(null));
 /// freeDiagnostic(d);
 /// assert(d.message is null);
 /// ---
@@ -200,35 +211,65 @@ struct ProvisionalOn {
 	mixin ecrs.relation.Relates!"head";
 }
 
-/// Tags a query whose last run took part in a cycle (`Q-Cycle`). It is re-run, not re-validated, in a later revision, since its dependencies loop back to it.
+/// Tags a query whose last run took part in a cycle (`Q-Cycle`).
+/// It is re-run, not re-validated, in a later revision, since its dependencies loop back to it.
 struct InCycle {
 	enum isTag = true;
 }
 
-/// Which thread runs a query, if any, and where, so finding it never scans a stack; every query entity has one. A worker claims a query by setting `owner` atomically, and a demand from another worker waits until it is 0 again (`doir.query.demandEach`).
-struct Running {
-	uint owner; /// 0 if no thread runs it; 1 for the engine's own thread; 2 on for a batch's workers. Accessed atomically.
+/// Which thread runs a query, if any, and where, so finding it never scans a stack; every query entity has one.
+/// A worker claims a query by setting `owner` atomically, and a demand from another worker waits until it is 0 again (`doir.query.demandEach`).
+struct Claim {
+	/// The owner id of the thread running it, one `doir.query` hands each thread that demands on the engine, or 0 if no thread runs it.
+	/// Accessed atomically.
+	uint owner;
 	size_t frame = size_t.max; /// Its index in its owner's stack while it runs, `size_t.max` otherwise, as while a worker validates it.
-	bool withheld; /// A worker brought it up to date, and it or a query below it has diagnostics not yet reported, which the engine's thread reports in order.
+	bool reportsDeferred; /// A worker brought it up to date, and it or a query below it has diagnostics not yet reported, which the engine's thread reports in order.
+}
+
+
+// --- systems -----------------------------------------------------------------
+
+/// The state of system `S`, which the engine runs as one memoized query per entity of its domain (`doir.schedules.runSystem`), on an entity of its own: the entities its next run visits, the revision it last ran in, and how far it has read the engine's log of changed entities.
+///
+/// Examples:
+/// ---
+/// struct Tracked {
+/// 	alias Tag = int;
+/// 	static bool run(ref doir.query.QueryEngine engine, EntityId e) @nogc nothrow { return true; }
+/// }
+/// SystemState!Tracked state;
+/// assert(state.lastRunRevision == 0);
+/// ---
+struct SystemState(S) {
+	mixin ecrs.relation.Relates; /// The entities to visit: those whose memos hold diagnostics, and those whose memos a change marked stale since the last run (`onStale`).
+	doir.query.Revision lastRunRevision; /// The revision it last ran in; 0 before its first run, or once it must visit its whole domain again.
+	size_t cursor; /// Where in the engine's change log its next run reads from (`doir.query.changesSince`).
 }
 
 
 // --- query entities ----------------------------------------------------------
 
-/// Brings query entity `q` up to date, re-running it if needed. Returns false if it cannot: `q` is already running, the depth limit is reached, or its run failed on a refused allocation.
-alias RefreshFunction = bool function(ref doir.query.QueryEngine engine, EntityId q) @nogc nothrow;
+/// Brings query entity `q` up to date, re-running it if needed.
+/// Returns false if it cannot: `q` is already running, the depth limit is reached, or its run failed on a refused allocation.
+alias BringUpToDateFunction = bool function(ref doir.query.QueryEngine engine, EntityId q) @nogc nothrow;
 
 /// Discards query entity `q`'s value and what it produced and created, so the next demand runs it.
 alias ResetFunction = void function(ref doir.query.QueryEngine engine, EntityId q) @nogc nothrow;
 
-/// Appends a description of query entity `q`, such as `Layout(12)`, to an fp string. Returns false if the string could not grow, leaving it holding a prefix of the description.
-alias DescribeFunction = bool function(ref doir.query.QueryEngine engine, EntityId q, ref char* out_) @nogc nothrow;
+/// Tells query entity `q`'s type that a change marked `q` stale, as `doir.query.revalidateStale` finds it, whether or not anything reads it; for a query type declaring `onStale`.
+alias StaleFunction = void function(ref doir.query.QueryEngine engine, EntityId q) @nogc nothrow;
+
+/// Appends a description of query entity `q`, such as `Layout(12)`, to an fp string.
+/// Returns false if the string could not grow, leaving it holding a prefix of the description.
+alias AppendDescriptionFunction = bool function(ref doir.query.QueryEngine engine, EntityId q, ref char* out_) @nogc nothrow;
 
 /// Marks an entity as a query instance, with the type-erased entry points that let a dependent re-validate it and a cycle report name it.
-struct QueryInfo {
-	RefreshFunction refresh; /// Re-validates or re-runs it.
+struct Hooks {
+	BringUpToDateFunction bringUpToDate; /// Re-validates or re-runs it.
 	ResetFunction reset; /// Discards its value.
-	DescribeFunction describe; /// Names it.
+	AppendDescriptionFunction appendDescription; /// Names it.
+	StaleFunction stale; /// Hears that it went stale; null for a query type declaring no `onStale`.
 }
 
 /// The key of a query entity of type `Q`.
@@ -323,5 +364,5 @@ struct QueryValue(Q) {
 }
 
 unittest { // libECRS silently skips a holder whose hook is not `@nogc nothrow`; every holder of an entity id must pass (E-Remap)
-	static assert(ecrs.registry.hasRemapEntities!DependsOn && ecrs.registry.hasRemapEntities!ReportingBelow && ecrs.registry.hasRemapEntities!Produces && ecrs.registry.hasRemapEntities!Creates && ecrs.registry.hasRemapEntities!Provenance && ecrs.registry.hasRemapEntities!QueryDiagnostics && ecrs.registry.hasRemapEntities!QueryAnnotation && ecrs.registry.hasRemapEntities!ProvisionalOn);
+	static assert(ecrs.registry.hasRemapEntities!Reads && ecrs.registry.hasRemapEntities!ReportingReads && ecrs.registry.hasRemapEntities!Outputs && ecrs.registry.hasRemapEntities!CreatedEntities && ecrs.registry.hasRemapEntities!Provenance && ecrs.registry.hasRemapEntities!QueryDiagnostics && ecrs.registry.hasRemapEntities!QueryAnnotation && ecrs.registry.hasRemapEntities!ProvisionalOn);
 }

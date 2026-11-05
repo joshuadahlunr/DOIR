@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Checks DDoc against AGENTS.md: every `---` example compiles and passes under -betterC, and every public definition is documented, with an example if it is a function.
 
-Each example becomes a unittest in a generated module that imports only the module it documents, as a user would: outside the module's package, unless it documents a `package` definition. `#line` directives point failures back at the example's line in the source.
+Each example becomes a unittest in a generated module that imports only the module it documents, as a user would: outside the module's package, unless it documents a `package` definition.
+`#line` directives point failures back at the example's line in the source.
 
 A module defining `main` is checked but not compiled into the doctest binary, which has its own `main`, and `main` needs no example.
 

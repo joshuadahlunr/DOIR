@@ -67,7 +67,8 @@ def table(name, doc, ranges):
 
 
 def generate():
-	"""The text of `tables.d` for the current `doir.peg`. Raises `pe.Error` if the grammar does not compile."""
+	"""The text of `tables.d` for the current `doir.peg`.
+Raises `pe.Error` if the grammar does not compile."""
 	definitions = pe.compile(GRAMMAR.read_text(encoding="utf-8"), ignore=None, flags=pe.NONE).grammar.definitions
 	start, cont, space, words = [], [], [], []
 	classes(definitions["UnicodeIdentifierStart"], start)

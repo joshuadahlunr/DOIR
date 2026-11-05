@@ -3,7 +3,8 @@
 # requires-python = ">=3.11"
 # dependencies = ["pe>=0.6"]
 # ///
-"""Parse DOIR sources against doir.peg and report syntax errors plus the rules that need a tree walk: WF-Term (terminators), WF-Order (a binding read before it is bound), D-Return (a `_` destination receiving a `_` return), B-Tail (a tail call ends its block), L-Scan and L-Sema (tower and check calls at level scope), and I-Language (no frontend is registered, so every `language` block is an error). WF-Arg is enforced by the grammar itself: `function_call` accepts only `Identifier _` arguments.
+"""Parse DOIR sources against doir.peg and report syntax errors plus the rules that need a tree walk: WF-Term (terminators), WF-Order (a binding read before it is bound), D-Return (a `_` destination receiving a `_` return), B-Tail (a tail call ends its block), L-Scan and L-Sema (tower and check calls at level scope), and I-Language (no frontend is registered, so every `language` block is an error).
+WF-Arg is enforced by the grammar itself: `function_call` accepts only `Identifier _` arguments.
 
 doir.peg is a pe (https://github.com/goodmami/pe) grammar, loaded by `doir_grammar.py`; each rule match becomes a `Node`.
 
@@ -47,7 +48,8 @@ def is_terminator_call(call: str) -> bool:
 
 
 def call_arguments(call: doir_grammar.Node) -> list[doir_grammar.Node]:
-	"""The argument nodes of a call: every `Identifier` child but the callee. WF-Arg makes identifiers the only argument form, so arguments are direct children of the call."""
+	"""The argument nodes of a call: every `Identifier` child but the callee.
+WF-Arg makes identifiers the only argument form, so arguments are direct children of the call."""
 	return call.children("Identifier")[1:]
 
 
@@ -209,7 +211,8 @@ class Checker:
 			yield Decl(name, type_name, value, is_value, is_function, self.line(child))
 
 	def check_block(self, block: doir_grammar.Node, *, executed: bool = True, ordered: bool = True, outer: dict[str, tuple[int, Decl]] | None = None, deadline: int = 0, prefix: str = "", in_function: bool = False, level_scope: bool = True) -> None:
-		"""`outer` maps the enclosing block's names to (declaration index, declaration); `deadline` is the index at which this block is spliced into the enclosing one, and a spliced block cannot read a value the enclosing block binds after it. `in_function` says whether a function body encloses the block, `level_scope` whether it is a file root or namespace (L-Freeze), and `prefix` names the enclosing namespace."""
+		"""`outer` maps the enclosing block's names to (declaration index, declaration); `deadline` is the index at which this block is spliced into the enclosing one, and a spliced block cannot read a value the enclosing block binds after it.
+`in_function` says whether a function body encloses the block, `level_scope` whether it is a file root or namespace (L-Freeze), and `prefix` names the enclosing namespace."""
 		outer = outer or {}
 		decls = list(self.declarations(block))
 		index: dict[str, int] = {}
@@ -316,7 +319,8 @@ def check_file(parser, path: str, *, is_program: bool, dump_ast: bool) -> bool:
 	"""Checks the file at `path` and prints its report; returns whether it passed."""
 	src, ast = "", None
 	try:
-		src = pathlib.Path(path).read_text()
+		with open(path, encoding="utf-8", newline="") as file:  # keep a lone `\r`, which universal newlines would turn into `\n`
+			src = file.read()
 		ast = doir_grammar.parse(parser, src)
 	except OSError as exc:
 		errors = [f"cannot read: {exc.strerror}; check that the path names a readable file"]

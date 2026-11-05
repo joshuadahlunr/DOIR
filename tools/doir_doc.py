@@ -5,7 +5,9 @@
 # ///
 """Generates Markdown documentation from DOIR sources, and checks their comments against AGENTS.md.
 
-A `//` or `#` comment directly above a declaration outside every function body and block documents it, and one at the top of a file documents the file. Namespaces and type bodies with declarations become sections, each listing its declarations in source order before its subsections; a declaration is shown with its signature, and a `_` declaration only when it is documented. A declaration's trailing comment is appended to its documentation.
+A `//` or `#` comment directly above a declaration outside every function body and block documents it, and one at the top of a file documents the file.
+Namespaces and type bodies with declarations become sections, each listing its declarations in source order before its subsections; a declaration is shown with its signature, and a `_` declaration only when it is documented.
+A declaration's trailing comment is appended to its documentation.
 
 With `--check`, nothing is written; instead each comment that breaks AGENTS.md is reported: a sentence hard-wrapped over several lines, a documentation line holding more than one sentence, a free-standing comment over 25 words (rule tags not counted), or a file without a comment at its top.
 
@@ -104,7 +106,7 @@ class Source:
 
 	def __init__(self, path: pathlib.Path, src: str, root: doir_grammar.Node):
 		self.path, self.src, self.root = path, src, root
-		self.lines = src.split("\n")
+		self.lines = doir_grammar.LINE_BREAK.split(src)
 		self.comments = self.collect_comments()
 
 	def text(self, node: doir_grammar.Node) -> str:
@@ -181,7 +183,8 @@ class Source:
 
 
 def load(parser, path: pathlib.Path) -> Source:
-	"""Parses the file at `path`. Raises `OSError` if it cannot be read, and `pe.ParseError` if it does not parse."""
+	"""Parses the file at `path`.
+Raises `OSError` if it cannot be read, and `pe.ParseError` if it does not parse."""
 	src = path.read_text(encoding="utf-8")
 	return Source(path, src, doir_grammar.parse(parser, src))
 
@@ -193,11 +196,13 @@ def render(source: Source, decls: list[Declaration]) -> str:
 	file_doc = [paragraph_text(p) for p in top.paragraphs()] if top else []
 
 	def emit_doc(paragraphs: list[str]) -> None:
+		"""Appends `paragraphs` to the page, a multi-line one as a code block."""
 		for paragraph in paragraphs:
 			out.extend([paragraph if "\n" not in paragraph else f"```\n{paragraph}\n```", ""])
 
 	# Markdown cannot close a section, so a section's own declarations come before its subsections.
 	def emit(items: list[Declaration], depth: int) -> None:
+		"""Appends `items` at heading depth `depth`: each declaration that is not a section, then each section with its children."""
 		for d in (d for d in items if not d.section):
 			out.extend(["```doir", d.signature, "```"] if "\n" in d.signature else [f"`{d.signature}`"])
 			out.append("")

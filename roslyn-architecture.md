@@ -184,7 +184,7 @@ What carries over is the reuse idea, at declaration granularity (roadmap Phase 2
   The old-to-new mapping is applied as one `E-Remap` renumbering.
 - **Positions out of the dependency graph.**
   Entities store a `SourceSpan` relative to the parent block and an order key rather than an ordinal position.
-  Spans are untracked reads, so moving text re-runs nothing; the absolute `SourceLocation` is derived, like a red node's offset, and only diagnostics and the editor read it.
+  Spans are untracked reads, so moving text re-runs nothing; the absolute `ByteRange` is derived, like a red node's offset, and only diagnostics and the editor read it.
 - **Trivia stays in the lexer's token stream**, which the editor reads for highlighting.
   It never becomes entities.
 

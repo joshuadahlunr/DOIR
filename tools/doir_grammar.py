@@ -18,6 +18,9 @@ GRAMMAR = ROOT / "doir.peg"
 # Possessive repetition keeps PEG semantics: the opening run takes every quote, and the content stops at the first closing run not followed by a quote.
 RAW_STRING = pe.operators.Regex(r'(?P<delim>"""(?:")*+)(?:(?!(?P=delim)(?!")).)*+(?P=delim)', re.DOTALL)
 
+# `\n`, `\r\n` and a lone `\r` each end one line, as GCC and the compiler's `fp.string.breaksLine` count them.
+LINE_BREAK = re.compile(r"\r\n|\n|\r")
+
 
 class Node:
 	"""An AST node: one per rule match, spanning `src[pos:end]`."""
@@ -54,7 +57,9 @@ def rule_names(text):
 
 
 def load(*paths):
-	"""Compiles the grammars at `paths` into one parser whose start rule is the first rule of the first path. A later grammar may only add rules. Raises `pe.Error` if they do not compile."""
+	"""Compiles the grammars at `paths` into one parser whose start rule is the first rule of the first path.
+	A later grammar may only add rules.
+	Raises `pe.Error` if they do not compile."""
 	texts = [pathlib.Path(p).read_text() for p in paths]
 	seen = set()
 	for path, text in zip(paths, texts):
@@ -83,8 +88,8 @@ def grammar_error(exc):
 
 @functools.lru_cache(maxsize=8)
 def line_starts(src):
-	"""The offset each line of `src` starts at, the first line's at index 0."""
-	return [0] + [m.end() for m in re.finditer("\n", src)]
+	"""The offset each line of `src` starts at, the first line's at index 0, breaking lines at each `LINE_BREAK`."""
+	return [0] + [m.end() for m in LINE_BREAK.finditer(src)]
 
 
 def line_at(src, pos):
@@ -102,8 +107,8 @@ def line_of(src, line):
 	starts = line_starts(src)
 	if line < 1 or line > len(starts):
 		return ""
-	end = src.find("\n", starts[line - 1])
-	return src[starts[line - 1]:end if end >= 0 else len(src)]
+	end = LINE_BREAK.search(src, starts[line - 1])
+	return src[starts[line - 1]:end.start() if end else len(src)]
 
 
 def text_of(src, node):
@@ -134,9 +139,16 @@ def expected_terminals(message):
 	return out
 
 
+def error_position(src, exc):
+	"""The offset in `src` of `exc`, a `pe.ParseError` from parsing it, or `len(src)` if pe gave no line. pe counts lines by `\n` alone, so its line is not `line_at`'s where `src` has a lone `\r`."""
+	if exc.lineno is None:
+		return len(src)
+	return ([0] + [m.end() for m in re.finditer("\n", src)])[exc.lineno] + exc.offset
+
+
 def syntax_error(src, exc):
 	"""Formats a `pe.ParseError` as `line L:C: syntax error, unexpected X; insert one of Y before it | near: <line>`, or with `remove it or rewrite the line` as the hint when pe names no terminal."""
-	pos = line_starts(src)[exc.lineno] + exc.offset if exc.lineno is not None else len(src)
+	pos = error_position(src, exc)
 	ln = line_at(src, pos)
 	token = re.compile(r"\w+|.", re.DOTALL).match(src, pos)
 	unexpected = repr(token.group()) if token else "end of input"
@@ -146,5 +158,6 @@ def syntax_error(src, exc):
 
 
 def parse(parser, src):
-	"""The root `Node` of `src`. Raises `pe.ParseError` on a syntax error; format it with `syntax_error`."""
+	"""The root `Node` of `src`.
+	Raises `pe.ParseError` on a syntax error; format it with `syntax_error`."""
 	return parser.match(src, flags=pe.MEMOIZE | pe.STRICT).value()

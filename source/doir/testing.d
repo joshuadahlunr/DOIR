@@ -1,4 +1,5 @@
-/// Test-only helpers shared by this repository's unittests. Compiled only under `-unittest`.
+/// Test-only helpers shared by this repository's unittests.
+/// Compiled only under `-unittest`.
 module doir.testing;
 
 version(unittest):

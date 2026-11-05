@@ -7,3 +7,5 @@ dub.selections.json
 *.a
 *.lst
 perf.*
+__pycache__/
+*.pyc

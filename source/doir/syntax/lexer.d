@@ -1,6 +1,8 @@
 /// The lexer: a file's text as a token stream, trivia included, that both the parser and the editor's highlighting read (`roadmap.md` Phase 2).
 ///
-/// It decides what each token is, following `doir.peg`'s lexical rules and their PEG ordered choice exactly: identifiers and keywords (from the tables `tools/gen_tables.py` generates), constants, comments, and `newline` as a token of its own, so a newline inside a `LongComment` is never one. A `language` body (`matching_braces`) and a `SourceInfo` are single opaque tokens, since neither is made of DOIR tokens. Whether a `newline` is a `Terminator` depends on the production, so the parser decides it.
+/// It decides what each token is, following `doir.peg`'s lexical rules and their PEG ordered choice exactly: identifiers and keywords (from the tables `tools/gen_tables.py` generates), constants, comments, and `newline` as a token of its own, so a newline inside a `LongComment` is never one.
+/// A `language` body (`matching_braces`) and a `SourceInfo` are single opaque tokens, since neither is made of DOIR tokens.
+/// Whether a `newline` is a `Terminator` depends on the production, so the parser decides it.
 ///
 /// Lexing reads only the text, so files can be lexed in parallel.
 ///
@@ -16,6 +18,8 @@ module doir.syntax.lexer;
 
 static import fp.dynarray;
 static import fp.string;
+static import fp.string.ascii;
+static import fp.string.utf;
 version(unittest) static import fp.testing;
 
 static import doir.syntax.tables;
@@ -33,8 +37,8 @@ enum TokenKind : ubyte {
 	newline, /// `\n`, `\r\n` or `\r`; a `Terminator` where the grammar has `wsc`, whitespace where it has `_`.
 	identifier, /// `Identifier`, `%"quoted"` included.
 	keyword, /// A word of `Keywords`, which no identifier is.
-	integer, /// `IntegerConstant`.
-	float_, /// `FloatConstant`.
+	integer, /// `IntegerConstant`, optionally preceded by `-`.
+	float_, /// `FloatConstant`, optionally preceded by `-`.
 	string_, /// `'"' StringChar* '"'`.
 	rawString, /// `RawString`.
 	character, /// `'\'' StringChar '\''`.
@@ -85,17 +89,6 @@ const(char)[] text(Token token, const(char)[] source) {
 
 // --- character classes -------------------------------------------------------
 
-private bool inRanges(const(uint[2])[] table, uint c) {
-	size_t lo = 0, hi = table.length;
-	while (lo < hi) {
-		immutable mid = (lo + hi) / 2;
-		if (c < table[mid][0]) hi = mid;
-		else if (c > table[mid][1]) lo = mid + 1;
-		else return true;
-	}
-	return false;
-}
-
 // The ASCII rows of the tables, one bit per class, so the common case is a single load.
 private enum ubyte startBit = 1, continueBit = 2, spaceBit = 4;
 private immutable ubyte[0x80] ascii = () {
@@ -117,7 +110,7 @@ private immutable ubyte[0x80] ascii = () {
 /// ---
 bool isIdentifierStart(uint c) {
 	if (c < 0x80) return (ascii[c] & startBit) != 0;
-	return inRanges(doir.syntax.tables.identifierStart[], c);
+	return fp.string.utf.inRanges(doir.syntax.tables.identifierStart[], c);
 }
 
 /// Whether code point `c` may continue an identifier (`UnicodeIdentifierContinue`); `.` may too, but is not in this class.
@@ -128,7 +121,7 @@ bool isIdentifierStart(uint c) {
 /// ---
 bool isIdentifierContinue(uint c) {
 	if (c < 0x80) return (ascii[c] & continueBit) != 0;
-	return inRanges(doir.syntax.tables.identifierContinue[], c);
+	return fp.string.utf.inRanges(doir.syntax.tables.identifierContinue[], c);
 }
 
 /// Whether code point `c` is `wsc` whitespace; newlines are not.
@@ -139,7 +132,7 @@ bool isIdentifierContinue(uint c) {
 /// ---
 bool isWhitespace(uint c) {
 	if (c < 0x80) return (ascii[c] & spaceBit) != 0;
-	return inRanges(doir.syntax.tables.whitespace[], c);
+	return fp.string.utf.inRanges(doir.syntax.tables.whitespace[], c);
 }
 
 private enum size_t failed = size_t.max;
@@ -149,7 +142,7 @@ private uint decode(const(char)[] s, ref size_t i) {
 	if (s[i] < 0x80) return s[i++];
 	bool valid;
 	immutable start = i;
-	immutable c = fp.string.decodeUtf8(s, i, valid);
+	immutable c = fp.string.utf.decode(s, i, valid);
 	if (!valid) {
 		i = start + 1;
 		return uint.max;
@@ -157,16 +150,12 @@ private uint decode(const(char)[] s, ref size_t i) {
 	return c;
 }
 
-private bool isDigit(const(char)[] s, size_t i) { return i < s.length && fp.string.isDigit(s[i]); }
-private bool isHex(const(char)[] s, size_t i) { return i < s.length && fp.string.isHexDigit(s[i]); }
-private bool isChar(const(char)[] s, size_t i, char c) { return i < s.length && s[i] == c; }
+private bool digitAt(const(char)[] s, size_t i) { return i < s.length && fp.string.ascii.isDigit(s[i]); }
+private bool hexDigitAt(const(char)[] s, size_t i) { return i < s.length && fp.string.ascii.isHexDigit(s[i]); }
+private bool charAt(const(char)[] s, size_t i, char c) { return i < s.length && s[i] == c; }
 
-private size_t skipDigits(const(char)[] s, size_t i) { while (isDigit(s, i)) ++i; return i; }
-private size_t skipHex(const(char)[] s, size_t i) { while (isHex(s, i)) ++i; return i; }
-
-private bool startsWith(const(char)[] s, size_t i, const(char)[] prefix) {
-	return s.length - i >= prefix.length && s[i .. i + prefix.length] == prefix;
-}
+private size_t skipDigits(const(char)[] s, size_t i) { while (digitAt(s, i)) ++i; return i; }
+private size_t skipHex(const(char)[] s, size_t i) { while (hexDigitAt(s, i)) ++i; return i; }
 
 
 // --- lexical rules -----------------------------------------------------------
@@ -175,16 +164,16 @@ private bool startsWith(const(char)[] s, size_t i, const(char)[] prefix) {
 ///
 /// Examples:
 /// ---
-/// assert(integerAt("0x1F;", 0) == 4 && integerAt("09", 0) == 1 && integerAt("x", 0) == size_t.max);
+/// assert(integerEnd("0x1F;", 0) == 4 && integerEnd("09", 0) == 1 && integerEnd("x", 0) == size_t.max);
 /// ---
-size_t integerAt(const(char)[] s, size_t i) {
-	if (startsWith(s, i, "0x") && isHex(s, i + 2)) return skipHex(s, i + 2);
-	if (startsWith(s, i, "0b") && (isChar(s, i + 2, '0') || isChar(s, i + 2, '1'))) {
+size_t integerEnd(const(char)[] s, size_t i) {
+	if (fp.string.startsWith(s, "0x", i) && hexDigitAt(s, i + 2)) return skipHex(s, i + 2);
+	if (fp.string.startsWith(s, "0b", i) && (charAt(s, i + 2, '0') || charAt(s, i + 2, '1'))) {
 		i += 2;
-		while (isChar(s, i, '0') || isChar(s, i, '1')) ++i;
+		while (charAt(s, i, '0') || charAt(s, i, '1')) ++i;
 		return i;
 	}
-	if (isChar(s, i, '0')) {
+	if (charAt(s, i, '0')) {
 		++i;
 		while (i < s.length && s[i] >= '0' && s[i] <= '7') ++i;
 		return i;
@@ -194,37 +183,37 @@ size_t integerAt(const(char)[] s, size_t i) {
 }
 
 // `[pP][-+]? [0-9]+` or `[eE][-+]? [0-9]+`, or `i` itself when it is absent, as `?` makes it.
-private size_t exponentAt(const(char)[] s, size_t i, char lower, char upper) {
-	if (!isChar(s, i, lower) && !isChar(s, i, upper)) return i;
+private size_t exponentEnd(const(char)[] s, size_t i, char lower, char upper) {
+	if (!charAt(s, i, lower) && !charAt(s, i, upper)) return i;
 	size_t j = i + 1;
-	if (isChar(s, j, '+') || isChar(s, j, '-')) ++j;
-	return isDigit(s, j) ? skipDigits(s, j) : i;
+	if (charAt(s, j, '+') || charAt(s, j, '-')) ++j;
+	return digitAt(s, j) ? skipDigits(s, j) : i;
 }
 
 /// `FloatConstant`, hexadecimal or decimal: the index after the float at `i`, or `size_t.max`.
 ///
 /// Examples:
 /// ---
-/// assert(floatAt("1.5e3 ", 0) == 5 && floatAt(".5", 0) == 2 && floatAt("0x1p4", 0) == 5 && floatAt("12", 0) == size_t.max);
+/// assert(floatEnd("1.5e3 ", 0) == 5 && floatEnd(".5", 0) == 2 && floatEnd("0x1p4", 0) == 5 && floatEnd("12", 0) == size_t.max);
 /// ---
-size_t floatAt(const(char)[] s, size_t i) {
-	if (startsWith(s, i, "0x")) {
+size_t floatEnd(const(char)[] s, size_t i) {
+	if (fp.string.startsWith(s, "0x", i)) {
 		immutable m = i + 2;
 		// HexDigit* '.' HexDigit+ / HexDigit+ '.' HexDigit*
 		immutable lead = skipHex(s, m);
-		if (isChar(s, lead, '.') && (isHex(s, lead + 1) || lead > m))
-			return exponentAt(s, skipHex(s, lead + 1), 'p', 'P');
+		if (charAt(s, lead, '.') && (hexDigitAt(s, lead + 1) || lead > m))
+			return exponentEnd(s, skipHex(s, lead + 1), 'p', 'P');
 		// '0x' HexDigit+ HexExponent
 		if (lead > m) {
-			immutable e = exponentAt(s, lead, 'p', 'P');
+			immutable e = exponentEnd(s, lead, 'p', 'P');
 			if (e > lead) return e;
 		}
 	}
 	immutable lead = skipDigits(s, i);
-	if (isChar(s, lead, '.') && (isDigit(s, lead + 1) || lead > i))
-		return exponentAt(s, skipDigits(s, lead + 1), 'e', 'E');
+	if (charAt(s, lead, '.') && (digitAt(s, lead + 1) || lead > i))
+		return exponentEnd(s, skipDigits(s, lead + 1), 'e', 'E');
 	if (lead > i) {
-		immutable e = exponentAt(s, lead, 'e', 'E');
+		immutable e = exponentEnd(s, lead, 'e', 'E');
 		if (e > lead) return e;
 	}
 	return failed;
@@ -234,10 +223,10 @@ size_t floatAt(const(char)[] s, size_t i) {
 ///
 /// Examples:
 /// ---
-/// assert(stringCharAt(`\x41"`, 0) == 4 && stringCharAt(`"`, 0) == size_t.max && stringCharAt("é", 0) == 2);
+/// assert(stringCharEnd(`\x41"`, 0) == 4 && stringCharEnd(`"`, 0) == size_t.max && stringCharEnd("é", 0) == 2);
 /// ---
-size_t stringCharAt(const(char)[] s, size_t i) {
-	if (i >= s.length || s[i] == '"' || s[i] == '\n') return failed;
+size_t stringCharEnd(const(char)[] s, size_t i) {
+	if (i >= s.length || s[i] == '"' || s[i] == '\n' || s[i] == '\r') return failed;
 	if (s[i] != '\\') {
 		cast(void) decode(s, i);
 		return i;
@@ -250,37 +239,37 @@ size_t stringCharAt(const(char)[] s, size_t i) {
 			size_t j = i + 1;
 			while (j < s.length && s[j] >= '0' && s[j] <= '7') ++j;
 			return j;
-		case 'x': return isHex(s, i + 2) ? skipHex(s, i + 2) : failed;
+		case 'x': return hexDigitAt(s, i + 2) ? skipHex(s, i + 2) : failed;
 		case 'u', 'U':
 			immutable want = e == 'u' ? 4 : 8;
-			foreach (k; 0 .. want) if (!isHex(s, i + 2 + k)) return failed;
+			foreach (k; 0 .. want) if (!hexDigitAt(s, i + 2 + k)) return failed;
 			return i + 2 + want;
 		default: return failed;
 	}
 }
 
 // `'"' StringChar* '"'` from `i`, at its opening quote: its end, or the negated position it failed at.
-private size_t quotedAt(const(char)[] s, size_t i, ref size_t failedAt) {
+private size_t quotedEnd(const(char)[] s, size_t i, ref size_t failedAt) {
 	size_t j = i + 1;
 	for (;;) {
-		immutable next = stringCharAt(s, j);
+		immutable next = stringCharEnd(s, j);
 		if (next == failed) break;
 		j = next;
 	}
-	if (isChar(s, j, '"')) return j + 1;
+	if (charAt(s, j, '"')) return j + 1;
 	failedAt = j;
 	return failed;
 }
 
 // RawString: an opening run of n >= 3 quotes, closed by the first run of n quotes not followed by another.
-private size_t rawStringAt(const(char)[] s, size_t i) {
+private size_t rawStringEnd(const(char)[] s, size_t i) {
 	size_t n = 0;
-	while (isChar(s, i + n, '"')) ++n;
+	while (charAt(s, i + n, '"')) ++n;
 	if (n < 3) return failed;
 	for (size_t j = i + n; j < s.length; ++j) {
 		if (s[j] != '"') continue;
 		size_t run = 0;
-		while (isChar(s, j + run, '"')) ++run;
+		while (charAt(s, j + run, '"')) ++run;
 		if (run >= n) return j + run;
 		j += run - 1;
 	}
@@ -288,12 +277,12 @@ private size_t rawStringAt(const(char)[] s, size_t i) {
 }
 
 // SourceInfo from `i`, at its `<`: its end, or `failed` with `failedAt` set to where it stopped.
-private size_t sourceInfoAt(const(char)[] s, size_t i, ref size_t failedAt) {
+private size_t sourceInfoEnd(const(char)[] s, size_t i, ref size_t failedAt) {
 	size_t p = failed;
-	if (isChar(s, i + 1, '"')) {
+	if (charAt(s, i + 1, '"')) {
 		size_t j = i + 2;
 		while (j < s.length && s[j] != '"') ++j;
-		if (startsWith(s, j, "\":")) p = j + 2;
+		if (fp.string.startsWith(s, "\":", j)) p = j + 2;
 	}
 	if (p == failed) {
 		size_t j = i + 1;
@@ -305,18 +294,18 @@ private size_t sourceInfoAt(const(char)[] s, size_t i, ref size_t failedAt) {
 		p = j + 1;
 	}
 	foreach (part; 0 .. 2) {
-		immutable first = integerAt(s, p);
+		immutable first = integerEnd(s, p);
 		if (first == failed) {
 			failedAt = p;
 			return failed;
 		}
 		p = first;
-		if (isChar(s, p, '-')) {
-			immutable second = integerAt(s, p + 1);
+		if (charAt(s, p, '-')) {
+			immutable second = integerEnd(s, p + 1);
 			if (second != failed) p = second;
 		}
 		immutable want = part == 0 ? ':' : '>';
-		if (!isChar(s, p, want)) {
+		if (!charAt(s, p, want)) {
 			failedAt = p;
 			return failed;
 		}
@@ -326,7 +315,7 @@ private size_t sourceInfoAt(const(char)[] s, size_t i, ref size_t failedAt) {
 }
 
 // `matching_braces` from `i`, at its `{`; braces inside it count whatever surrounds them.
-private size_t matchingBracesAt(const(char)[] s, size_t i) {
+private size_t matchingBracesEnd(const(char)[] s, size_t i) {
 	size_t depth = 0;
 	foreach (j; i .. s.length) {
 		if (s[j] == '{') ++depth;
@@ -374,16 +363,11 @@ private bool isKeyword(const(char)[] word) {
 	return false;
 }
 
-// `([%] / UnicodeIdentifierStart) ([.] / UnicodeIdentifierContinue)*` from `i`, whose first character qualifies.
-private size_t plainIdentifierAt(const(char)[] s, size_t i) {
-	cast(void) decode(s, i);
-	return dottedEnd(s, i);
-}
-
 
 // --- lexing ------------------------------------------------------------------
 
-/// Whether `lex` emits trivia tokens. The parser needs none, since trivia is the gap between the tokens around it; highlighting asks for them.
+/// Whether `lex` emits trivia tokens.
+/// The parser needs none, since trivia is the gap between the tokens around it; highlighting asks for them.
 enum Trivia : bool {
 	skip = false, /// Whitespace and comments are left out; an unclosed `/*` is still an `unterminated` token.
 	keep = true, /// Every byte belongs to a token.
@@ -399,7 +383,8 @@ struct Cursor {
 	private int language; // `language` _ string _ `{`: 1 after the keyword, 2 after the name, so the next `{` opens a body
 }
 
-/// The token at `cursor.at`, trivia included, advancing past it; `cursor.at` must be below the text's length. It cannot fail.
+/// The token at `cursor.at`, trivia included, advancing past it; `cursor.at` must be below the text's length.
+/// It cannot fail.
 ///
 /// Examples:
 /// ---
@@ -421,19 +406,19 @@ Token next(ref Cursor cursor) @trusted {
 		kind = TokenKind.whitespace;
 		while (i < source.length && (source[i] == ' ' || source[i] == '\t')) ++i;
 	} else if (c == '\n') { kind = TokenKind.newline; ++i; }
-	else if (c == '\r') { kind = TokenKind.newline; i += isChar(source, i + 1, '\n') ? 2 : 1; }
-	else if ((c == '/' && isChar(source, i + 1, '/')) || c == '#') {
+	else if (c == '\r') { kind = TokenKind.newline; i += charAt(source, i + 1, '\n') ? 2 : 1; }
+	else if ((c == '/' && charAt(source, i + 1, '/')) || c == '#') {
 		kind = TokenKind.lineComment;
-		while (i < source.length && source[i] != '\n') ++i;
-	} else if (c == '/' && isChar(source, i + 1, '*')) {
+		while (i < source.length && source[i] != '\n' && source[i] != '\r') ++i;
+	} else if (c == '/' && charAt(source, i + 1, '*')) {
 		kind = TokenKind.longComment;
 		i += 2;
-		while (i < source.length && !startsWith(source, i, "*/")) ++i;
+		while (i < source.length && !fp.string.startsWith(source, "*/", i)) ++i;
 		if (i < source.length) i += 2;
 		else unterminated = true;
 	} else if (c == '{' && language == 2) {
 		kind = TokenKind.languageBody;
-		immutable e = matchingBracesAt(source, i);
+		immutable e = matchingBracesEnd(source, i);
 		if (e == failed) { i = source.length; unterminated = true; }
 		else i = e;
 	} else if (c == ':') { kind = TokenKind.colon; ++i; }
@@ -444,43 +429,54 @@ Token next(ref Cursor cursor) @trusted {
 	else if (c == '{') { kind = TokenKind.leftBrace; ++i; }
 	else if (c == '}') { kind = TokenKind.rightBrace; ++i; }
 	else if (c == ';') { kind = TokenKind.semicolon; ++i; }
-	else if (c == '-' && isChar(source, i + 1, '>')) { kind = TokenKind.arrow; i += 2; }
-	else if (c == '<') {
+	else if (c == '-' && charAt(source, i + 1, '>')) { kind = TokenKind.arrow; i += 2; }
+	else if (c == '-' && (digitAt(source, i + 1) || charAt(source, i + 1, '.'))) {
+		immutable f = floatEnd(source, i + 1);
+		immutable n = f == failed ? integerEnd(source, i + 1) : failed;
+		if (f != failed) { kind = TokenKind.float_; i = f; }
+		else if (n != failed) { kind = TokenKind.integer; i = n; }
+		else ++i;
+	} else if (c == '<') {
 		kind = TokenKind.sourceInfo;
 		size_t at;
-		immutable e = sourceInfoAt(source, i, at);
+		immutable e = sourceInfoEnd(source, i, at);
 		if (e == failed) { i = at; unterminated = true; }
 		else i = e;
-	} else if (fp.string.isDigit(c) || c == '.') {
-		immutable f = floatAt(source, i);
-		immutable n = f == failed ? integerAt(source, i) : failed;
+	} else if (fp.string.ascii.isDigit(c) || c == '.') {
+		immutable f = floatEnd(source, i);
+		immutable n = f == failed ? integerEnd(source, i) : failed;
 		if (f != failed) { kind = TokenKind.float_; i = f; }
 		else if (n != failed) { kind = TokenKind.integer; i = n; }
 		else ++i;
 	} else if (c == '"') {
-		immutable raw = rawStringAt(source, i);
+		immutable raw = rawStringEnd(source, i);
 		size_t at;
 		if (raw != failed) { kind = TokenKind.rawString; i = raw; }
 		else {
 			kind = TokenKind.string_;
-			immutable e = quotedAt(source, i, at);
+			immutable e = quotedEnd(source, i, at);
 			if (e == failed) { i = at; unterminated = true; }
 			else i = e;
 		}
 	} else if (c == '\'') {
 		kind = TokenKind.character;
-		immutable e = stringCharAt(source, i + 1);
-		if (e != failed && isChar(source, e, '\'')) i = e + 1;
+		immutable e = stringCharEnd(source, i + 1);
+		if (e != failed && charAt(source, e, '\'')) i = e + 1;
 		else { i = e == failed ? i + 1 : e; unterminated = true; }
 	} else if (c == '%') {
 		kind = TokenKind.identifier;
 		size_t at;
-		immutable quoted = isChar(source, i + 1, '"') ? quotedAt(source, i + 1, at) : failed;
-		i = quoted != failed ? quoted : plainIdentifierAt(source, i);
+		immutable quoted = charAt(source, i + 1, '"') ? quotedEnd(source, i + 1, at) : failed;
+		if (quoted != failed) i = quoted;
+		else {
+			// `([%] / UnicodeIdentifierStart) ([.] / UnicodeIdentifierContinue)*`, whose first character qualifies.
+			cast(void) decode(source, i);
+			i = dottedEnd(source, i);
+		}
 	} else {
 		size_t j = i;
-		immutable cp = decode(source, j);
-		if (isWhitespace(cp)) {
+		immutable codepoint = decode(source, j);
+		if (isWhitespace(codepoint)) {
 			kind = TokenKind.whitespace;
 			i = j;
 			while (i < source.length) {
@@ -488,7 +484,7 @@ Token next(ref Cursor cursor) @trusted {
 				if (!isWhitespace(decode(source, k))) break;
 				i = k;
 			}
-		} else if (isIdentifierStart(cp)) {
+		} else if (isIdentifierStart(codepoint)) {
 			immutable end = wordEnd(source, i);
 			// Keywords are 4 to 8 bytes; anything else is an identifier without comparing.
 			if (end - i >= 4 && end - i <= 8 && isKeyword(source[i .. end])) {
@@ -512,7 +508,8 @@ Token next(ref Cursor cursor) @trusted {
 	return Token(kind, attempted, cast(uint) start, cast(uint) (i - start));
 }
 
-/// Lexes `source` into a new fp dynarray of tokens in order, ending with one `end` token; with `Trivia.keep` they cover every byte. A character no rule matches becomes an `invalid` token, and a token that does not finish an `unterminated` one, so lexing always reaches the end.
+/// Lexes `source` into a new fp dynarray of tokens in order, ending with one `end` token; with `Trivia.keep` they cover every byte.
+/// A character no rule matches becomes an `invalid` token, and a token that does not finish an `unterminated` one, so lexing always reaches the end.
 ///
 /// Returns null if allocation fails.
 ///
@@ -528,31 +525,19 @@ Token next(ref Cursor cursor) @trusted {
 /// ---
 Token* lex(const(char)[] source, Trivia trivia = Trivia.skip) @trusted {
 	assert(source.length < uint.max, "doir.lexer: source too long");
-	// Written by index: growing initializes every new slot, so the array grows by doubling from a close guess.
-	size_t count = 0, capacity = source.length / bytesPerToken + 16;
 	Token* out_ = null;
-	if (fp.dynarray.growToSize(out_, capacity) is null) return null;
-	pragma(inline, true) bool emit(Token t) {
-		if (count == capacity) {
-			capacity *= 2;
-			if (fp.dynarray.growToSize(out_, capacity) is null) {
-				fp.dynarray.free(out_);
-				return false;
-			}
-		}
-		out_[count++] = t;
-		return true;
-	}
-
-	// `language` _ string _ `{`: 1 after the keyword, 2 after the name, so the next `{` opens a body.
+	if (fp.dynarray.reserve(out_, source.length / bytesPerToken + 16) is null) return null;
 	auto cursor = Cursor(source);
 	while (cursor.at < source.length) {
 		immutable t = next(cursor);
-		if ((trivia || !isTrivia(t.kind)) && !emit(t)) return null;
+		if ((trivia || !isTrivia(t.kind)) && !fp.dynarray.pushBack(out_, t)) {
+			fp.dynarray.free(out_);
+			return null;
+		}
 	}
-	if (!emit(Token(TokenKind.end, TokenKind.end, cast(uint) source.length, 0))) return null;
-	cast(void) fp.dynarray.popBackCount(out_, capacity - count);
-	return out_;
+	if (fp.dynarray.pushBack(out_, Token(TokenKind.end, TokenKind.end, cast(uint) source.length, 0))) return out_;
+	fp.dynarray.free(out_);
+	return null;
 }
 
 
@@ -574,9 +559,9 @@ version(unittest) {
 
 unittest { // the ASCII fast paths classify as the generated tables do
 	foreach (uint c; 0 .. 0x80) {
-		assert(isIdentifierStart(c) == inRanges(doir.syntax.tables.identifierStart[], c));
-		assert(isIdentifierContinue(c) == inRanges(doir.syntax.tables.identifierContinue[], c));
-		assert(isWhitespace(c) == inRanges(doir.syntax.tables.whitespace[], c));
+		assert(isIdentifierStart(c) == fp.string.utf.inRanges(doir.syntax.tables.identifierStart[], c));
+		assert(isIdentifierContinue(c) == fp.string.utf.inRanges(doir.syntax.tables.identifierContinue[], c));
+		assert(isWhitespace(c) == fp.string.utf.inRanges(doir.syntax.tables.whitespace[], c));
 	}
 }
 
@@ -588,15 +573,21 @@ unittest { // tokens cover the text, and follow the grammar's ordered choices
 		// Numbers: floats first, then integers, each rule possessive as PEG is.
 		assert(kindsAre("1.5 .5 1. 0x1.8p3 0x1p4 1e5", float_, float_, float_, float_, float_, float_, end));
 		assert(kindsAre("0x1F 0b101 017 42", integer, integer, integer, integer, end));
+		assert(kindsAre("-1.5 -.5 -1. -0x1.8p3 -0x1p4 -1e5", float_, float_, float_, float_, float_, float_, end));
+		assert(kindsAre("-0x1F -0b101 -017 -42", integer, integer, integer, integer, end));
 		assert(kindsAre("09", integer, integer, end)); // '0' [0-7]* stops before 9
 		assert(kindsAre("1e", integer, identifier, end)); // an exponent needs digits
 		assert(kindsAre("0x", integer, identifier, end));
 		assert(kindsAre(".", invalid, end));
+		assert(kindsAre("- 5", invalid, integer, end)); // the sign must touch its number
+		assert(kindsAre("-.", invalid, invalid, end));
+		assert(kindsAre("->", arrow, end));
 
 		// Strings: a raw string first, then a quoted one; `""""""` with no close is two empty strings and a third.
 		assert(kindsAre(`"a\n\x41" 'c' '\'' """r"aw"""`, string_, character, character, rawString, end));
 		assert(kindsAre(`""""""`, string_, string_, string_, end));
 		assert(kindsAre("\"abc\nx", unterminated, newline, identifier, end));
+		assert(kindsAre("\"abc\rx", unterminated, newline, identifier, end) && kindsAre("\"abc\r\nx", unterminated, newline, identifier, end)); // a lone `\r` breaks a line too
 		assert(kindsAre(`"\101\0"`, string_, end));
 		assert(kindsAre(`"\q"`, unterminated, invalid, identifier, unterminated, end)); // no such escape
 		assert(kindsAre(`'ab'`, unterminated, identifier, unterminated, end));
@@ -607,8 +598,9 @@ unittest { // tokens cover the text, and follow the grammar's ordered choices
 		assert(kindsAre("αβ _x a.β", identifier, identifier, identifier, end));
 		assert(kindsAre("\xFF", invalid, end)); // invalid UTF-8 is one code point no class contains
 
-		// Comments: a long one swallows its newlines; a line comment keeps a `\r` and stops at `\n`.
+		// Comments: a long one swallows its newlines; a line comment stops at `\n` or `\r`.
 		assert(kindsAre("a /* \n */ b // c\r\nd # e", identifier, identifier, newline, identifier, end));
+		assert(kindsAre("a // c\rd", identifier, newline, identifier, end));
 		assert(kindsAre("/* open", unterminated, end));
 
 		// Opaque tokens.
@@ -636,9 +628,9 @@ unittest { // tokens cover the text, and follow the grammar's ordered choices
 	assert(fp.dynarray.length(many) == dense.length + 1 && many[999].kind == TokenKind.semicolon && many[999].start == 999);
 
 	// A refused allocation while growing frees what was lexed and returns null.
-	auto previous = fp.testing.beginRationedAllocator(1);
+	auto previous = fp.testing.limitAllocations(1);
 	assert(lex(dense[]) is null);
-	fp.testing.endRationedAllocator(previous);
+	fp.testing.restoreAllocator(previous);
 
 	// Every byte belongs to exactly one token, in order.
 	static immutable source = "x : (a: T, b: deduced type) -> U = {\n\t_ : _ = tail f(a, b) <g:1:1>; # c\n}\n";

@@ -1,0 +1,53 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test:
+    name: ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install D compiler
+        uses: dlang-community/setup-dlang@v2
+        with:
+          compiler: ldc-latest
+
+      - name: Run unittests
+        run: dub test --compiler=ldc2
+
+      - name: Build the compiler
+        run: dub build --config=doir --compiler=ldc2
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: Check documentation examples
+        run: uv run python tests/doctest.py
+
+      - name: Lint layering, naming and wrappers
+        run: uv run python tools/lint.py
+
+      - name: Check generated tables
+        run: uv run tools/gen_tables.py --check
+
+      - name: Check DOIR documentation comments
+        run: uv run tools/doir_doc.py --check
+
+      - name: Run the conformance corpus
+        run: uv run tests/conformance.py
+
+      - name: Compare syntax errors with the grammar
+        run: uv run tests/parse_diff.py

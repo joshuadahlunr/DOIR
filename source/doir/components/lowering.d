@@ -1,6 +1,7 @@
 /// The components a target's lowering owns (`L-Erase`, `REG-Virt`, `REG-Phys`), and the functions that write and read them.
 ///
-/// The internal register components are indexed by target (`VirtualReg_τ`, `PhysicalReg_τ`): one libECRS component per target index, so each target's lowering owns its own and independent targets never clobber each other. A single-target build uses index 0.
+/// The internal register components are indexed by target (`VirtualReg_τ`, `PhysicalReg_τ`): one libECRS component per target index, so each target's lowering owns its own and independent targets never clobber each other.
+/// A single-target build uses index 0.
 ///
 /// Examples:
 /// ---
@@ -32,7 +33,8 @@ public import ecrs.registry : EntityId, invalidEntity;
 
 // --- types and layout --------------------------------------------------------
 
-/// The targets whose lowering has retired the entity (`L-Erase`); absent means retired under none. Each target's entry is owned by that target's lowering query.
+/// The targets whose lowering has retired the entity (`L-Erase`); absent means retired under none.
+/// Each target's entry is owned by that target's lowering query.
 struct Lowered {
 	mixin doir.engine.logs.Log!(ecrs.relation.Relation!1);
 }
@@ -60,7 +62,8 @@ unittest { // libECRS silently skips a holder whose hook is not `@nogc nothrow`;
 
 private enum isPerTarget(C) = is(C == VirtualReg) || is(C == PhysicalReg);
 
-/// The libECRS component id of per-target component `C` (`VirtualReg_τ` or `PhysicalReg_τ`) for target index `target`, registered on first use. Returns `fp.pointer.notFound` if the registration was refused; no entity can then have the component.
+/// The libECRS component id of per-target component `C` (`VirtualReg_τ` or `PhysicalReg_τ`) for target index `target`, registered on first use.
+/// Returns `fp.pointer.notFound` if the registration was refused; no entity can then have the component.
 ///
 /// Examples:
 /// ---
@@ -80,9 +83,9 @@ size_t perTargetComponent(C)(size_t target) @trusted if (isPerTarget!C) {
 	foreach (i, c; prefix) name[i] = c; // slice copies need druntime under -betterC
 	foreach (i, c; digits[first .. $]) name[prefix.length + i] = c;
 	name[length] = '\0';
-	immutable existing = ecrs.registry.lookupId(name.ptr);
+	immutable existing = ecrs.registry.idOf(name.ptr);
 	if (existing != fp.pointer.notFound) return existing;
-	return ecrs.registry.registerType(name[0 .. length], ecrs.registry.nextId(), C.sizeof, ecrs.registry.hooksFor!C());
+	return ecrs.registry.registerType(name[0 .. length], ecrs.registry.freshId(), C.sizeof, ecrs.registry.hooksFor!C());
 }
 
 /// `e`'s per-target component `C` (a `VirtualReg` or `PhysicalReg`) for target index `target`, or null if it has none.
@@ -99,7 +102,9 @@ const(C)* findPerTarget(C)(ref const ecrs.context.Context store, EntityId e, siz
 	return id == fp.pointer.notFound ? null : cast(const(C)*) ecrs.context.findComponent(store, e, id, C.sizeof);
 }
 
-/// Gives `e` per-target component `C` for target index `target` on behalf of the running query, the target's lowering, which owns it: a virtual register, or a physical register or spill slot. `e` must not already have one for that target. Returns null on a refused allocation, which fails the running queries (`doir.query.fail`).
+/// Gives `e` per-target component `C` for target index `target` on behalf of the running query, the target's lowering, which owns it: a virtual register, or a physical register or spill slot.
+/// `e` must not already have one for that target.
+/// Returns null on a refused allocation, which fails the running queries (`doir.query.fail`).
 ///
 /// Examples:
 /// ---
@@ -134,7 +139,7 @@ C* producePerTarget(C)(ref doir.query.QueryEngine engine, EntityId e, size_t tar
 		doir.query.fail(engine);
 		return null;
 	}
-	if (!doir.query.recordProduced(engine, doir.components.query.Produced([e], id, &doir.query.stripComponent, &doir.query.hashComponent!C), true)) return null;
+	if (!doir.query.recordOutput(engine, doir.components.query.Output([e], id, &doir.query.removeOwnedComponent, &doir.query.hashComponent!C), true)) return null;
 	auto c = cast(C*) ecrs.context.addComponent(*engine.store, e, id, C.sizeof);
 	if (c is null) doir.query.fail(engine);
 	return c;
@@ -142,7 +147,9 @@ C* producePerTarget(C)(ref doir.query.QueryEngine engine, EntityId e, size_t tar
 
 // --- retirement --------------------------------------------------------------
 
-/// Records that the running query, `target`'s lowering, retired `e` for `target` (`L-Erase`). The entry is its own, removed when it runs again or is evicted, so the targets of a build retire entities independently. Returns false on a refused allocation, which fails the running queries (`doir.query.fail`).
+/// Records that the running query, `target`'s lowering, retired `e` for `target` (`L-Erase`).
+/// The entry is its own, removed when it runs again or is evicted, so the targets of a build retire entities independently.
+/// Returns false on a refused allocation, which fails the running queries (`doir.query.fail`).
 ///
 /// Examples:
 /// ---
@@ -166,10 +173,12 @@ C* producePerTarget(C)(ref doir.query.QueryEngine engine, EntityId e, size_t tar
 /// assert(retiredFor(engine, e, e).get);
 /// ---
 bool retire(ref doir.query.QueryEngine engine, EntityId e, EntityId target) {
-	return doir.engine.logs.append!(Lowered, ecrs.relation.Relation!1)(engine, e, doir.engine.positions.none, ecrs.relation.Relation!1([target]));
+	return doir.engine.logs.append!(Lowered, ecrs.relation.Relation!1)(engine, e, doir.engine.positions.end, ecrs.relation.Relation!1([target]));
 }
 
-/// Whether some lowering retired `e` for `target` (`L-Erase`). Inside a query, records the read of `e` and of the lowering that retired it. Returns null if the answer may be incomplete, where `doir.engine.logs.fold` returns false.
+/// Whether some lowering retired `e` for `target` (`L-Erase`).
+/// Inside a query, records the read of `e` and of the lowering that retired it.
+/// Returns null if the answer may be incomplete, where `doir.engine.logs.fold` returns false.
 ///
 /// Examples:
 /// ---
@@ -184,7 +193,7 @@ bool retire(ref doir.query.QueryEngine engine, EntityId e, EntityId target) {
 /// ---
 std.typecons.Nullable!bool retiredFor(ref doir.query.QueryEngine engine, EntityId e, EntityId target) {
 	bool retired = false;
-	immutable folded = doir.engine.logs.fold!(Lowered, ecrs.relation.Relation!1)(engine, e, doir.engine.positions.none, (ref const ecrs.relation.Relation!1 t) {
+	immutable folded = doir.engine.logs.fold!(Lowered, ecrs.relation.Relation!1)(engine, e, doir.engine.positions.end, (ref const ecrs.relation.Relation!1 t) {
 		if (t.related[0] == target) retired = true;
 	});
 	if (!folded) return typeof(return).init;
@@ -243,9 +252,9 @@ unittest { // targets own their registers and retirement independently
 	bool refused = true;
 	for (size_t n = 0; refused; ++n) {
 		assert(n < 100);
-		auto previous = fp.testing.beginRationedAllocator(n);
+		auto previous = fp.testing.limitAllocations(n);
 		auto lowered = doir.query.query!LowerFor(engine, LowerFor.Key([e], 1000 + n));
-		fp.testing.endRationedAllocator(previous);
+		fp.testing.restoreAllocator(previous);
 		assert(lowered is null ? engine.refused : *lowered);
 		refused = engine.refused;
 		engine.refused = false;

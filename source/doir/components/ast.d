@@ -1,4 +1,5 @@
-/// The binding components of `doir.spec.md` Part II §1 that the parser writes through `doir.builders`, and the `Lookup*` components it writes in place of the names it does not resolve. Every one holding an entity id mixes in `ecrs.relation.Relates` (`E-Remap`).
+/// The binding components of `doir.spec.md` Part II §1 that the parser writes through `doir.builders`, and the `Lookup*` components it writes in place of the names it does not resolve.
+/// Every one holding an entity id mixes in `ecrs.relation.Relates` (`E-Remap`).
 ///
 /// Examples:
 /// ---
@@ -12,7 +13,7 @@
 module doir.components.ast;
 
 static import fp.dynarray;
-static import fp.hash;
+static import fp.lifecycle;
 
 static import ecrs.context;
 static import ecrs.relation;
@@ -46,14 +47,16 @@ struct TypeOf {
 	mixin ecrs.relation.Relates!"type";
 }
 
-/// The layout ⟨size, align, unique⟩ in bits. The parser writes it zeroed on an aggregate or function type; layout queries fill in size and alignment.
+/// The layout ⟨size, align, unique⟩ in bits.
+/// The parser writes it zeroed on an aggregate or function type; layout queries fill in size and alignment.
 struct TypeDefinition {
 	size_t size = 0;
 	size_t alignment = 0;
 	size_t unique = ReservedUnique.structural;
 }
 
-/// The discriminators the builtin types reserve, so `S-Struct` keeps them apart from every structural type of the same layout (`M-Distinct`, `S-Numeric`, `FP-Type`). `std.types.distinct_copy` and `compiler.comptime_base_type` hand out fresh ones from `firstFresh` up.
+/// The discriminators the builtin types reserve, so `S-Struct` keeps them apart from every structural type of the same layout (`M-Distinct`, `S-Numeric`, `FP-Type`).
+/// `std.types.distinct_copy` and `compiler.comptime_base_type` hand out fresh ones from `firstFresh` up.
 enum ReservedUnique : size_t {
 	structural = 0, /// Every type the program defines without `std.types.distinct_copy`.
 	type = 1, /// `type`.
@@ -66,7 +69,8 @@ enum ReservedUnique : size_t {
 	firstFresh = 8, /// The first discriminator a fresh type may take.
 }
 
-/// Makes this entity another name for a binding (`A-Res`). Written by resolution or by evaluation (`A-Bind`), never by the parser.
+/// Makes this entity another name for a binding (`A-Res`).
+/// Written by resolution or by evaluation (`A-Bind`), never by the parser.
 struct Alias {
 	mixin ecrs.relation.Relates!"target";
 }
@@ -76,7 +80,8 @@ struct FunctionInputs {
 	mixin ecrs.relation.Relates;
 }
 
-/// The return type binding of a function type; absent means `void`. Copied onto the functions declared with it.
+/// The return type binding of a function type; absent means `void`.
+/// Copied onto the functions declared with it.
 struct FunctionReturn {
 	mixin ecrs.relation.Relates!"type";
 }
@@ -86,13 +91,14 @@ struct Call {
 	mixin ecrs.relation.Relates!"callee";
 }
 
-/// A literal's payload (`V-Literal`): an integer or character code point, a float, or a byte string. The reference holds integer literals to 64 bits.
+/// A literal's payload (`V-Literal`): an integer or character code point, a float, or a byte string.
+/// The reference holds a non-negative integer literal to 64 bits and a negative one to 63 bits of magnitude.
 struct ConstantVal {
 	/// Which payload the literal has.
-	enum Kind : ubyte { integer, float_, bytes }
+	enum Kind : ubyte { integer, float_, bytes, negativeInteger }
 
 	Kind kind = Kind.integer; /// Which of the fields below is meaningful.
-	ulong integerValue = 0; /// An integer literal's bit pattern, or a character literal's code point.
+	ulong integerValue = 0; /// An integer literal's bit pattern, a negative integer's two's-complement bit pattern, or a character literal's code point.
 	double floatValue = 0; /// A float literal, rounded to its declared type later (`V-Literal`).
 	StringId bytesValue; /// A string literal's bytes after escapes, interned.
 
@@ -103,6 +109,15 @@ struct ConstantVal {
 	/// assert(ConstantVal.integer(0xFF).integerValue == 255);
 	/// ---
 	static ConstantVal integer(ulong value) @nogc nothrow { ConstantVal c; c.kind = Kind.integer; c.integerValue = value; return c; }
+
+	/// The negative integer `-magnitude`, its bit pattern stored as two's complement.
+	///
+	/// Examples:
+	/// ---
+	/// assert(ConstantVal.negativeInteger(5).kind == ConstantVal.Kind.negativeInteger);
+	/// assert(ConstantVal.negativeInteger(5).integerValue == ulong.max - 4);
+	/// ---
+	static ConstantVal negativeInteger(ulong magnitude) @nogc nothrow { ConstantVal c; c.kind = Kind.negativeInteger; c.integerValue = 0 - magnitude; return c; }
 
 	/// A float literal.
 	///
@@ -121,7 +136,8 @@ struct ConstantVal {
 	static ConstantVal bytes(StringId value) @nogc nothrow { ConstantVal c; c.kind = Kind.bytes; c.bytesValue = value; return c; }
 }
 
-/// The flag set of Part II §1. The parser writes `Valueless`, `Namespace`, `Export`, `Comptime` on literals (`C-Constant`) and the call prefixes; every other flag is a comptime effect, positioned by `C-Order`.
+/// The flag set of Part II §1.
+/// The parser writes `Valueless`, `Namespace`, `Export`, `Comptime` on literals (`C-Constant`) and the call prefixes; every other flag is a comptime effect, positioned by `C-Order`.
 struct Flags {
 	enum : uint {
 		None = 0,
@@ -171,33 +187,7 @@ struct LookupCall {
 
 /// The unresolved arguments of a call, every one a name (`WF-Arg`), stood in for by `FunctionInputs`.
 struct LookupFunctionInputs {
-	StringId* names = null;
-
-	/// Hashes the names rather than the list's pointer, for early cutoff when a query produces one.
-	///
-	/// Examples:
-	/// ---
-	/// LookupFunctionInputs a, b;
-	/// assert(LookupFunctionInputs.contentHash(a) == LookupFunctionInputs.contentHash(b));
-	/// ---
-	static size_t contentHash(ref const LookupFunctionInputs self) @nogc nothrow {
-		return fp.hash.murmur(cast(const(ubyte)[]) fp.dynarray.slice(self.names));
-	}
-
-	/// Releases the list when the component is removed.
-	///
-	/// Examples:
-	/// ---
-	/// static import fp.dynarray;
-	/// LookupFunctionInputs inputs;
-	/// assert(fp.dynarray.pushBack(inputs.names, StringId(0)));
-	/// inputs.finalize();
-	/// assert(inputs.names is null);
-	/// ---
-	void finalize() @nogc nothrow {
-		fp.dynarray.free(names);
-		names = null;
-	}
+	fp.lifecycle.Owned!StringId names; /// The argument names, in order; an owned fp dynarray, compared and hashed by its contents.
 }
 
 /// The target of `x : alias = y`, stood in for by `Alias` (`A-Res`).
@@ -218,6 +208,7 @@ version(unittest) static import doir.testing;
 
 unittest { // literal payloads, and unresolved arguments hashed by content and released with their component
 	assert(ConstantVal.integer(7).kind == ConstantVal.Kind.integer && ConstantVal.integer(7).integerValue == 7);
+	assert(ConstantVal.negativeInteger(7).kind == ConstantVal.Kind.negativeInteger && ConstantVal.negativeInteger(7).integerValue == ulong.max - 6);
 	assert(ConstantVal.float_(0.5).kind == ConstantVal.Kind.float_ && ConstantVal.float_(0.5).floatValue == 0.5);
 	assert(ConstantVal.bytes(StringId(3)).kind == ConstantVal.Kind.bytes && ConstantVal.bytes(StringId(3)).bytesValue == StringId(3));
 
@@ -225,11 +216,11 @@ unittest { // literal payloads, and unresolved arguments hashed by content and r
 	scope(exit) ecrs.context.free(store);
 	immutable a = doir.testing.addEntity(store), b = doir.testing.addEntity(store);
 	assert(ecrs.context.addComponent!LookupFunctionInputs(store, a) !is null && ecrs.context.addComponent!LookupFunctionInputs(store, b) !is null);
-	auto x = &ecrs.context.getComponent!LookupFunctionInputs(store, a), y = &ecrs.context.getComponent!LookupFunctionInputs(store, b);
-	assert(fp.dynarray.pushBack(x.names, StringId(1)) && fp.dynarray.pushBack(y.names, StringId(1)));
-	assert(x.names !is y.names && LookupFunctionInputs.contentHash(*x) == LookupFunctionInputs.contentHash(*y));
-	assert(fp.dynarray.pushBack(y.names, StringId(2)));
-	assert(LookupFunctionInputs.contentHash(*x) != LookupFunctionInputs.contentHash(*y));
+	auto x = &ecrs.context.getForWriting!LookupFunctionInputs(store, a), y = &ecrs.context.getForWriting!LookupFunctionInputs(store, b);
+	assert(fp.dynarray.pushBack(x.names.p, StringId(1)) && fp.dynarray.pushBack(y.names.p, StringId(1)));
+	assert(x.names.p !is y.names.p && fp.lifecycle.contentHash(*x) == fp.lifecycle.contentHash(*y) && fp.lifecycle.equal(*x, *y));
+	assert(fp.dynarray.pushBack(y.names.p, StringId(2)));
+	assert(fp.lifecycle.contentHash(*x) != fp.lifecycle.contentHash(*y) && !fp.lifecycle.equal(*x, *y));
 	assert(ecrs.context.removeComponent!LookupFunctionInputs(store, a));
 	assert(!ecrs.context.hasComponent!LookupFunctionInputs(store, a));
 }

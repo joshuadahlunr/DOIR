@@ -5,7 +5,7 @@
 /// Strings strings;
 /// scope(exit) free(strings);
 /// immutable a = intern(strings, "add");
-/// assert(a != noName && intern(strings, "add") == a);
+/// assert(a != refused && intern(strings, "add") == a);
 /// assert(text(strings, a) == "add");
 /// ---
 module doir.strings;
@@ -19,15 +19,20 @@ static import bc.interner;
 
 // --- types and layout --------------------------------------------------------
 
-/// The id of an interned string, dense from 0 in interning order. A struct rather than an integer, so an overload taking a name never accepts an `EntityId`.
+/// The id of an interned string, dense from 0 in interning order.
+/// A struct rather than an integer, so an overload taking a name never accepts an `EntityId`.
 struct StringId {
 	uint value = uint.max; /// The index of the string's text.
 }
 
-/// The id no string has, and a `StringId`'s initial value: what the parser passes for the name of a `_` declaration, which gets no `Name` component.
-enum StringId noName = StringId.init;
+/// The id no string has, and a `StringId`'s initial value: what `find` gives for a text never interned, and what the parser passes for the name of a `_` declaration, which gets no `Name` component.
+enum StringId unnamed = StringId(bc.interner.notInterned);
 
-/// The interning table: one copy of each text, NUL-terminated, indexed by id. Any thread may intern or look up at once (`bc.interner`); `free` it from one thread once no other uses it.
+/// What `intern` gives when an allocation is refused; no string has it either.
+enum StringId refused = StringId(bc.interner.refused);
+
+/// The interning table: one copy of each text, NUL-terminated, indexed by id.
+/// Any thread may intern or look up at once (`bc.interner`); `free` it from one thread once no other uses it.
 struct Strings {
 	private bc.interner.Interner!char table;
 }
@@ -35,7 +40,8 @@ struct Strings {
 
 // --- queries -----------------------------------------------------------------
 
-/// The text of `id`, which must be a valid id. The slice stays valid until `free`, and is followed by a NUL.
+/// The text of `id`, which must be a valid id.
+/// The slice stays valid until `free`, and is followed by a NUL.
 ///
 /// Examples:
 /// ---
@@ -44,16 +50,17 @@ struct Strings {
 /// assert(text(strings, intern(strings, "std.add")) == "std.add");
 /// ---
 const(char)[] text(ref const Strings strings, StringId id) {
-	return bc.interner.content(strings.table, id.value);
+	return bc.interner.items(strings.table, id.value);
 }
 
-/// The id of `s`, or `noName` if it was never interned.
+// wrapper: gives the interner's id its own type, so a name never passes for an `EntityId`
+/// The id of `s`, or `unnamed` if it was never interned.
 ///
 /// Examples:
 /// ---
 /// Strings strings;
 /// scope(exit) free(strings);
-/// assert(find(strings, "x") == noName);
+/// assert(find(strings, "x") == unnamed);
 /// immutable x = intern(strings, "x");
 /// assert(find(strings, "x") == x);
 /// ---
@@ -64,9 +71,11 @@ StringId find(ref Strings strings, const(char)[] s) {
 
 // --- creation and freeing ----------------------------------------------------
 
-/// The id of `s`, interning a copy of it if it is new. Any thread may call it at once with any other.
+// wrapper: gives the interner's id its own type, so a name never passes for an `EntityId`
+/// The id of `s`, interning a copy of it if it is new.
+/// Any thread may call it at once with any other.
 ///
-/// Returns `noName` if allocation fails, leaving the strings as they were.
+/// Returns `refused` if allocation fails, leaving the strings as they were.
 ///
 /// Examples:
 /// ---
@@ -105,21 +114,19 @@ void free(ref Strings strings) {
 }
 
 
-version(unittest) {
-	static import core.stdc.stdio;
-}
+version(unittest) static import fp.string;
 
 unittest {
 	Strings strings;
 	scope(exit) free(strings);
-	assert(find(strings, "") == noName);
+	assert(find(strings, "") == unnamed);
 	immutable empty = intern(strings, "");
-	assert(empty != noName && text(strings, empty) == "");
+	assert(empty != refused && text(strings, empty) == "");
 	foreach (i; 0 .. 100) {
-		char[8] buffer;
-		immutable n = cast(size_t) core.stdc.stdio.snprintf(buffer.ptr, buffer.length, "n%d", i);
-		immutable id = intern(strings, buffer[0 .. n]);
-		assert(id.value == i + 1 && text(strings, id) == buffer[0 .. n]);
+		auto name = fp.string.joined("n", i).get;
+		scope(exit) fp.string.free(name);
+		immutable id = intern(strings, fp.string.slice(name));
+		assert(id.value == i + 1 && text(strings, id) == fp.string.slice(name));
 	}
 	assert(intern(strings, "n42").value == 43);
 	assert(count(strings) == 101);
@@ -128,17 +135,18 @@ unittest {
 	Strings rationed;
 	scope(exit) free(rationed);
 	foreach (i; 0 .. 100) {
-		char[8] buffer;
-		immutable n = cast(size_t) core.stdc.stdio.snprintf(buffer.ptr, buffer.length, "n%d", i);
+		auto name = fp.string.joined("n", i).get;
+		scope(exit) fp.string.free(name);
+		const spelled = fp.string.slice(name);
 		for (size_t budget = 0;; ++budget) {
-			auto previous = fp.testing.beginRationedAllocator(budget);
-			immutable id = intern(rationed, buffer[0 .. n]);
-			fp.testing.endRationedAllocator(previous);
-			if (id != noName) {
-				assert(id.value == i && text(rationed, id) == buffer[0 .. n]);
+			auto previous = fp.testing.limitAllocations(budget);
+			immutable id = intern(rationed, spelled);
+			fp.testing.restoreAllocator(previous);
+			if (id != refused) {
+				assert(id.value == i && text(rationed, id) == spelled);
 				break;
 			}
-			assert(count(rationed) == i && find(rationed, buffer[0 .. n]) == noName);
+			assert(count(rationed) == i && find(rationed, spelled) == unnamed);
 		}
 	}
 }

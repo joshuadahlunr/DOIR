@@ -25,10 +25,12 @@ struct Rank {
 	ushort value; /// The rank.
 }
 
-/// Builds the entities of `file` for `level` through `createEntity` and `produce`, and runs its comptime, inside the import query. Returns its root block, or `invalidEntity` if it cannot be evaluated, having reported why.
+/// Builds the entities of `file` for `level` through `createEntity` and `produce`, and runs its comptime, inside the import query.
+/// Returns its root block, or `invalidEntity` if it cannot be evaluated, having reported why.
 alias EvaluateFunction = EntityId function(ref doir.query.QueryEngine engine, EntityId file, EntityId level) @nogc nothrow;
 
-/// How a level evaluates a file it imports: its parse and its comptime. An input on the level entity, set when the tower is built.
+/// How a level evaluates a file it imports: its parse and its comptime.
+/// An input on the level entity, set when the tower is built.
 struct LevelEvaluator {
 	EvaluateFunction evaluate; /// The evaluator.
 }

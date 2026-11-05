@@ -110,6 +110,7 @@ That spells a symbol DOIR does not define — one the comptime host supplies (`H
 Every function in `standard.doir` without a body is written this way.
 
 A declaration ends at a newline or a `;`.
+A newline is `\n`, `\r\n` or a lone `\r`, as in C compilers such as GCC, so a file reads the same whichever convention wrote it: each is one line break, ending a line comment, a string literal and a line of a diagnostic's position alike.
 A block is a sequence of declarations, so an inline block must terminate its last declaration before the closing brace:
 
 ```rust

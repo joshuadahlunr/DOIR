@@ -1,4 +1,5 @@
-/// The positioned effect logs of comptime-mutable state (`C-Order`, `M-Lexical`), and the plain components `doir.effects.freezeLevel` folds each into (`L-Freeze`). Logs hold entity ids only through `E-Remap` hooks, so renumbering covers them.
+/// The positioned effect logs of comptime-mutable state (`C-Order`, `M-Lexical`), and the plain components `doir.effects.freezeLevel` folds each into (`L-Freeze`).
+/// Logs hold entity ids only through `E-Remap` hooks, so renumbering covers them.
 ///
 /// Examples:
 /// ---
@@ -28,7 +29,8 @@ struct FlagsLog {
 	mixin doir.engine.logs.Log!uint;
 }
 
-/// The flags of a frozen declaration: the parser's `Flags` with every modifier of its log (`L-Freeze`). Cross-level queries read it by entity alone, through `flags`.
+/// The flags of a frozen declaration: the parser's `Flags` with every modifier of its log (`L-Freeze`).
+/// Cross-level queries read it by entity alone, through `flags`.
 struct FrozenFlags {
 	uint flags; /// The set, one bit per flag.
 }

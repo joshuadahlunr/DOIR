@@ -35,7 +35,8 @@ def relative_to_root(path):
 
 
 def build_and_run():
-	"""Builds the unit tests with -cov into `bin/coverage` and runs them, leaving a `.lst` listing per module. Exits on a failed build or test run."""
+	"""Builds the unit tests with -cov into `bin/coverage` and runs them, leaving a `.lst` listing per module.
+Exits on a failed build or test run."""
 	import_paths = [relative_to_root(p) for p in describe('--import-paths')]
 	sources = [relative_to_root(p) for p in describe('--data=source-files', '--data-list')]
 	if not import_paths or not sources:

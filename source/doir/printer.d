@@ -1,4 +1,7 @@
-/// The pretty printer: a parsed block written back out as DOIR source, one declaration per line and nested blocks indented by a tab. It inverts `doir.syntax.parser`'s build, so the text parses back into an equivalent store: the same declarations, names, types, values, flags and source annotations (`AT-Source`). Comments, `language` blocks (`I-Language`) and literal spellings are not kept: a character or hexadecimal literal prints as its decimal value, a raw string as an escaped one, and a float as the shortest decimal that reads back to the same `double`.
+/// The pretty printer: a parsed block written back out as DOIR source, one declaration per line and nested blocks indented by a tab.
+/// It inverts `doir.syntax.parser`'s build, so the text parses back into an equivalent store: the same declarations, names, types, values, flags and source annotations (`AT-Source`).
+/// Comments, `language` blocks (`I-Language`) and literal spellings are not kept: a character or hexadecimal literal prints as its decimal value, a raw string as an escaped one, and a float as the shortest decimal that reads back to the same `double`.
+/// No literal is a NaN or reads back as positive infinity's own spelling, so a declaration's NaN or positive infinity prints as the `N-Limits` call on its written type, `std.numbers.not_a_number(T)` or `std.numbers.infinity(T)`, which reads back as that call rather than as a constant. A parameter default cannot be a call, so an infinite one prints as the literal `1e999` and a NaN one as the call, which does not parse.
 ///
 /// It reads the components the parser writes, the `Lookup*` names among them, so it prints a store before name resolution.
 ///
@@ -23,13 +26,15 @@
 /// ---
 module doir.printer;
 
-static import core.stdc.stdio;
-static import core.stdc.stdlib;
 static import std.typecons;
 
 static import fp.dynarray;
+static import fp.pointer;
 version(unittest) static import fp.testing;
 static import fp.string;
+static import fp.string.ascii;
+static import fp.string.numbers;
+static import fp.string.utf;
 
 static import ecrs.context;
 
@@ -47,19 +52,6 @@ public import ecrs.registry : EntityId, invalidEntity;
 
 // --- spelling ----------------------------------------------------------------
 
-// The code point at `s[i]`, advancing `i`, or null if it is not well-formed UTF-8 (the lax `fp.string.decodeUtf8` accepts overlong and truncated forms).
-private std.typecons.Nullable!uint decodeStrict(const(char)[] s, ref size_t i) @trusted {
-	immutable start = i;
-	bool valid;
-	immutable c = fp.string.decodeUtf8(s, i, valid);
-	if (!valid) return typeof(return).init;
-	char[4] encoded = void;
-	fp.string.Utf8Error error;
-	immutable n = fp.string.encodeUtf8(c, encoded.ptr, error);
-	if (error != fp.string.Utf8Error.none || n != i - start || encoded[0 .. n] != s[start .. i]) return typeof(return).init;
-	return typeof(return)(c);
-}
-
 // Whether `name` lexes as a plain `Identifier` that `doir.syntax.parser.nameOf` reads back as itself, so it needs no `%"..."`.
 private bool isPlain(const(char)[] name) {
 	if (name.length == 0) return false;
@@ -67,15 +59,17 @@ private bool isPlain(const(char)[] name) {
 		if (name.length < keyword.length || name[0 .. keyword.length] != keyword) continue;
 		size_t after = keyword.length;
 		if (after == name.length) return false;
-		immutable next = decodeStrict(name, after);
-		if (next.isNull || !doir.syntax.lexer.isIdentifierContinue(next.get)) return false;
+		bool valid;
+		immutable next = fp.string.utf.decode(name, after, valid);
+		if (!valid || !doir.syntax.lexer.isIdentifierContinue(next)) return false;
 	}
 	size_t i = 0;
-	immutable first = decodeStrict(name, i);
-	if (first.isNull || (first.get != '%' && !doir.syntax.lexer.isIdentifierStart(first.get))) return false;
+	bool valid;
+	immutable first = fp.string.utf.decode(name, i, valid);
+	if (!valid || (first != '%' && !doir.syntax.lexer.isIdentifierStart(first))) return false;
 	while (i < name.length) {
-		immutable c = decodeStrict(name, i);
-		if (c.isNull || (c.get != '.' && !doir.syntax.lexer.isIdentifierContinue(c.get))) return false;
+		immutable c = fp.string.utf.decode(name, i, valid);
+		if (!valid || (c != '.' && !doir.syntax.lexer.isIdentifierContinue(c))) return false;
 	}
 	return true;
 }
@@ -87,15 +81,14 @@ private bool appendEscaped(ref char* out_, const(char)[] text) {
 	size_t i = 0;
 	while (i < text.length) {
 		immutable start = i;
-		immutable decoded = decodeStrict(text, i);
-		if (decoded.isNull) {
+		bool valid;
+		immutable c = fp.string.utf.decode(text, i, valid);
+		if (!valid) { // `decode` consumed the one byte, which is escaped
 			immutable b = cast(ubyte) text[start];
-			i = start + 1;
-			if (fp.string.concatenateMultiple(out_, "\\x", hex[b >> 4 .. (b >> 4) + 1], hex[b & 15 .. (b & 15) + 1]) is null) return false;
+			if (!fp.string.append(out_, "\\x", hex[b >> 4 .. (b >> 4) + 1], hex[b & 15 .. (b & 15) + 1])) return false;
 			afterByte = true;
 			continue;
 		}
-		immutable c = decoded.get;
 		const(char)[] named = null;
 		switch (c) {
 			case '"': named = `\"`; break;
@@ -110,27 +103,27 @@ private bool appendEscaped(ref char* out_, const(char)[] text) {
 			default: break;
 		}
 		bool ok;
-		if (named !is null) ok = fp.string.concatenate(out_, named) !is null;
-		else if (c < 0x20 || c == 0x7F || (afterByte && c < 0x80 && fp.string.isHexDigit(cast(char) c)))
-			ok = fp.string.concatenateMultiple(out_, "\\u00", hex[c >> 4 .. (c >> 4) + 1], hex[c & 15 .. (c & 15) + 1]) !is null;
-		else ok = fp.string.concatenate(out_, text[start .. i]) !is null;
+		if (named !is null) ok = fp.string.concatenate(out_, named);
+		else if (c < 0x20 || c == 0x7F || (afterByte && c < 0x80 && fp.string.ascii.isHexDigit(cast(char) c)))
+			ok = fp.string.append(out_, "\\u00", hex[c >> 4 .. (c >> 4) + 1], hex[c & 15 .. (c & 15) + 1]);
+		else ok = fp.string.concatenate(out_, text[start .. i]);
 		if (!ok) return false;
 		afterByte = false;
 	}
 	return true;
 }
 
-// Appends the shortest decimal that `strtod` reads back as `value`, with a point or exponent so it lexes as a `FloatConstant`.
-private bool appendFloat(ref char* out_, double value) @trusted {
-	char[48] buffer = void;
-	int n = 0;
-	foreach (precision; 1 .. 18) {
-		n = core.stdc.stdio.snprintf(buffer.ptr, buffer.length, "%.*g", precision, value);
-		if (core.stdc.stdlib.strtod(buffer.ptr, null) == value) break;
-	}
-	bool isFloat = false;
-	foreach (c; buffer[0 .. n]) isFloat |= c == '.' || c == 'e';
-	return fp.string.concatenateMultiple(out_, buffer[0 .. n], isFloat ? "" : ".0") !is null;
+// Too large for any float type, so the literal rounds to infinity (spec: a float literal rounds to the nearest representable value).
+private enum string infinityLiteral = "1e999";
+
+// Appends `value`, not a NaN, as a `FloatConstant`: shortest decimal, a point added so it does not lex as an integer, `infinityLiteral` for infinity.
+private bool appendFloat(ref char* out_, double value) {
+	assert(value == value, "doir.printer.appendFloat: a NaN has no literal");
+	if (value == double.infinity || value == -double.infinity) return fp.string.append(out_, value < 0 ? "-" : "", infinityLiteral);
+	immutable start = fp.string.length(out_);
+	if (!fp.string.numbers.appendFloat(out_, value)) return false;
+	foreach (c; fp.string.slice(out_)[start .. $]) if (c == '.' || c == 'e') return true;
+	return fp.string.concatenate(out_, ".0");
 }
 
 
@@ -142,135 +135,138 @@ private struct Printer {
 	char* out_;
 }
 
-private bool append(ref Printer p, const(char)[] text) {
-	return text.length == 0 || fp.string.concatenate(p.out_, text) !is null;
-}
-
 // `quote` forces `%"..."` where the plain spelling would make the parser build another form, as `type` before a block does.
-private bool appendName(ref Printer p, doir.strings.StringId name, bool quote = false) {
-	const text = doir.strings.text(*p.strings, name);
-	if (!quote && isPlain(text)) return append(p, text);
-	return append(p, `%"`) && appendEscaped(p.out_, text) && append(p, `"`);
+private bool appendName(ref Printer printer, doir.strings.StringId name, bool quote = false) {
+	const text = doir.strings.text(*printer.strings, name);
+	if (!quote && isPlain(text)) return fp.string.concatenate(printer.out_, text);
+	return fp.string.concatenate(printer.out_, `%"`) && appendEscaped(printer.out_, text) && fp.string.concatenate(printer.out_, `"`);
 }
 
 // A declaration's or parameter's own name, where a bare `_` spells none.
-private bool appendOwnName(ref Printer p, EntityId e) {
-	auto name = ecrs.context.findComponent!(doir.components.ast.Name)(*p.store, e);
-	return name is null ? append(p, "_") : appendName(p, name.value, doir.strings.text(*p.strings, name.value) == "_");
+private bool appendOwnName(ref Printer printer, EntityId e) {
+	auto name = ecrs.context.findComponent!(doir.components.ast.Name)(*printer.store, e);
+	return name is null ? fp.string.concatenate(printer.out_, "_") : appendName(printer, name.value, doir.strings.text(*printer.strings, name.value) == "_");
 }
 
-private bool appendConstant(ref Printer p, ref const doir.components.ast.ConstantVal value) {
+// The value of `typed`, a declaration or, if `parameter`, a parameter default, whose written type a NaN or an infinity's `N-Limits` call names.
+private bool appendConstant(ref Printer printer, EntityId typed, bool parameter, ref const doir.components.ast.ConstantVal value) {
 	final switch (value.kind) {
 		case doir.components.ast.ConstantVal.Kind.integer:
-			return fp.string.concatenateMultiple(p.out_, value.integerValue) !is null;
+			return fp.string.append(printer.out_, value.integerValue);
+		case doir.components.ast.ConstantVal.Kind.negativeInteger:
+			return fp.string.append(printer.out_, "-") && fp.string.append(printer.out_, 0 - value.integerValue);
 		case doir.components.ast.ConstantVal.Kind.float_:
-			return appendFloat(p.out_, value.floatValue);
+			immutable notANumber = value.floatValue != value.floatValue;
+			if (notANumber || (!parameter && value.floatValue == double.infinity))
+				return fp.string.concatenate(printer.out_, notANumber ? "std.numbers.not_a_number(" : "std.numbers.infinity(") && appendType(printer, typed, parameter) && fp.string.concatenate(printer.out_, ")");
+			return appendFloat(printer.out_, value.floatValue);
 		case doir.components.ast.ConstantVal.Kind.bytes:
-			return append(p, `"`) && appendEscaped(p.out_, doir.strings.text(*p.strings, value.bytesValue)) && append(p, `"`);
+			return fp.string.concatenate(printer.out_, `"`) && appendEscaped(printer.out_, doir.strings.text(*printer.strings, value.bytesValue)) && fp.string.concatenate(printer.out_, `"`);
 	}
 }
 
 // A parameter's `deduced type` is the interned `deducedTypeName`, which only a parameter may spell bare (`D-Deduce`).
-private bool appendType(ref Printer p, EntityId e, bool parameter, bool quote = false) {
-	if (auto lookup = ecrs.context.findComponent!(doir.components.ast.LookupTypeOf)(*p.store, e)) {
-		if (parameter && doir.strings.text(*p.strings, lookup.name) == doir.components.ast.deducedTypeName) return append(p, "deduced type");
-		return appendName(p, lookup.name, quote);
+private bool appendType(ref Printer printer, EntityId e, bool parameter, bool quote = false) {
+	if (auto lookup = ecrs.context.findComponent!(doir.components.ast.LookupTypeOf)(*printer.store, e)) {
+		if (parameter && doir.strings.text(*printer.strings, lookup.name) == doir.components.ast.deducedTypeName) return fp.string.concatenate(printer.out_, "deduced type");
+		return appendName(printer, lookup.name, quote);
 	}
-	auto typeOf = ecrs.context.findComponent!(doir.components.ast.TypeOf)(*p.store, e);
+	auto typeOf = ecrs.context.findComponent!(doir.components.ast.TypeOf)(*printer.store, e);
 	assert(typeOf !is null, "doir.printer: a typed declaration has neither LookupTypeOf nor an in-place TypeOf");
-	return appendFunctionType(p, typeOf.type);
+	return appendFunctionType(printer, typeOf.type);
 }
 
-// `(a: T, b: U = 5) -> V`, from function type `ft`'s parameters and return type (`R-Param`, `F-Default`).
-private bool appendFunctionType(ref Printer p, EntityId ft) {
-	if (!append(p, "(")) return false;
-	foreach (i, parameter; fp.dynarray.slice(ecrs.context.getComponent!(doir.components.ast.FunctionInputs)(*p.store, ft).related)) {
-		if (i && !append(p, ", ")) return false;
-		if (!appendOwnName(p, parameter) || !append(p, ": ") || !appendType(p, parameter, true)) return false;
-		if (auto constant = ecrs.context.findComponent!(doir.components.ast.ConstantVal)(*p.store, parameter)) {
-			if (!append(p, " = ") || !appendConstant(p, *constant)) return false;
-		} else if (auto value = ecrs.context.findComponent!(doir.components.ast.LookupValue)(*p.store, parameter))
-			if (!append(p, " = ") || !appendName(p, value.name)) return false;
+// `(a: T, b: U = 5) -> V`, from function type `functionType`'s parameters and return type (`R-Param`, `F-Default`).
+private bool appendFunctionType(ref Printer printer, EntityId functionType) {
+	if (!fp.string.concatenate(printer.out_, "(")) return false;
+	foreach (i, parameter; fp.dynarray.slice(ecrs.context.getComponent!(doir.components.ast.FunctionInputs)(*printer.store, functionType).related)) {
+		if (i && !fp.string.concatenate(printer.out_, ", ")) return false;
+		if (!appendOwnName(printer, parameter) || !fp.string.concatenate(printer.out_, ": ") || !appendType(printer, parameter, true)) return false;
+		if (auto constant = ecrs.context.findComponent!(doir.components.ast.ConstantVal)(*printer.store, parameter)) {
+			if (!fp.string.concatenate(printer.out_, " = ") || !appendConstant(printer, parameter, true, *constant)) return false;
+		} else if (auto value = ecrs.context.findComponent!(doir.components.ast.LookupValue)(*printer.store, parameter))
+			if (!fp.string.concatenate(printer.out_, " = ") || !appendName(printer, value.name)) return false;
 	}
-	if (!append(p, ")")) return false;
-	if (auto lookup = ecrs.context.findComponent!(doir.components.ast.LookupFunctionReturn)(*p.store, ft)) return append(p, " -> ") && appendName(p, lookup.name);
-	if (auto returned = ecrs.context.findComponent!(doir.components.ast.FunctionReturn)(*p.store, ft)) return append(p, " -> ") && appendFunctionType(p, returned.type);
+	if (!fp.string.concatenate(printer.out_, ")")) return false;
+	if (auto lookup = ecrs.context.findComponent!(doir.components.ast.LookupFunctionReturn)(*printer.store, functionType)) return fp.string.concatenate(printer.out_, " -> ") && appendName(printer, lookup.name);
+	if (auto returned = ecrs.context.findComponent!(doir.components.ast.FunctionReturn)(*printer.store, functionType)) return fp.string.concatenate(printer.out_, " -> ") && appendFunctionType(printer, returned.type);
 	return true;
 }
 
-private bool appendIndent(ref Printer p, size_t depth) {
+private bool appendIndent(ref Printer printer, size_t depth) {
 	foreach (_; 0 .. depth)
-		if (fp.string.append(p.out_, '\t') is null) return false;
+		if (!fp.string.append(printer.out_, '\t')) return false;
 	return true;
 }
 
 // The source annotation `<"file":3-4:5>`: lines, then columns, each a range only where start and end differ (`AT-Source`).
-private bool appendAnnotation(ref Printer p, ref const doir.components.source.SourceAnnotation annotation) {
+private bool appendAnnotation(ref Printer printer, ref const doir.components.source.SourceAnnotation annotation) {
 	const at = annotation.location;
 	// A quote in the name would end the quoted form early; the bare form ends at the first `:`.
-	immutable quoted = fp.string.find(at.file, `"`, 0) == size_t.max;
-	if (!append(p, quoted ? ` <"` : " <") || !append(p, at.file) || !append(p, quoted ? `":` : ":")) return false;
-	if (fp.string.concatenateMultiple(p.out_, at.start.line) is null) return false;
-	if (at.end.line != at.start.line && fp.string.concatenateMultiple(p.out_, "-", at.end.line) is null) return false;
-	if (fp.string.concatenateMultiple(p.out_, ":", at.start.column) is null) return false;
-	if (at.end.column != at.start.column && fp.string.concatenateMultiple(p.out_, "-", at.end.column) is null) return false;
-	return append(p, ">");
+	immutable quoted = fp.string.find(at.file, `"`, 0) == fp.pointer.notFound;
+	if (!fp.string.concatenate(printer.out_, quoted ? ` <"` : " <") || !fp.string.concatenate(printer.out_, at.file) || !fp.string.concatenate(printer.out_, quoted ? `":` : ":")) return false;
+	if (!fp.string.append(printer.out_, at.start.line)) return false;
+	if (at.end.line != at.start.line && !fp.string.append(printer.out_, "-", at.end.line)) return false;
+	if (!fp.string.append(printer.out_, ":", at.start.column)) return false;
+	if (at.end.column != at.start.column && !fp.string.append(printer.out_, "-", at.end.column)) return false;
+	return fp.string.concatenate(printer.out_, ">");
 }
 
-private bool appendBlock(ref Printer p, EntityId block, size_t depth) {
-	foreach (e; fp.dynarray.slice(ecrs.context.getComponent!(doir.components.ast.Block)(*p.store, block).related))
-		if (!appendDeclaration(p, e, depth)) return false;
+private bool appendBlock(ref Printer printer, EntityId block, size_t depth) {
+	foreach (e; fp.dynarray.slice(ecrs.context.getComponent!(doir.components.ast.Block)(*printer.store, block).related))
+		if (!appendDeclaration(printer, e, depth)) return false;
 	return true;
 }
 
 // One `assignment` of `doir.peg`, the forms `doir.builders` documents, ended by a newline.
-private bool appendDeclaration(ref Printer p, EntityId e, size_t depth) {
-	auto store = p.store;
+private bool appendDeclaration(ref Printer printer, EntityId e, size_t depth) {
+	auto store = printer.store;
 	auto flags = ecrs.context.findComponent!(doir.components.ast.Flags)(*store, e);
 	immutable set = flags is null ? doir.components.ast.Flags.None : flags.flags;
-	if (!appendIndent(p, depth) || !append(p, set & doir.components.ast.Flags.Export ? "export " : "")) return false;
-	if (!appendOwnName(p, e) || !append(p, " : ")) return false;
+	if (!appendIndent(printer, depth) || !fp.string.concatenate(printer.out_, set & doir.components.ast.Flags.Export ? "export " : "")) return false;
+	if (!appendOwnName(printer, e) || !fp.string.concatenate(printer.out_, " : ")) return false;
 
 	auto block = ecrs.context.findComponent!(doir.components.ast.Block)(*store, e);
 	auto alias_ = ecrs.context.findComponent!(doir.components.ast.LookupAlias)(*store, e);
 	auto reference = ecrs.context.findComponent!(doir.components.ast.LookupValue)(*store, e);
 	bool ok;
-	if (set & doir.components.ast.Flags.Namespace) ok = append(p, "namespace");
-	else if (alias_ !is null) ok = append(p, "alias = ") && appendName(p, alias_.name);
+	if (set & doir.components.ast.Flags.Namespace) ok = fp.string.concatenate(printer.out_, "namespace");
+	else if (alias_ !is null) ok = fp.string.concatenate(printer.out_, "alias = ") && appendName(printer, alias_.name);
 	else {
 		// The parser reads `type` and `namespace` before a block, and `alias` before a name, as other forms (`WF-Kind`).
 		bool quote = false;
 		if (auto lookup = ecrs.context.findComponent!(doir.components.ast.LookupTypeOf)(*store, e)) {
-			const typeName = doir.strings.text(*p.strings, lookup.name);
+			const typeName = doir.strings.text(*printer.strings, lookup.name);
 			immutable aggregate = ecrs.context.hasComponent!(doir.components.ast.TypeDefinition)(*store, e);
 			quote = (block !is null && !aggregate && (typeName == "type" || typeName == "namespace")) || (reference !is null && typeName == "alias");
 		}
-		ok = appendType(p, e, false, quote);
+		ok = appendType(printer, e, false, quote);
 	}
 	if (!ok) return false;
 
 	if (block !is null) {
-		if (!append(p, " = {\n") || !appendBlock(p, e, depth + 1) || !appendIndent(p, depth) || !append(p, "}")) return false;
+		if (!fp.string.concatenate(printer.out_, " = {\n") || !appendBlock(printer, e, depth + 1) || !appendIndent(printer, depth) || !fp.string.concatenate(printer.out_, "}")) return false;
 	} else if (auto constant = ecrs.context.findComponent!(doir.components.ast.ConstantVal)(*store, e)) {
-		if (!append(p, " = ") || !appendConstant(p, *constant)) return false;
+		if (!fp.string.concatenate(printer.out_, " = ") || !appendConstant(printer, e, false, *constant)) return false;
 	} else if (auto callee = ecrs.context.findComponent!(doir.components.ast.LookupCall)(*store, e)) {
 		immutable prefix = set & doir.components.ast.Flags.Inline ? "inline " : set & doir.components.ast.Flags.Flatten ? "flatten " : set & doir.components.ast.Flags.Tail ? "tail " : "";
-		if (!append(p, " = ") || !append(p, prefix) || !appendName(p, callee.name) || !append(p, "(")) return false;
-		foreach (i, argument; fp.dynarray.slice(ecrs.context.getComponent!(doir.components.ast.LookupFunctionInputs)(*store, e).names))
-			if ((i && !append(p, ", ")) || !appendName(p, argument)) return false;
-		if (!append(p, ")")) return false;
+		if (!fp.string.concatenate(printer.out_, " = ") || !fp.string.concatenate(printer.out_, prefix) || !appendName(printer, callee.name) || !fp.string.concatenate(printer.out_, "(")) return false;
+		foreach (i, argument; fp.dynarray.slice(ecrs.context.getComponent!(doir.components.ast.LookupFunctionInputs)(*store, e).names.p))
+			if ((i && !fp.string.concatenate(printer.out_, ", ")) || !appendName(printer, argument)) return false;
+		if (!fp.string.concatenate(printer.out_, ")")) return false;
 	} else if (reference !is null) {
-		if (!append(p, " = ") || !appendName(p, reference.name)) return false;
+		if (!fp.string.concatenate(printer.out_, " = ") || !appendName(printer, reference.name)) return false;
 	} else if (ecrs.context.hasComponent!(doir.components.ast.FunctionInputs)(*store, e)) {
-		if (!append(p, " = ") || !appendFunctionType(p, e)) return false;
+		if (!fp.string.concatenate(printer.out_, " = ") || !appendFunctionType(printer, e)) return false;
 	}
 
 	if (auto annotation = ecrs.context.findComponent!(doir.components.source.SourceAnnotation)(*store, e))
-		if (!appendAnnotation(p, *annotation)) return false;
-	return append(p, "\n");
+		if (!appendAnnotation(printer, *annotation)) return false;
+	return fp.string.concatenate(printer.out_, "\n");
 }
 
-/// Prints the declarations of `block`, a file's root block (`doir.source.rootOf`) or a block or namespace in one, returning a new fp string the caller releases with `fp.string.free`; an empty block gives a null `char*`, the empty fp string. Parsing the text back builds an equivalent store; see the module documentation for what it leaves out.
+/// Prints the declarations of `block`, a file's root block (`doir.source.rootOf`) or a block or namespace in one, returning a new fp string the caller releases with `fp.string.free`; an empty block gives a null `char*`, the empty fp string.
+/// Parsing the text back builds an equivalent store; see the module documentation for what it leaves out.
 ///
 /// Returns null if an allocation was refused.
 ///
@@ -292,17 +288,18 @@ private bool appendDeclaration(ref Printer p, EntityId e, size_t depth) {
 /// assert(fp.string.slice(text) == "math : namespace = {\n\tpi : std.f64\n}\n");
 /// ---
 std.typecons.Nullable!(char*) print(ref const ecrs.context.Context store, ref const doir.strings.Strings strings, EntityId block) {
-	auto p = Printer(&store, &strings, null);
-	if (!appendBlock(p, block, 0)) {
-		fp.string.free(p.out_);
+	auto printer = Printer(&store, &strings, null);
+	if (!appendBlock(printer, block, 0)) {
+		fp.string.free(printer.out_);
 		return typeof(return).init;
 	}
-	return typeof(return)(p.out_);
+	return typeof(return)(printer.out_);
 }
 
 
 version(unittest) {
 	static import fp.pointer;
+	static import doir.builders;
 	static import doir.query;
 	static import doir.source;
 	static import doir.testing;
@@ -329,6 +326,11 @@ unittest { // spelling: plain names, escapes, floats
 	scope(exit) fp.string.free(f);
 	assert(appendFloat(f, 2.5) && appendFloat(f, 3) && appendFloat(f, 0.1) && appendFloat(f, 1e-300));
 	assert(fp.string.slice(f) == "2.53.00.11e-300");
+	// An infinity prints as a literal, not as `inf`, which lexes as a name, and reads back as itself.
+	fp.string.free(f);
+	f = null;
+	assert(appendFloat(f, double.infinity) && fp.string.slice(f) == infinityLiteral);
+	assert(fp.string.numbers.parseFloat(fp.string.slice(f)).get.value == double.infinity);
 }
 
 unittest { // every declaration form prints as written and reparses to the same text
@@ -341,24 +343,26 @@ unittest { // every declaration form prints as written and reparses to the same 
 
 	immutable source = "// a comment the printer drops\n"
 		~ "export six : std.u8 = 0x6 <\"gen.doir\":3-4:5>\n"
-		~ "w : f64 = 2.50; whole : f64 = 3.; tiny : f64 = 1e-300\n"
+		~ "w : f64 = 2.50; whole : f64 = 3.; tiny : f64 = 1e-300; huge : f64 = 2e400\n"
+		~ "neg : i32 = -42; negf : f64 = -2.5\n"
 		~ "s : p = \"a\\tb\\x80\\x41\\u00e9\\\"\" ; r : p = \"\"\"raw \"quoted\"\"\"\" ; c : u32 = 'é'\n"
 		~ "_ : T\n"
 		~ "blk : block = {\n\tinner : T = tail f(x, %\"y z\")\n\t_ : _ = std.block_result(std.nothing) <g.doir:1:2-9>\n}\n"
 		~ "vec : type = { x : f32 ; y : f32 ; }\n"
-		~ "add_t : type = (a: T, b: deduced type, c: T = 5, d: T = y) -> T\n"
+		~ "add_t : type = (a: T, b: deduced type, c: T = 5, d: T = y, e: f64 = 1e999, n: f64 = -1e999) -> T\n"
 		~ "f : (g: (x: T) -> U, _: V) -> (c: U) -> V\n"
 		~ "color : alias = vec\n"
 		~ "math : namespace = { pi : f64 = 3.14159 ; }\nmath : namespace = {}\n"
 		~ "%\"a b\" : %\"type\" = {}\n%\"_\" : %\"alias\" = q\n%\"export.x\" : %\"deduced type\" = %\"namespace\"\n"
 		~ "empty : () = flatten g()\n";
 	immutable expected = "export six : std.u8 = 6 <\"gen.doir\":3-4:5>\n"
-		~ "w : f64 = 2.5\nwhole : f64 = 3.0\ntiny : f64 = 1e-300\n"
+		~ "w : f64 = 2.5\nwhole : f64 = 3.0\ntiny : f64 = 1e-300\nhuge : f64 = std.numbers.infinity(f64)\n"
+		~ "neg : i32 = -42\nnegf : f64 = -2.5\n"
 		~ "s : p = \"a\\tb\\x80\\u0041é\\\"\"\nr : p = \"raw \\\"quoted\\\"\"\nc : u32 = 233\n"
 		~ "_ : T\n"
 		~ "blk : block = {\n\tinner : T = tail f(x, %\"y z\")\n\t_ : _ = std.block_result(std.nothing) <\"g.doir\":1:2-9>\n}\n"
 		~ "vec : type = {\n\tx : f32\n\ty : f32\n}\n"
-		~ "add_t : type = (a: T, b: deduced type, c: T = 5, d: T = y) -> T\n"
+		~ "add_t : type = (a: T, b: deduced type, c: T = 5, d: T = y, e: f64 = 1e999, n: f64 = -1e999) -> T\n"
 		~ "f : (g: (x: T) -> U, _: V) -> (c: U) -> V\n"
 		~ "color : alias = vec\n"
 		~ "math : namespace = {\n\tpi : f64 = 3.14159\n}\nmath : namespace = {\n}\n"
@@ -373,25 +377,55 @@ unittest { // every declaration form prints as written and reparses to the same 
 	scope(exit) fp.string.free(second);
 	assert(fp.string.slice(second) == expected);
 
-	// The reparse built the same entities, not only the same text: `%"type"` stayed a block, `%"alias"` a reference, and the bytes and floats kept their values.
+	// The reparse built the same entities, not just the same text: `%"type"` stayed a block, `%"alias"` a reference, bytes and floats kept their values.
 	const reparsed = fp.dynarray.slice(ecrs.context.getComponent!(doir.components.ast.Block)(store, b).related);
-	assert(reparsed.length == 19);
+	assert(reparsed.length == 22);
 	assert(ecrs.context.getComponent!(doir.components.ast.ConstantVal)(store, reparsed[3]).floatValue == 1e-300);
-	assert(doir.strings.text(strings, ecrs.context.getComponent!(doir.components.ast.ConstantVal)(store, reparsed[4]).bytesValue) == "a\tb\x80Aé\"");
+	assert(!ecrs.context.hasComponent!(doir.components.ast.ConstantVal)(store, reparsed[4]) && ecrs.context.hasComponent!(doir.components.ast.LookupCall)(store, reparsed[4]));
+	assert(ecrs.context.getComponent!(doir.components.ast.ConstantVal)(store, reparsed[5]).kind == doir.components.ast.ConstantVal.Kind.negativeInteger);
+	assert(ecrs.context.getComponent!(doir.components.ast.ConstantVal)(store, reparsed[6]).floatValue == -2.5);
+	assert(doir.strings.text(strings, ecrs.context.getComponent!(doir.components.ast.ConstantVal)(store, reparsed[7]).bytesValue) == "a\tb\x80Aé\"");
 	assert(ecrs.context.getComponent!(doir.components.ast.Flags)(store, reparsed[0]).flags == (doir.components.ast.Flags.Comptime | doir.components.ast.Flags.Export));
-	assert(ecrs.context.hasComponent!(doir.components.ast.Block)(store, reparsed[15]) && !ecrs.context.hasComponent!(doir.components.ast.TypeDefinition)(store, reparsed[15]));
-	assert(ecrs.context.hasComponent!(doir.components.ast.LookupValue)(store, reparsed[16]) && !ecrs.context.hasComponent!(doir.components.ast.LookupAlias)(store, reparsed[16]));
-	assert(doir.strings.text(strings, ecrs.context.getComponent!(doir.components.ast.Name)(store, reparsed[16]).value) == "_");
+	assert(ecrs.context.hasComponent!(doir.components.ast.Block)(store, reparsed[18]) && !ecrs.context.hasComponent!(doir.components.ast.TypeDefinition)(store, reparsed[18]));
+	assert(ecrs.context.hasComponent!(doir.components.ast.LookupValue)(store, reparsed[19]) && !ecrs.context.hasComponent!(doir.components.ast.LookupAlias)(store, reparsed[19]));
+	assert(doir.strings.text(strings, ecrs.context.getComponent!(doir.components.ast.Name)(store, reparsed[19]).value) == "_");
 
 	// A refused allocation returns null and leaves no text.
 	for (size_t n = 0;; ++n) {
 		assert(n < 1000);
-		auto previous = fp.testing.beginRationedAllocator(n);
+		auto previous = fp.testing.limitAllocations(n);
 		auto printed = print(store, strings, a);
-		fp.testing.endRationedAllocator(previous);
+		fp.testing.restoreAllocator(previous);
 		if (printed.isNull) continue;
 		scope(exit) fp.string.free(printed.get);
 		assert(fp.string.slice(printed.get) == expected);
 		break;
 	}
+}
+
+unittest { // a NaN, which no literal spells, prints as the N-Limits call on its declaration's type and reparses as that call
+	auto store = ecrs.context.create();
+	scope(exit) ecrs.context.free(store);
+	auto engine = doir.query.create(store);
+	scope(exit) doir.query.free(engine);
+	doir.strings.Strings strings;
+	scope(exit) doir.strings.free(strings);
+
+	auto root = doir.builders.createRoot(store);
+	immutable f64 = doir.strings.intern(strings, "f64");
+	assert(doir.builders.pushConstant(root, doir.strings.intern(strings, "nan"), f64, doir.components.ast.ConstantVal.float_(double.nan)) != invalidEntity);
+	immutable function_ = doir.builders.pushFunctionType(root, doir.strings.intern(strings, "g"), doir.strings.intern(strings, "type"));
+	immutable parameter = doir.builders.pushParameter(store, function_, doir.strings.intern(strings, "x"), f64);
+	assert(function_ != invalidEntity && parameter != invalidEntity && doir.builders.setDefault(store, parameter, doir.components.ast.ConstantVal.float_(double.nan)));
+	auto text = print(store, strings, root.block).get;
+	scope(exit) fp.string.free(text);
+	// A parameter default cannot be a call, so that NaN has no spelling that parses.
+	assert(fp.string.slice(text) == "nan : f64 = std.numbers.not_a_number(f64)\ng : type = (x: f64 = std.numbers.not_a_number(f64))\n");
+
+	EntityId reparsedRoot;
+	auto again = reprint(engine, strings, "nan.doir", "nan : f64 = std.numbers.not_a_number(f64)\n", reparsedRoot);
+	scope(exit) fp.string.free(again);
+	assert(fp.string.slice(again) == "nan : f64 = std.numbers.not_a_number(f64)\n");
+	immutable call = ecrs.context.getComponent!(doir.components.ast.Block)(store, reparsedRoot).related[0];
+	assert(doir.strings.text(strings, ecrs.context.getComponent!(doir.components.ast.LookupCall)(store, call).name) == "std.numbers.not_a_number");
 }

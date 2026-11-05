@@ -5,7 +5,8 @@
 # ///
 """DOIR+ Preprocessor: translates ergonomic DOIR+ syntax into conforming DOIR Core.
 
-The DOIR+ grammar is `doir_plus.peg`, which extends `doir.peg`; both are loaded by `doir_grammar.py`. Each nested call, typed constant, inline block and inline function is hoisted into a temporary declared just before the statement that uses it, and every declaration carries a `SourceInfo` pointing back at the DOIR+ source.
+The DOIR+ grammar is `doir_plus.peg`, which extends `doir.peg`; both are loaded by `doir_grammar.py`.
+Each nested call, typed constant, inline block and inline function is hoisted into a temporary declared just before the statement that uses it, and every declaration carries a `SourceInfo` pointing back at the DOIR+ source.
 
     # Preprocess a DOIR+ file to stdout:
     uv run tools/doirp.py input.doirp
@@ -207,7 +208,8 @@ class Lowering:
 		return "{\n" + "\n".join(lines) + "\n}", value.span
 
 	def block(self, node, terminator, prologue=()):
-		"""Lowers a block to `(text, span)`, opening it with the `prologue` lines. A trailing expression becomes the block's `terminator` call, and a block not ending in a terminator gets `terminator(std.nothing)` (WF-Term)."""
+		"""Lowers a block to `(text, span)`, opening it with the `prologue` lines.
+A trailing expression becomes the block's `terminator` call, and a block not ending in a terminator gets `terminator(std.nothing)` (WF-Term)."""
 		lines = self.render(prologue, "\t")
 		statements = node.children("statement")
 		last_code = None
@@ -272,6 +274,7 @@ class Lowering:
 		names = set(scope)
 
 		def dependent(type_node):
+			"""Returns the type call inside `type_node` when it is built from a parameter in scope, else None."""
 			inner = parts(type_node)[0]
 			return inner if inner.name == "type_call" and any(self.text(i).split(".")[0] in names for i in identifiers(inner)) else None
 
@@ -439,7 +442,8 @@ class Lowering:
 
 
 def preprocess(source, filename=""):
-	"""Translates DOIR+ `source` to DOIR Core text. Raises `pe.ParseError` on a syntax error, which `doir_grammar.syntax_error` formats, and `LoweringError` on a construct DOIR cannot express."""
+	"""Translates DOIR+ `source` to DOIR Core text.
+Raises `pe.ParseError` on a syntax error, which `doir_grammar.syntax_error` formats, and `LoweringError` on a construct DOIR cannot express."""
 	parser = doir_grammar.load(PLUS_GRAMMAR, doir_grammar.GRAMMAR)
 	return Lowering(source, filename).program(doir_grammar.parse(parser, source))
 
