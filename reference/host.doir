@@ -1,8 +1,11 @@
-// The `HostServices` table a comptime host implements (`H-Hook`, `H-Services`, spec Part II §11): one C-ABI entry per host hook, the bodyless prototypes of `standard.doir` whose type is marked `std.types.always_comptime`, and one per machine primitive the host interprets at comptime (`C-Interpret`, `MEM-Comptime`). A mizu backend reaches an entry through a comptime-machine instruction, a native JIT through a direct call.
+// The `HostServices` table a comptime host implements (`H-Hook`, `H-Services`, spec Part II §11): one C-ABI entry per host hook, the bodyless prototypes of `standard.doir` whose type is marked `std.types.always_comptime`, and one per machine primitive the host interprets at comptime (`C-Interpret`, `MEM-Comptime`).
+// A mizu backend reaches an entry through a comptime-machine instruction, a native JIT through a direct call.
 //
 // Each entry is named by its hook's path below `std`, and looked up by that name and `revision`, never by position (`H-ABI`), so adding an entry does not break a host written against an earlier revision.
 //
-// How an argument crosses: one of an always-comptime type (`type`, `std.meta.entity`, `pack`, `compiler.level`) as the `compiler.entity` naming it; one of a fixed type as its value in the target's layout (`H-Target`), written here as its `std` type. A hook's value of a deduced type crosses as the entity naming its binding, and so does a `_` result, which the destination aliases (`A-Bind`). A primitive's value of a deduced type crosses as a `compiler.byte_pointer` to its bytes in comptime memory, its type's entity giving the layout, and a result of a deduced type is written through `result`.
+// How an argument crosses: one of an always-comptime type (`type`, `std.meta.entity`, `pack`, `compiler.level`) as the `compiler.entity` naming it; one of a fixed type as its value in the target's layout (`H-Target`), written here as its `std` type.
+// A hook's value of a deduced type crosses as the entity naming its binding, and so does a `_` result, which the destination aliases (`A-Bind`).
+// A primitive's value of a deduced type crosses as a `compiler.byte_pointer` to its bytes in comptime memory, its type's entity giving the layout, and a result of a deduced type is written through `result`.
 host_services : namespace = {
 	revision : compiler.pointer_sized = 4
 

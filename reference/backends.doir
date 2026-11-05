@@ -15,7 +15,10 @@ mizu_backend : namespace = {
 	_ : compiler.pointer_sized = compiler.paste_file(format_path)
 }
 
-// The levels above name targets through this namespace (`std.targets.compile_for`). Mizu lowers onto `builtin` with its schedule, which makes it a target, and `std` lowers onto Mizu: `std` never names a backend, so this file says how it reaches each one. The legacy schedule lowers both, so both edges run it. With one target, `set_host` may be left out; with several, exactly one is the host.
+// The levels above name targets through this namespace (`std.targets.compile_for`).
+// Mizu lowers onto `builtin` with its schedule, which makes it a target, and `std` lowers onto Mizu: `std` never names a backend, so this file says how it reaches each one.
+// The legacy schedule lowers both, so both edges run it.
+// With one target, `set_host` may be left out; with several, exactly one is the host.
 export targets : namespace = {
 	export mizu : compiler.level = compiler.levels.make(mizu_backend)
 	_ : compiler.level = compiler.levels.lower_to(mizu, compiler.levels.builtin, mizu_backend.machine.schedule)

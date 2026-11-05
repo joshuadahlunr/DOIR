@@ -10,9 +10,11 @@
 // Implements in-place modification (M-Flag) and bidirectional deduction (D-Deduce).
 
 std : namespace = {
-	// Reflection handles are entities (`meta.entity`), never plain integers, so E-Remap can rewrite every holder of one when the store is renumbered. A field declaration is an entity, and a dotted path `T.f` names one.
+	// Reflection handles are entities (`meta.entity`), never plain integers, so E-Remap can rewrite every holder of one when the store is renumbered.
+	// A field declaration is an entity, and a dotted path `T.f` names one.
 	//
-	// Every entry here is an always-inline wrapper over its `std.meta.types` counterpart (rule RF-Wrapper): take the entity of each argument, run the entity version, and turn the result back with `meta.from_entity`. `std.meta.types` is therefore the complete interface, and the only one that can be handed a stored entity.
+	// Every entry here is an always-inline wrapper over its `std.meta.types` counterpart (rule RF-Wrapper): take the entity of each argument, run the entity version, and turn the result back with `meta.from_entity`.
+	// `std.meta.types` is therefore the complete interface, and the only one that can be handed a stored entity.
 	types : namespace = {
 		export modifier_t : type = (in: type) -> type
 		_ : type = always_comptime(modifier_t)
@@ -70,7 +72,8 @@ std : namespace = {
 			_ : _ = std.return(out)
 		}
 
-		// A pointer whose pointee is a function type (rule FP-Type). It is its own type rather than a plain pointer, so `S-Struct` does not silently convert it to a `byte_pointer` and the signature survives being stored in a field.
+		// A pointer whose pointee is a function type (rule FP-Type).
+		// It is its own type rather than a plain pointer, so `S-Struct` does not silently convert it to a `byte_pointer` and the signature survives being stored in a field.
 		export function_pointer : type_builder_t = {
 			entity : meta.entity = meta.entity_of(in)
 			out_entity : meta.entity = meta.types.function_pointer(entity)
@@ -202,7 +205,8 @@ std : namespace = {
 			_ : _ = std.return(out)
 		}
 
-		// Field enumeration (rule RF-Fields). `field_count` is the number of declarations in the type's block; `field` names the i-th one.
+		// Field enumeration (rule RF-Fields).
+		// `field_count` is the number of declarations in the type's block; `field` names the i-th one.
 		field_count_t : type = (T: type) -> pointer_sized
 		_ : type = always_comptime(field_count_t)
 		_ : type = functions.always_inline(field_count_t)
@@ -240,7 +244,8 @@ std : namespace = {
 			_ : _ = std.return(out)
 		}
 
-		// `object` is a pointer to an aggregate and `field` the entity of one of its fields, from `field` or `meta.entity_of(T.f)`; the result points at that field (rule RF-FieldPtr). The return type is `pointer(TypeOf(field))`, which `TF-Name` cannot write in a declaration, so the caller names it and `D-Deduce` solves `Tret` from that.
+		// `object` is a pointer to an aggregate and `field` the entity of one of its fields, from `field` or `meta.entity_of(T.f)`; the result points at that field (rule RF-FieldPtr).
+		// The return type is `pointer(TypeOf(field))`, which `TF-Name` cannot write in a declaration, so the caller names it and `D-Deduce` solves `Tret` from that.
 		field_pointer_t : type = (Tret: deduced type, Tobj: deduced type, object: Tobj, field: meta.entity) -> Tret
 		_ : type = functions.always_inline(field_pointer_t)
 		export field_pointer : field_pointer_t = {
@@ -270,7 +275,8 @@ std : namespace = {
 	export byte_pointer_pointer : type = types.pointer(byte_pointer)
 	export u1_pointer : type = types.pointer(u1)
 
-	// Boolean literals. `true` and `false` are identifiers, not keywords, and IntegerConstant has no signed form, so the standard supplies them.
+	// Boolean literals.
+	// `true` and `false` are identifiers, not keywords, and IntegerConstant has no signed form, so the standard supplies them.
 	export false : u1 = 0
 	export true : u1 = 1
 
@@ -293,7 +299,8 @@ std : namespace = {
 	export load_library : load_library_t
 
 	meta : namespace = {
-		// Entity ids are compiler-host values, always comptime, and of their own type so E-Remap can find every holder. Defined at level 0 because the `compiler_impl` hooks need it below `std` (rule L-Mono).
+		// Entity ids are compiler-host values, always comptime, and of their own type so E-Remap can find every holder.
+		// Defined at level 0 because the `compiler_impl` hooks need it below `std` (rule L-Mono).
 		export entity : alias = compiler.entity
 
 		entity_of_t : type = (T: deduced type, register: T) -> entity
@@ -347,7 +354,8 @@ std : namespace = {
 		_ : type = std.types.always_comptime(return_type_t)
 		export return_type : return_type_t
 
-		// The entity-level primitives. `std.types.*` and `std.functions.*` are inline wrappers over these (rule RF-Wrapper), so the two namespaces mirror each other entry for entry; only `self` (rule TF-Self) has no entity form.
+		// The entity-level primitives.
+		// `std.types.*` and `std.functions.*` are inline wrappers over these (rule RF-Wrapper), so the two namespaces mirror each other entry for entry; only `self` (rule TF-Self) has no entity form.
 		types : namespace = {
 			// Is this entity a type at all?
 			is_type_t : type = (e: entity) -> u1
@@ -455,7 +463,8 @@ std : namespace = {
 		}
 
 		functions : namespace = {
-			// Function flags and renames, over entities. `std.functions.*` wraps these.
+			// Function flags and renames, over entities.
+			// `std.functions.*` wraps these.
 			export modifier_t : type = (e: entity) -> entity
 			_ : type = std.types.always_comptime(modifier_t)
 
@@ -463,7 +472,8 @@ std : namespace = {
 			export never_inline : modifier_t
 			export always_inline_recursively : modifier_t
 
-			// The entity-level form of `std.functions.address` (rule FP-Address). The host makes a binding of type function_pointer(TypeOf(function)) whose comptime value is the function entity itself; the returned entity is that new binding.
+			// The entity-level form of `std.functions.address` (rule FP-Address).
+			// The host makes a binding of type function_pointer(TypeOf(function)) whose comptime value is the function entity itself; the returned entity is that new binding.
 			address_t : type = (function: entity) -> entity
 			_ : type = std.types.always_comptime(address_t)
 			export address : address_t
@@ -492,7 +502,8 @@ std : namespace = {
 			export add_overload : add_overload_t
 		}
 
-		// Target liveness over entities (rule T-Live). `std.targets.*` wraps these.
+		// Target liveness over entities (rule T-Live).
+		// `std.targets.*` wraps these.
 		targets : namespace = {
 			compile_for_t : type = (e: entity, target: compiler.level) -> entity
 			_ : type = std.types.always_comptime(compile_for_t)
@@ -545,7 +556,8 @@ std : namespace = {
 			_ : _ = std.return(out)
 		}
 
-		// Rule TF-Overload: the type of an overload set's name. A set is a name, not a value, so its type is always-comptime, and unique so that it is equivalent to no other (rule S-Struct).
+		// Rule TF-Overload: the type of an overload set's name.
+		// A set is a name, not a value, so its type is always-comptime, and unique so that it is equivalent to no other (rule S-Struct).
 		overload_set_shape : type = {}
 		export overload_set : type = types.distinct_copy(overload_set_shape)
 		_ : type = types.always_comptime(overload_set)
@@ -583,12 +595,16 @@ std : namespace = {
 			_ : _ = std.return(out)
 		}
 
-		// Rule FP-Address: the only crossing from a function entity to a value. Unlike the other entries here it is not a wrapper over `std.meta.functions` (rule RF-Wrapper), because the result is a value of function-pointer type, not a type, so there is nothing to turn back with `from_entity`. `TF-Name` cannot write `function_pointer(T)` in a return position, so the caller names the pointer type it wants.
+		// Rule FP-Address: the only crossing from a function entity to a value.
+		// Unlike the other entries here it is not a wrapper over `std.meta.functions` (rule RF-Wrapper), because the result is a value of function-pointer type, not a type, so there is nothing to turn back with `from_entity`.
+		// `TF-Name` cannot write `function_pointer(T)` in a return position, so the caller names the pointer type it wants.
 		address_t : type = (T: deduced type, function: T) -> _
 		_ : type = types.always_comptime(address_t)
 		export address : address_t
 
-		// Rule FP-Bind: the specialization of `function` with its leading parameters bound to the comptime `arguments`, as a function entity that can be called or passed to `address`. Like `address`, a primitive rather than a wrapper, since the result is a function. `TF-Name` cannot write the specialized function type, so the caller names it.
+		// Rule FP-Bind: the specialization of `function` with its leading parameters bound to the comptime `arguments`, as a function entity that can be called or passed to `address`.
+		// Like `address`, a primitive rather than a wrapper, since the result is a function.
+		// `TF-Name` cannot write the specialized function type, so the caller names it.
 		bind_arguments_t : type = (T: deduced type, function: T, arguments: pack) -> _
 		_ : type = types.always_comptime(bind_arguments_t)
 		export bind_arguments : bind_arguments_t
@@ -613,7 +629,8 @@ std : namespace = {
 	// The level `std`'s own file is (rule T-Value), so a backends file can lower it onto each backend without `std` naming any (rule L-Lower).
 	export level : compiler.level = compiler.levels.this_file()
 
-	// Rule T-Live: which of the build's targets a declaration is lowered for. Each entry wraps its `std.meta.targets` twin (rule RF-Wrapper).
+	// Rule T-Live: which of the build's targets a declaration is lowered for.
+	// Each entry wraps its `std.meta.targets` twin (rule RF-Wrapper).
 	targets : namespace = {
 		// Makes `declaration` live on target `t` in place, like every modifier (rule M-Alias); repeated calls add targets, and the result names the same binding.
 		compile_for_t : type = (T: deduced type, declaration: T, t: compiler.level) -> T
@@ -627,7 +644,8 @@ std : namespace = {
 		}
 	}
 
-	// The number types and the questions about them (rules N-Limits, N-Convert, N-FloatConvert, T-Optional). Every entry over a type wraps its `std.meta.numbers` twin (rule RF-Wrapper).
+	// The number types and the questions about them (rules N-Limits, N-Convert, N-FloatConvert, T-Optional).
+	// Every entry over a type wraps its `std.meta.numbers` twin (rule RF-Wrapper).
 	numbers : namespace = {
 		export u1 : alias = machine.u1
 		export u8 : alias = machine.u8
@@ -712,7 +730,8 @@ std : namespace = {
 			_ : _ = std.return(out)
 		}
 
-		// Whether the machine provides the `bits`-wide integer of that signedness, or the `bits`-wide float (rule T-Optional). Hooks: they take no type, so they have no `std.meta` twin (rule RF-Wrapper).
+		// Whether the machine provides the `bits`-wide integer of that signedness, or the `bits`-wide float (rule T-Optional).
+		// Hooks: they take no type, so they have no `std.meta` twin (rule RF-Wrapper).
 		integer_available_t : type = (bits: std.pointer_sized, signed: std.u1) -> std.u1
 		_ : type = std.types.always_comptime(integer_available_t)
 		export integer_available : integer_available_t
@@ -721,7 +740,8 @@ std : namespace = {
 		_ : type = std.types.always_comptime(float_available_t)
 		export float_available : float_available_t
 
-		// Width changes (rule N-Convert): `widen` fills the new bits by the source's signedness, `truncate` keeps the low bits. The destination type is the binding's (rule D-Deduce).
+		// Width changes (rule N-Convert): `widen` fills the new bits by the source's signedness, `truncate` keeps the low bits.
+		// The destination type is the binding's (rule D-Deduce).
 		export widen : (Tout: deduced type, Tin: deduced type, v: Tin) -> Tout
 		export truncate : (Tout: deduced type, Tin: deduced type, v: Tin) -> Tout
 
@@ -730,7 +750,8 @@ std : namespace = {
 		export float_convert : (Tout: deduced type, Tin: deduced type, v: Tin) -> Tout
 	}
 
-	// Whether an operation would leave its type's range (rule N-Overflow). Each pairs with the unchecked primitive of the same name and reads the operand type's signedness.
+	// Whether an operation would leave its type's range (rule N-Overflow).
+	// Each pairs with the unchecked primitive of the same name and reads the operand type's signedness.
 	would_overflow : namespace = {
 		binary_t : type = (T: deduced type, a: T, b: T) -> u1
 		export add : binary_t // Emulated over `bitwise_and`, `bitwise_xor`, `integer.add`, `integer.is_less` and `integer.is_negative` (rule I-Extern).
@@ -746,7 +767,8 @@ std : namespace = {
 		export truncate : (Tout: deduced type, Tin: deduced type, v: Tin) -> u1 // Emulated over `integer.is_negative`, `integer.is_not_equal`, `logical_or`, `numbers.truncate` and `numbers.widen` (rule I-Extern).
 	}
 
-	// Reading a variadic parameter (rules F-Pack, F-Access). The index must be comptime.
+	// Reading a variadic parameter (rules F-Pack, F-Access).
+	// The index must be comptime.
 	packs : namespace = {
 		count_t : type = (p: pack) -> pointer_sized
 		_ : type = types.always_comptime(count_t)
@@ -756,7 +778,8 @@ std : namespace = {
 		_ : type = types.always_comptime(type_of_t)
 		export type_of : type_of_t
 
-		// Hands back element `i` itself, so the destination becomes an alias of it and keeps its stage (rules F-Access, A-Bind). The caller names its type (rule D-Return).
+		// Hands back element `i` itself, so the destination becomes an alias of it and keeps its stage (rules F-Access, A-Bind).
+		// The caller names its type (rule D-Return).
 		get_t : type = (p: pack, i: pointer_sized) -> _
 		_ : type = types.always_comptime(get_t)
 		export get : get_t
@@ -768,7 +791,8 @@ std : namespace = {
 		export share_register : share_register_t
 	}
 
-	// Host hooks: each receives its arguments as bindings, so a runtime condition needs no conversion to runtime (rules C-Valid, DG-Assert, DG-Report). The message is comptime.
+	// Host hooks: each receives its arguments as bindings, so a runtime condition needs no conversion to runtime (rules C-Valid, DG-Assert, DG-Report).
+	// The message is comptime.
 	diagnostics : namespace = {
 		assert_t : type = (condition: u1, message: c_string)
 		_ : type = types.always_comptime(assert_t)
@@ -790,7 +814,9 @@ std : namespace = {
 		_ : type = types.always_comptime(id_of_name_t)
 		export id_of_name : id_of_name_t
 
-		// An attribute is a type: declaring it registers the component named after it, and any entity may then hold that component (rule AT-Type). Identity is the declaration, not the structure: two type definitions with identical bodies are two different attributes. `mark` is for attribute types with no fields (rule AT-Set).
+		// An attribute is a type: declaring it registers the component named after it, and any entity may then hold that component (rule AT-Type).
+		// Identity is the declaration, not the structure: two type definitions with identical bodies are two different attributes.
+		// `mark` is for attribute types with no fields (rule AT-Set).
 		has_t : type = (T: deduced type, v: T, attribute: type) -> u1
 		_ : type = types.always_comptime(has_t)
 		export has : has_t
@@ -818,12 +844,18 @@ std : namespace = {
 		_ : _ = return(%0)
 	}
 
-	// Bridges a compile-time value into a runtime one. A comptime binding cannot be an operand of an emitted primitive, which has no body to specialize (WF-ToRuntime), so a value a runtime instruction needs has to cross the boundary explicitly, and the binding it lands in is no longer comptime. Converting to runtime also opts an argument out of C-Specialize. The type is marked never_comptime so the call itself is never folded away (C-ToRuntime).
+	// Bridges a compile-time value into a runtime one.
+	// A comptime binding cannot be an operand of an emitted primitive, which has no body to specialize (WF-ToRuntime), so a value a runtime instruction needs has to cross the boundary explicitly, and the binding it lands in is no longer comptime.
+	// Converting to runtime also opts an argument out of C-Specialize.
+	// The type is marked never_comptime so the call itself is never folded away (C-ToRuntime).
 	comptime_to_runtime_t : type = (T: deduced type, v: T) -> T
 	_ : type = types.never_comptime(comptime_to_runtime_t)
 	export comptime_to_runtime : comptime_to_runtime_t
 
-	// A comptime value handed to the stage the caller is in (rules C-Inline, C-Stage). The unconditional primitive above always emits the conversion to runtime; this one emits it only when the call site is emitted. `always_inline` splices the body before the call's stage is decided, so `is_comptime_evaluation` here reports the caller's stage. A non-inlined helper cannot do this: `C-Call` folds it, and the answer is always "comptime".
+	// A comptime value handed to the stage the caller is in (rules C-Inline, C-Stage).
+	// The unconditional primitive above always emits the conversion to runtime; this one emits it only when the call site is emitted.
+	// `always_inline` splices the body before the call's stage is decided, so `is_comptime_evaluation` here reports the caller's stage.
+	// A non-inlined helper cannot do this: `C-Call` folds it, and the answer is always "comptime".
 	comptime_to_runtime_if_needed_t : type = (T: deduced type, v: T) -> T
 	_ : type = types.always_comptime(comptime_to_runtime_if_needed_t)
 	_ : type = functions.always_inline(comptime_to_runtime_if_needed_t)
@@ -835,19 +867,20 @@ std : namespace = {
 		_ : _ = std.return(out)
 	}
 
-	// Whether the code this call appears in is being folded or emitted (rule C-Stage). The answer is itself always known at compile time, so it can drive an `std.if`.
+	// Whether the code this call appears in is being folded or emitted (rule C-Stage).
+	// The answer is itself always known at compile time, so it can drive an `std.if`.
 	stage_t : type = () -> u1
 	_ : type = types.always_comptime(stage_t)
 	export is_comptime_evaluation : stage_t
 
-	// Every call passing a block is spliced into its caller (rule B-Inline). `run_block` runs a block in place; its value is what the block yields (rule B-Result).
+	// Every call passing a block is spliced into its caller (rule B-Inline).
+	// `run_block` runs a block in place; its value is what the block yields (rule B-Result).
 	export run_block : (body: block) -> _
 	// Runs `body` when the enclosing function returns (rule B-Defer).
 	export defer : (body: block) -> void
 
 	// `condition` yields a u1 and `init` and `step` yield `nothing`.
 	// A body yielding `nothing` returns void; otherwise the destination names `array(T, n)` for a comptime count or `pointer(T)` for a heap result with a length header (rule B-Loop).
-	// Emulated over `heap.allocate`, `heap.free`, `heap.reallocate`, `if`, `integer.add`, `integer.is_equal`, `integer.multiply`, `jump_to`, `jump_to_if`, `logical_and`, `logical_not`, `place_label`, `pointers.element_pointer`, `pointers.is_null`, `pointers.load`, `pointers.null`, `pointers.offset`, `pointers.store`, `reinterpret_bits`, `stack.pop` and `stack.push` (rule I-Extern).
 	export while : (condition: block, body: block) -> _
 	export for : (init: block, condition: block, step: block, body: block) -> _ // Emulated over `while` (rule I-Extern).
 	// The count stored before element 0 of a heap loop result, and the call that frees it (rule B-Loop).
@@ -859,7 +892,10 @@ std : namespace = {
 	export return : (T: deduced type, value: T) -> T
 	export block_result : (T: deduced type, value: T) -> T
 
-	// Labels and jumps are the primitives backends build `if` and `while` from (rule B-Label). A label is the declaration `place_label` is assigned to, named by it and marking its position; a jump may name it before that line (rule WF-Order). Its type is always comptime and is never converted to runtime (rule WF-ToRuntime). None of these fold: a call whose operands are all constant would otherwise run at compile time and emit nothing (rule C-Call).
+	// Labels and jumps are the primitives backends build `if` and `while` from (rule B-Label).
+	// A label is the declaration `place_label` is assigned to, named by it and marking its position; a jump may name it before that line (rule WF-Order).
+	// Its type is always comptime and is never converted to runtime (rule WF-ToRuntime).
+	// None of these fold: a call whose operands are all constant would otherwise run at compile time and emit nothing (rule C-Call).
 	export label : type = types.distinct_copy(meta.entity)
 	_ : type = types.always_comptime(label)
 	place_label_t : type = () -> label
@@ -883,7 +919,8 @@ std : namespace = {
 		// One field of the aggregate `object` points to, at any bit offset; how a packed field off a byte boundary is reached (rule MEM-Field).
 		load_field_t : type = (Tptr: deduced type, Tvalue: deduced type, object: Tptr, field: meta.entity) -> Tvalue
 		store_field_t : type = (Tptr: deduced type, Tvalue: deduced type, object: Tptr, field: meta.entity, value: Tvalue) -> Tvalue
-		// Memory effects are never folded at an emitted call site. Inside an interpreted body they act on comptime memory (rules C-Interpret, MEM-Comptime).
+		// Memory effects are never folded at an emitted call site.
+		// Inside an interpreted body they act on comptime memory (rules C-Interpret, MEM-Comptime).
 		_ : type = types.never_comptime(load_t)
 		_ : type = types.never_comptime(store_t)
 		_ : type = types.never_comptime(offset_t)

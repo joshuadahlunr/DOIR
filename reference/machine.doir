@@ -1,4 +1,5 @@
-// A backend's contract, everything `standard.doir` and the spec require a machine to provide, written as the declarations a backend makes: `T-Sig` (Part II §17) calls it sig(std), and a level stacked on a target that omits any of it fails to resolve. Transcribed from the prototype machine (`mizu.doir`, `standard.mizu.doir` in `tree/D`) and restated against the abstract `machine` namespace the spec uses.
+// A backend's contract, everything `standard.doir` and the spec require a machine to provide, written as the declarations a backend makes: `T-Sig` (Part II §17) calls it sig(std), and a level stacked on a target that omits any of it fails to resolve.
+// Transcribed from the prototype machine (`mizu.doir`, `standard.mizu.doir` in `tree/D`) and restated against the abstract `machine` namespace the spec uses.
 //
 // A declaration with a type and no body is a symbol the backend has to supply (`I-Extern`): a real backend gives each of them a body.
 // The second `std` block is the exception: `standard.emulated.doir` gives those a software body, so a backend defines only the ones it has an instruction for.
@@ -7,7 +8,8 @@
 // A target pastes an operating system beside it, which supplies `std.os`, the heap included (`OS-Target`, `reference/operating_system.doir`); static storage is laid out by the compiler, and comptime memory is the host's (`MEM-Static`, `MEM-Comptime`).
 // A target pastes an executable format beside it too (`reference/format.doir`): the encoders write to its `object.code`, `object.read_only`, `object.data` and `object.zero` roles and never name a format's own sections (`O-Section`).
 
-// Primitive types (`T-Sig`). Widths are the target's, not the host's: `H-Target` makes comptime layouts use the target's, and `compiler.pointer_sized` is only the host word the widths are written in.
+// Primitive types (`T-Sig`).
+// Widths are the target's, not the host's: `H-Target` makes comptime layouts use the target's, and `compiler.pointer_sized` is only the host word the widths are written in.
 export machine : namespace = {
 	%1 : compiler.pointer_sized = 1
 	%8 : compiler.pointer_sized = 8
@@ -31,7 +33,8 @@ export machine : namespace = {
 	// Byte order of every value in memory, comptime memory included (T-Sig, H-Target): 0 little-endian, 1 big-endian.
 	byte_order : compiler.pointer_sized = 0
 
-	// Registers (`REG-Phys`, Part I §7): every allocatable one is a comptime value of the compiler's `register` type. These are Mizu's class bounds; the registers between them are declared alike.
+	// Registers (`REG-Phys`, Part I §7): every allocatable one is a comptime value of the compiler's `register` type.
+	// These are Mizu's class bounds; the registers between them are declared alike.
 	x0 : compiler.assembler.register = 0
 	t0 : compiler.assembler.register = 1
 	t19 : compiler.assembler.register = 20
@@ -41,12 +44,14 @@ export machine : namespace = {
 	a8 : compiler.assembler.register = 30
 	a234 : compiler.assembler.register = 256
 
-	// Register classes, as ranges; a repeated call adds a range. `x0` and `ra` are in no class, so the allocatable set is discontiguous.
+	// Register classes, as ranges; a repeated call adds a range.
+	// `x0` and `ra` are in no class, so the allocatable set is discontiguous.
 	_ : compiler.assembler.register = compiler.assembler.caller_saved_registers(t0, t19)
 	_ : compiler.assembler.register = compiler.assembler.argument_registers(a0, a7)
 	_ : compiler.assembler.register = compiler.assembler.callee_saved_registers(a8, a234)
 
-	// Descent order (`L-Stage`, Part I §7), transcribed from `mizu.doir:2571`; the edges onto and out of the machine run it (`L-Lower`). `foldBaseTypes` precedes `typeCheck` because `S-Struct` compares layouts, and every builtin type is an unfolded `base_type` call until something folds it.
+	// Descent order (`L-Stage`, Part I §7), transcribed from `mizu.doir:2571`; the edges onto and out of the machine run it (`L-Lower`).
+	// `foldBaseTypes` precedes `typeCheck` because `S-Struct` compares layouts, and every builtin type is an unfolded `base_type` call until something folds it.
 	schedule : compiler.byte_pointer = """
 		sequential(
 			depthFirst(nameReuse),
@@ -76,7 +81,10 @@ export machine : namespace = {
 	_ : compiler.assembler.register = compiler.assembler.begin_register_allocation()
 }
 
-// The calling-convention hooks (`T-Sig`): the five primitives a machine supplies for `std` to emit a function that inlining and folding did not remove. The compiler calls them itself while lowering. Each carries NeverComptime: every argument is known at compile time, so without it the evaluator would run them and emit nothing. `compiler.entity` is the handle `std.meta.entity` aliases, so `L-Mono` holds.
+// The calling-convention hooks (`T-Sig`): the five primitives a machine supplies for `std` to emit a function that inlining and folding did not remove.
+// The compiler calls them itself while lowering.
+// Each carries NeverComptime: every argument is known at compile time, so without it the evaluator would run them and emit nothing.
+// `compiler.entity` is the handle `std.meta.entity` aliases, so `L-Mono` holds.
 export compiler_impl : namespace = {
 	// `function` is a declaration handle, not a value: a call site cannot name a label buried in the callee's body (`R-Unqual` walks outward only), so lowering hands over the function itself.
 	frame_t : type = (function: compiler.entity)
@@ -86,7 +94,8 @@ export compiler_impl : namespace = {
 	// Teardown below `function`'s exit label; reloads the return address and jumps through it.
 	epilogue : frame_t
 
-	// One move per argument, into the register its position names. Recursive, since each argument lands in a different register: `i` is the slot as much as the index.
+	// One move per argument, into the register its position names.
+	// Recursive, since each argument lands in a different register: `i` is the slot as much as the index.
 	pass_arguments_t : type = (call: compiler.entity, i: machine.pointer_sized)
 	_ : type = compiler.never_comptime(pass_arguments_t)
 	pass_arguments : pass_arguments_t
@@ -101,9 +110,12 @@ export compiler_impl : namespace = {
 	_ : type = compiler.never_comptime(emit_return_t)
 	emit_return : emit_return_t
 
-	// Bridge hooks (`T-Bridge`), needed only in a build with several targets; each side writes its half. Emits `function` as an entry point other targets can call.
+	// Bridge hooks (`T-Bridge`), needed only in a build with several targets; each side writes its half.
+	// Emits `function` as an entry point other targets can call.
 	export_entry : frame_t
-	// One namespace per target this backend calls into, named after the declaration holding the target (`targets.spirv` gives `bridges.spirv`). Its `call : transfer_t` marshals arguments and result, replacing `call` above for a callee live only there; a target with no namespace here cannot be called from this one. Mizu calls no other target, so it declares none.
+	// One namespace per target this backend calls into, named after the declaration holding the target (`targets.spirv` gives `bridges.spirv`).
+	// Its `call : transfer_t` marshals arguments and result, replacing `call` above for a callee live only there; a target with no namespace here cannot be called from this one.
+	// Mizu calls no other target, so it declares none.
 	bridges : namespace = {}
 }
 
@@ -248,7 +260,9 @@ export std : namespace = {
 	is_not_a_number : (T: deduced type, v: T) -> machine.u1
 }
 
-// Optional features (T-Optional): a machine may provide any or none, and one it provides has exactly this shape. `std.numbers` aliases each either way; `integer_available` and `float_available` ask first. The prototype machine provides all of them.
+// Optional features (T-Optional): a machine may provide any or none, and one it provides has exactly this shape.
+// `std.numbers` aliases each either way; `integer_available` and `float_available` ask first.
+// The prototype machine provides all of them.
 export machine : namespace = {
 	%16 : compiler.pointer_sized = 16
 
