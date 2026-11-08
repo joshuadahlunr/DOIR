@@ -62,6 +62,8 @@ host_services : namespace = {
 			is_unsigned : (e: compiler.entity) -> std.u1
 			min_value : (e: compiler.entity) -> compiler.entity
 			max_value : (e: compiler.entity) -> compiler.entity
+			not_a_number : (e: compiler.entity) -> compiler.entity
+			infinity : (e: compiler.entity) -> compiler.entity
 			bits_excluding_sign : (e: compiler.entity) -> std.pointer_sized
 		}
 

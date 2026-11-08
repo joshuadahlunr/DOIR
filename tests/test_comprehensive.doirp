@@ -36,4 +36,8 @@ std.while({
 square := (v: std.u64) -> std.u64 => v `std.multiply` v
 square(5 : std.u64) |> std.debug_print()
 
+// Test 7: A parameter type built from a deduced parameter is solved by the body's opening assertion (D-Assert)
+deref := (T: deduced type, ptr: std.types.pointer(T)) -> T => std.pointers.load(ptr)
+deref(counter) |> std.debug_print()
+
 std.halt()

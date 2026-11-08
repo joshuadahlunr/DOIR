@@ -63,6 +63,19 @@ def merge(a, b):
 	return (min(a[0], b[0]), max(a[1], b[1]))
 
 
+def identifiers(node):
+	"""Every `Identifier` node under `node`, in source order."""
+	for n in node.nodes:
+		if n.name == "Identifier":
+			yield n
+		else:
+			yield from identifiers(n)
+
+
+class LoweringError(Exception):
+	"""A DOIR+ construct with no DOIR lowering; its message names the file, line, rule tag and a hint."""
+
+
 def callee(text):
 	"""The name lowered call text `text` calls, or None if it is not a call."""
 	m = re.match(r"([^\s(]+)\(", text)
@@ -139,6 +152,14 @@ class Lowering:
 			hoists, final_type, text, span = self.value(form.child("value"), None)
 			code = f"{export}{self.text(name)} : {final_type} = {text}"
 		else:
+			type_inner = parts(form.child("plus_type"))[0]
+			body = form.child("value") and parts(form.child("value"))[0]
+			if type_inner.name == "function_type" and body and body.name == "plus_block":
+				# A block bound to a function type is the function's body, so it returns rather than yields.
+				hoists, type_str, type_span, prologue = self.function_type(type_inner)
+				text, span = self.block(body, "std.return", prologue)
+				code = f"{export}{self.text(name)} : {type_str} = {text}"
+				return Statement(hoists, code, self.text(source) if source else self.tag(merge(span_of(name), merge(type_span, span))))
 			hoists, type_str, span = self.type(form.child("plus_type"))
 			if form.child("value"):
 				value_hoists, final_type, text, span = self.value(form.child("value"), type_str)
@@ -156,10 +177,11 @@ class Lowering:
 			text, span = self.block(inner, "std.block_result")
 			return [], declared or "_", text, span
 		if inner.name == "function_value":
-			hoists, fn_type, fn_span = self.function_type(inner.child("function_type"))
+			hoists, fn_type, fn_span, prologue = self.function_type(inner.child("function_type"))
 			if len(parts(inner)) == 1:
+				self.bodiless(prologue)
 				return hoists, declared or "type", fn_type, fn_span
-			text, span = self.function_body(parts(inner)[1])
+			text, span = self.function_body(parts(inner)[1], prologue)
 			return hoists, declared or fn_type, text, merge(fn_span, span)
 		constant = inner.child("Constant")
 		if inner.name == "typed_constant":
@@ -171,18 +193,18 @@ class Lowering:
 		# V-NoImplicitCopy: naming a binding is not copying it, so the declaration is an alias.
 		return hoists, "alias" if value.is_name else declared or "_", value.text, value.span
 
-	def function_body(self, node):
-		"""Lowers a function body, a block or an expression, to `(text, span)`."""
+	def function_body(self, node, prologue):
+		"""Lowers a function body, a block or an expression, to `(text, span)`, opening it with the `prologue` lines (D-Assert)."""
 		if node.name == "plus_block":
-			return self.block(node, "std.return")
+			return self.block(node, "std.return", prologue)
 		hoists, value = self.expr(node)
 		name = self.ensure_name(value, hoists)
-		lines = self.render(hoists, "\t") + [f"\t_ : _ = std.return({name}) {self.tag(value.span)}"]
+		lines = self.render(prologue + hoists, "\t") + [f"\t_ : _ = std.return({name}) {self.tag(value.span)}"]
 		return "{\n" + "\n".join(lines) + "\n}", value.span
 
-	def block(self, node, terminator):
-		"""Lowers a block to `(text, span)`. A trailing expression becomes the block's `terminator` call, and a block not ending in a terminator gets `terminator(std.nothing)` (WF-Term)."""
-		lines = []
+	def block(self, node, terminator, prologue=()):
+		"""Lowers a block to `(text, span)`, opening it with the `prologue` lines. A trailing expression becomes the block's `terminator` call, and a block not ending in a terminator gets `terminator(std.nothing)` (WF-Term)."""
+		lines = self.render(prologue, "\t")
 		statements = node.children("statement")
 		last_code = None
 		for i, child in enumerate(statements):
@@ -208,7 +230,9 @@ class Lowering:
 		"""Lowers a type to `(hoists, text, span)`; a constructed type call is hoisted into a `type` temporary."""
 		inner = parts(node)[0]
 		if inner.name == "function_type":
-			return self.function_type(inner)
+			hoists, text, span, prologue = self.function_type(inner)
+			self.bodiless(prologue)
+			return hoists, text, span
 		if inner.name == "type_call":
 			hoists, args = self.arguments(inner.child("arguments"))
 			tmp = self.fresh("_t_type")
@@ -216,25 +240,76 @@ class Lowering:
 			return hoists, tmp, span_of(inner)
 		return [], self.text(inner), span_of(inner)
 
-	def function_type(self, node):
-		"""Lowers a function type to `(hoists, text, span)`, hoisting each parameter's constructed type."""
-		hoists, params = [], []
+	def bodiless(self, prologue):
+		"""Raises `LoweringError` if a function type with no body has a `prologue` to assert."""
+		if prologue:
+			span = prologue[-1][1]
+			line, column = doir_grammar.line_at(self.src, span[0]), doir_grammar.column_at(self.src, span[0])
+			raise LoweringError(f"{self.filename}:{line}:{column}: D-Assert: this type is built from a parameter, and a function type without a body has nowhere to assert it; give the function a body, or take the parameter as a `deduced type` and assert its type where the function is defined")
+
+	def dependent_type(self, node, owner, prologue):
+		"""Lowers constructed type `node`, built from a parameter in `scope`, to a fresh deduced parameter, appending to `prologue` the assertion that solves it (D-Assert)."""
+		hoists, args = self.arguments(node.child("arguments"))
+		param, built, condition, message = self.fresh("_t_type"), self.fresh("_t_type"), self.fresh("_c"), self.fresh("_c")
+		span, former = span_of(node), self.text(node.child("Identifier"))
+		prologue += hoists + [
+			(f"{built} : type = {former}({', '.join(args)})", span),
+			(f"{condition} : std.u1 = std.types.is_same_type({param}, {built})", span),
+			(f'{message} : std.c_string = "D-Assert: {owner} has a type {former} did not build; give it one that {former} built"', span),
+			(f"_ : void = std.diagnostics.assert({condition}, {message})", span),
+		]
+		return param
+
+	def function_type(self, node, scope=frozenset()):
+		"""Lowers a function type to `(hoists, text, span, prologue)`, hoisting each parameter's constructed type.
+
+		A constructed type built from a parameter, its own or one of an enclosing function type's in `scope`, cannot be hoisted out of the function: it becomes a deduced parameter, and `prologue` the lines that open the body to solve and check it (D-Assert)."""
+		hoists, params, prologue, leading = [], [], [], []
+		names = set(scope)
+
+		def dependent(type_node):
+			inner = parts(type_node)[0]
+			return inner if inner.name == "type_call" and any(self.text(i).split(".")[0] in names for i in identifiers(inner)) else None
+
 		for p in node.children("plus_parameter"):
 			name = self.text(p.child("Identifier"))
 			if p.child("deduced"):
 				params.append(f"{name} : deduced type")
+				names.add(name)
 				continue
-			type_hoists, type_str, _ = self.type(p.child("plus_type"))
-			hoists += type_hoists
+			type_node = p.child("plus_type")
+			call = dependent(type_node)
+			if call:
+				param = self.dependent_type(call, f"`{name}`", prologue)
+				params.append(f"{param} : deduced type")
+				type_str = param
+			elif parts(type_node)[0].name == "function_type":
+				type_hoists, type_str, _, inner_prologue = self.function_type(parts(type_node)[0], names)
+				self.bodiless(inner_prologue)
+				hoists += type_hoists
+			else:
+				type_hoists, type_str, _ = self.type(type_node)
+				hoists += type_hoists
 			default = p.child("Constant") or (p.children("Identifier")[1:] or [None])[0]
 			params.append(f"{name} : {type_str}" + (f" = {self.text(default)}" if default else ""))
-		text = f"({', '.join(params)})"
+			names.add(name)
 		ret = node.child("plus_type")
+		ret_str = None
 		if ret:
-			ret_hoists, ret_str, _ = self.type(ret)
-			hoists += ret_hoists
-			text += f" -> {ret_str}"
-		return hoists, text, span_of(node)
+			call = dependent(ret)
+			if call:
+				# D-Return: the return type is a leading deduced parameter, solved from the destination.
+				ret_str = self.dependent_type(call, "the return value", prologue)
+				leading.append(f"{ret_str} : deduced type")
+			elif parts(ret)[0].name == "function_type":
+				ret_hoists, ret_str, _, inner_prologue = self.function_type(parts(ret)[0], names)
+				self.bodiless(inner_prologue)
+				hoists += ret_hoists
+			else:
+				ret_hoists, ret_str, _ = self.type(ret)
+				hoists += ret_hoists
+		text = f"({', '.join(leading + params)})" + (f" -> {ret_str}" if ret_str else "")
+		return hoists, text, span_of(node), prologue
 
 	# -----------------------------------------------------------------------
 	# Expressions
@@ -319,17 +394,17 @@ class Lowering:
 
 	def inline_function(self, node, hoists):
 		"""Hoists an inline function into a `_fn` temporary, returning its name."""
-		type_hoists, fn_type, fn_span = self.function_type(node.child("function_type"))
+		type_hoists, fn_type, fn_span, prologue = self.function_type(node.child("function_type"))
 		hoists += type_hoists
 		body = parts(node)[1]
 		if body.name == "plus_block":
-			text, span = self.block(body, "std.return")
+			text, span = self.block(body, "std.return", prologue)
 			tmp = self.fresh("_fn")
 		else:
 			body_hoists, value = self.expr(body)
 			tmp = self.fresh("_fn")
 			name = self.ensure_name(value, body_hoists)
-			lines = self.render(body_hoists, "\t") + [f"\t_ : _ = std.return({name}) {self.tag(value.span)}"]
+			lines = self.render(prologue + body_hoists, "\t") + [f"\t_ : _ = std.return({name}) {self.tag(value.span)}"]
 			text, span = "{\n" + "\n".join(lines) + "\n}", value.span
 		span = merge(fn_span, span)
 		hoists.append((f"{tmp} : {fn_type} = {text}", span))
@@ -347,7 +422,8 @@ class Lowering:
 			hoists = []
 			return hoists, self.inline_function(inner, hoists)
 		if inner.name == "function_type":
-			hoists, text, span = self.function_type(inner)
+			hoists, text, span, prologue = self.function_type(inner)
+			self.bodiless(prologue)
 			return hoists, Value(text, span)
 		if inner.name == "paren_expr":
 			hoists, value = self.expr(inner.child("expr"))
@@ -359,13 +435,13 @@ class Lowering:
 
 
 def preprocess(source, filename=""):
-	"""Translates DOIR+ `source` to DOIR Core text. Raises `pe.ParseError` on a syntax error; format it with `doir_grammar.syntax_error`."""
+	"""Translates DOIR+ `source` to DOIR Core text. Raises `pe.ParseError` on a syntax error, which `doir_grammar.syntax_error` formats, and `LoweringError` on a construct DOIR cannot express."""
 	parser = doir_grammar.load(PLUS_GRAMMAR, doir_grammar.GRAMMAR)
 	return Lowering(source, filename).program(doir_grammar.parse(parser, source))
 
 
 def main():
-	"""Preprocesses the file named on the command line; returns 0 on success, 1 if it cannot be read or does not parse."""
+	"""Preprocesses the file named on the command line; returns 0 on success, 1 if it cannot be read, does not parse or cannot be lowered."""
 	parser = argparse.ArgumentParser(description="DOIR+ Preprocessor to standard DOIR Core")
 	parser.add_argument("input", help="Input .doirp file")
 	parser.add_argument("-o", "--output", help="Output .doir file (default: stdout)")
@@ -384,6 +460,9 @@ def main():
 		return 1
 	except pe.Error as exc:
 		print(doir_grammar.grammar_error(exc), file=sys.stderr)
+		return 1
+	except LoweringError as exc:
+		print(exc, file=sys.stderr)
 		return 1
 
 	if args.output:

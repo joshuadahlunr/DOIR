@@ -1,0 +1,12 @@
+// D-Assert: T appears only in the type ptr is asserted to have, and the assertion solves it as std.u8.
+deref : (T : deduced type, Tptr : deduced type, ptr : Tptr) -> T = {
+	built : type = std.types.pointer(T)
+	same : std.u1 = std.types.is_same_type(Tptr, built)
+	message : std.c_string = "D-Assert: ptr is not a pointer to T"
+	_ : void = std.diagnostics.assert(same, message)
+	value : T = std.pointers.load(ptr)
+	_ : _ = std.return(value)
+}
+u8_pointer : type = std.types.pointer(std.u8)
+p : u8_pointer = std.stack.allocate(std.u8)
+v : std.u8 = deref(p)

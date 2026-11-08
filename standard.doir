@@ -426,6 +426,8 @@ std : namespace = {
 			_ : type = std.types.always_comptime(limit_t)
 			export min_value : limit_t
 			export max_value : limit_t
+			export not_a_number : limit_t
+			export infinity : limit_t
 
 			bits_excluding_sign_t : type = (e: entity) -> pointer_sized
 			_ : type = std.types.always_comptime(bits_excluding_sign_t)
@@ -644,6 +646,20 @@ std : namespace = {
 		export max_value : limit_t = {
 			entity : std.meta.entity = std.meta.entity_of(T)
 			out_entity : std.meta.entity = std.meta.numbers.max_value(entity)
+			out : T = std.meta.from_entity(out_entity)
+			_ : _ = std.return(out)
+		}
+
+		export not_a_number : limit_t = {
+			entity : std.meta.entity = std.meta.entity_of(T)
+			out_entity : std.meta.entity = std.meta.numbers.not_a_number(entity)
+			out : T = std.meta.from_entity(out_entity)
+			_ : _ = std.return(out)
+		}
+
+		export infinity : limit_t = {
+			entity : std.meta.entity = std.meta.entity_of(T)
+			out_entity : std.meta.entity = std.meta.numbers.infinity(entity)
 			out : T = std.meta.from_entity(out_entity)
 			_ : _ = std.return(out)
 		}

@@ -182,7 +182,11 @@ Functions that are not inlined or evaluated away at comptime are emitted through
 
 ## 5. Deduction & Structural Types
 
-Function parameters marked `deduced type` are solved bidirectionally (`D-Deduce`)—forward from argument binding types and backward from the declared type of the destination binding. Deduced parameters are never written at the call site; the arguments bind, in order, to the remaining parameters. A plain `type` parameter (as in `std.copy(T, v)`) is passed explicitly. A deduced type that neither direction solves is an error, so the destination of a call returning `_` names its type: `_ : void = std.if(c, a, b)`.
+Function parameters marked `deduced type` are solved bidirectionally (`D-Deduce`)—forward from argument binding types and backward from the declared type of the destination binding.
+Deduced parameters are never written at the call site; the arguments bind, in order, to the remaining parameters.
+A plain `type` parameter (as in `std.copy(T, v)`) is passed explicitly.
+A deduced type that neither direction solves is an error, so the destination of a call returning `_` names its type: `_ : void = std.if(c, a, b)`.
+A deduced type that only a constructed parameter type mentions, such as `T` in a pointer to `T`, is solved from the assertions that open the body (`D-Assert`).
 
 ```rust
 my_promote : (Tret : deduced type, T : deduced type, value : T) -> Tret = { ... }
@@ -528,7 +532,16 @@ where $\pi^{*}$ applies $\pi$ to every entity id inside a component value (`Pare
   \frac{\text{Block}(T) = \langle f_1, \dots, f_n \rangle \quad \langle w_i, a_i \rangle = \begin{cases} \langle \text{size}(\text{TypeOf}(f_i)), 1 \rangle & \text{if Packed} \in \text{Flags}(T) \\ \langle \text{storage}(\text{TypeOf}(f_i)), \text{malign}(\text{TypeOf}(f_i)) \rangle & \text{otherwise} \end{cases} \quad o_1 = 0 \quad o_{i+1} = \text{alignUp}(o_i + w_i, a_{i+1})}{\text{offset}(f_i) = o_i \;(0 \text{ if Union}) \quad \text{align}(T) = \max(8, a_1, \dots, a_n) \quad \text{size}(T) = \begin{cases} \text{end} & \text{if Packed} \in \text{Flags}(T) \\ \text{alignUp}(\text{end}, \text{align}(T)) & \text{otherwise} \end{cases}}
   $$
   where $\text{end} = o_n + w_n$ for a struct, $\max_i w_i$ for a union, and $0$ for an aggregate with no fields.
-  > **In Plain English:** The bit is the base unit of size: sizes, alignments and offsets are counted in bits. Memory is addressed in bytes, so anything stored on its own occupies whole bytes: an unpacked `u1` field takes a byte and an array of `u1` has a stride of 8 bits. Unpacked field offsets are calculated by taking where the previous field ended and rounding up to satisfy the alignment of the next field. A packed aggregate is packed to the bit: each field takes exactly its `size` and starts where the previous one ended, with no padding between fields or at the end, so `{ a: u1, b: u2 }` packed has size 3 and `b` sits at bit offset 1. Bit offsets count from the least significant bit of the aggregate read as an integer of its size, stored in `machine.byte_order`, so a field's offset means the same on either byte order. Only the packed aggregate as a whole is rounded to bytes when it is stored, so an array of them still has a byte stride. In a union, all fields overlap at offset 0. An unpacked aggregate is aligned to its most-aligned field and padded at the end to a multiple of that alignment. Layout is computed from the flags whenever it is read, which is what lets `packed` and `union` be ordinary flags. A function type is never laid out (`TF-FnType`); its layout is $\langle 0, 0, 0 \rangle$.
+  > **In Plain English:** The bit is the base unit of size: sizes, alignments and offsets are counted in bits.
+  > Memory is addressed in bytes, so anything stored on its own occupies whole bytes: an unpacked `u1` field takes a byte and an array of `u1` has a stride of 8 bits.
+  > Unpacked field offsets are calculated by taking where the previous field ended and rounding up to satisfy the alignment of the next field.
+  > A packed aggregate is packed to the bit: each field takes exactly its `size` and starts where the previous one ended, with no padding between fields or at the end, so `{ a: u1, b: u2 }` packed has size 3 and `b` sits at bit offset 1.
+  > Bit offsets count from the least significant bit of the aggregate read as an integer of its size, stored in `machine.byte_order`, so a field's offset means the same on either byte order.
+  > Only the packed aggregate as a whole is rounded to bytes when it is stored, so an array of them still has a byte stride.
+  > In a union, all fields overlap at offset 0.
+  > An unpacked aggregate is aligned to its most-aligned field and padded at the end to a multiple of that alignment.
+  > Layout is computed from the flags whenever it is read, which is what lets `packed` and `union` be ordinary flags.
+  > A function type is never laid out (`TF-FnType`); its layout is $\langle 0, 0, 0 \rangle$.
 - **[S-Assign] Assignment Destination Agreement:**  
   $$
   \frac{e \vdash f \Downarrow \phi \quad \rho = \text{FunctionReturn of the specialization of } \phi \text{ selected for } c \quad \text{TypeOf}(c) = \tau}{\langle c : \tau = f(\dots) \rangle \text{ well-typed} \iff \rho \sim \tau}
@@ -592,7 +605,8 @@ where $\pi^{*}$ applies $\pi$ to every entity id inside a component value (`Pare
   $$
   \mu_1 \circ \mu_2 = \mu_2 \circ \mu_1 \quad \text{for flag modifiers}
   $$
-  > **In Plain English:** The order in which you apply flag modifiers does not matter: applying flag A then flag B produces the exact same result as applying flag B then flag A. This includes the layout flags `Packed` and `Union`, because layout is derived from the final flag set (`S-Field`).
+  > **In Plain English:** The order in which you apply flag modifiers does not matter: applying flag A then flag B produces the exact same result as applying flag B then flag A.
+  > This includes the layout flags `Packed` and `Union`, because layout is derived from the final flag set (`S-Field`).
 - **[M-Impure] Modifier Impurity:**  
   $$
   \text{Pure} \notin \text{Flags}(\mu) \quad \text{for every modifier } \mu
@@ -636,7 +650,9 @@ where $\pi^{*}$ applies $\pi$ to every entity id inside a component value (`Pare
   $$
   \frac{\langle x : \tau = v \rangle \text{ is a declaration} \quad \tau \notin \{\text{Identifier}, \text{FunctionType}\}}{\text{ill-formed}}
   $$
-  > **In Plain English:** A constructed type is produced by a comptime call and bound to a name before it is used: `u8_pointer : type = std.types.pointer(std.u8)`, then `p : u8_pointer = ...`. A former call written in a type position is a second syntax for a call that is already an ordinary call, and a parameter line containing one names a type the reader cannot look up. Anything the name cannot carry — a range, an alignment, "is an aggregate" — is asserted in the body (`DG-Assert`).
+  > **In Plain English:** A constructed type is produced by a comptime call and bound to a name before it is used: `u8_pointer : type = std.types.pointer(std.u8)`, then `p : u8_pointer = ...`.
+  > A former call written in a type position is a second syntax for a call that is already an ordinary call, and a parameter line containing one names a type the reader cannot look up.
+  > Anything the name cannot carry — a range, an alignment, "is an aggregate" — is asserted in the body (`DG-Assert`), and so is a parameter type built from another parameter, which deduction then reads (`D-Assert`).
 - **[TF-FnType] Only Functions Have Function Types:**  
   $$
   \frac{\alpha(\text{TypeOf}(e)) \text{ is a function type}}{\text{val}(e) \supseteq \{\text{FunctionReturn}\} \text{ (a definition or prototype)} \;\lor\; e : \text{Alias}}
@@ -843,7 +859,17 @@ where $\pi^{*}$ applies $\pi$ to every entity id inside a component value (`Pare
   $$
   (p_1, \dots, p_n) \to \_ \;\equiv\; (T_{\text{ret}} : \text{deduced type}, p_1, \dots, p_n) \to T_{\text{ret}}
   $$
-  > **In Plain English:** `(...) -> _` does not mean "returns nothing"; it means the return type is solved at each call site from the type the destination declares (`D-Deduce`), exactly as if the function had a leading deduced parameter. A body cannot name that hidden parameter, so a function whose body must name its own return type declares `Tret: deduced type` explicitly instead. A body that returns a value of another type is ill-formed in that specialization (`S-Assign`).
+  > **In Plain English:** `(...) -> _` does not mean "returns nothing"; it means the return type is solved at each call site from the type the destination declares (`D-Deduce`), exactly as if the function had a leading deduced parameter.
+  > A body cannot name that hidden parameter, so a function whose body must name its own return type declares `Tret: deduced type` explicitly instead.
+  > A body that returns a value of another type is ill-formed in that specialization (`S-Assign`).
+- **[D-Assert] A Leading Assertion Solves a Constructed Parameter Type:**  
+  $$
+  \frac{T \text{ deduced, unsolved by D-Deduce} \quad \text{the body opens with } \mathrm{std.diagnostics.assert}(\mathrm{std.types.is\_same\_type}(P, g(\dots T \dots)), m) \quad P \text{ solved} \quad P = g(\dots \tau \dots) \text{ (M-Ctor)}}{T := \tau}
+  $$
+  > **In Plain English:** A parameter line cannot write `std.types.pointer(T)` (`TF-Name`), so a function taking a pointer to its deduced `T` takes a deduced `Tptr` and opens its body by asserting `std.types.is_same_type(Tptr, std.types.pointer(T))`.
+  > Deduction reads those opening assertions: once `Tptr` is solved, the assertion runs as a match rather than a test, and if `Tptr` was built by the same type constructor (`std.types.pointer`, `std.types.array` or `std.types.function_pointer`), `T` is solved from what it was built from (its `Pointer` component), recursively for a constructor applied to a constructor.
+  > A `Tptr` the constructor did not build, a `distinct_copy` of one included (`M-Distinct`), solves nothing, and `T` is left to `D-Deduce`'s error; once every parameter is solved the assertion is an ordinary one (`DG-Assert`).
+  > The opening is the body's leading run of such assertions and the bindings they name (the constructed type, the condition, the message); deduction reads nothing after it, so a caller's deduction depends on the callee's signature and those lines alone.
 - **[C-Splice] Comptime Block Selection:**  
   $$
   \frac{\mathrm{std.if}(c, t, f) : \text{Call} \quad \text{Comptime} \in \text{Flags}(c)}{\text{only the block whose condition holds is spliced; the other is parsed but never resolved, typed, or evaluated}}
@@ -926,7 +952,10 @@ where $\pi^{*}$ applies $\pi$ to every entity id inside a component value (`Pare
   | Goal | as small as possible | the whole metaprogramming interface |
   | Examples | `compiler.emit`, `compiler.base_type`, `compiler.levels.lower_to`, `compiler.levels.check`, `compiler.assembler.*`, `compiler.paste_file` | `std.meta.entity_of`, `std.meta.types.field_offset_bits`, `std.import` |
 
-  Some names are floor rather than debt. `compiler.entity` lives at level 0 because the `compiler_impl` hooks need it below `std`, and `compiler.argument_count` and `compiler.argument` let `compiler_impl.pass_arguments` and bridge calls (`T-Bridge`) inspect call arguments without violating `L-Mono`; `compiler.paste_file` is how a build without `std` brings in files, by pasting them; `std.import`, which compiles a file separately, is not its twin but a different operation above level 0. One debt is visible: `compiler.entity` pins the entity type to the host word the bootstrap invented. And every name in Part I §7 is still called, by this repository or by the Mizu level Phase 5 ports (`mizu.doir`, `tree/D`); the legacy names nothing called (`always_comptime`, `indicate_yield`, `debug_print`, `current_entity`, `assembler.yield_register`) are retired, and a port that meets one replaces it with its `std` counterpart.
+  Some names are floor rather than debt.
+  `compiler.entity` lives at level 0 because the `compiler_impl` hooks need it below `std`, and `compiler.argument_count` and `compiler.argument` let `compiler_impl.pass_arguments` and bridge calls (`T-Bridge`) inspect call arguments without violating `L-Mono`; `compiler.paste_file` is how a build without `std` brings in files, by pasting them; `std.import`, which compiles a file separately, is not its twin but a different operation above level 0.
+  One debt is visible: `compiler.entity` pins the entity type to the host word the bootstrap invented.
+  And every name in Part I §7 is still called, by this repository or by the Mizu level Phase 5 ports (`mizu.doir`, `tree/D`); the legacy names nothing called (`always_comptime`, `indicate_yield`, `debug_print`, `current_entity`, `assembler.yield_register`) are retired, and a port that meets one replaces it with its `std` counterpart.
 - **[H-Host] Comptime Host Selection:**  
   $$
   \frac{\text{cmp}(E) \text{ for target } \tau}{\text{executes in the compiler's process on its comptime host } h\text{, never on a target of the build}}
@@ -1045,12 +1074,16 @@ where $\pi^{*}$ applies $\pi$ to every entity id inside a component value (`Pare
   \mathrm{std.numbers.is\_integer}(T),\ \mathrm{std.numbers.is\_float}(T),\ \mathrm{std.numbers.is\_signed}(T),\ \mathrm{std.numbers.is\_unsigned}(T) \in \{0,1\}
   $$
   $$
-  \mathrm{std.numbers.min\_value}(T) = \min T \qquad \mathrm{std.numbers.max\_value}(T) = \max T
+  \mathrm{std.numbers.min\_value}(T) = \min T \qquad \mathrm{std.numbers.max\_value}(T) = \max T \qquad \mathrm{std.numbers.not\_a\_number}(T) = \text{NaN} \qquad \mathrm{std.numbers.infinity}(T) = +\infty
   $$
   $$
   \mathrm{std.numbers.bits\_excluding\_sign}(T) = \begin{cases} \text{size\_bits}(T) & \text{unsigned} \\ \text{size\_bits}(T) - 1 & \text{signed} \end{cases} \qquad \mathrm{std.numbers.integer\_available}(b, s) \iff \text{the target provides the } b\text{-bit integer of signedness } s \qquad \mathrm{std.numbers.float\_available}(b) \iff \text{the target provides the } b\text{-bit float (T-Optional)}
   $$
-  > **In Plain English:** A checked-arithmetic library needs the range of a type, and a parameter line can only name a type, not constrain it. These are the `std::numeric_limits` and `std::is_signed_v` equivalents: `min_value` and `max_value` return values of the queried type, and `bits_excluding_sign` counts value bits, excluding the sign bit of a signed type. `is_integer` is true for every machine integer type including `std.u1`; code that must exclude the bool says so with an assertion (`DG-Assert`). `is_float` is true exactly for the `Float` types; `min_value`, `max_value` and `bits_excluding_sign` are ill-formed on them. The queries live in `std.numbers` with the number types themselves, while `std.types` keeps the layout questions every type answers.
+  > **In Plain English:** A checked-arithmetic library needs the range of a type, and a parameter line can only name a type, not constrain it.
+  > These are the `std::numeric_limits` and `std::is_signed_v` equivalents: `min_value` and `max_value` return values of the queried type, and `bits_excluding_sign` counts value bits, excluding the sign bit of a signed type.
+  > `is_integer` is true for every machine integer type including `std.u1`; code that must exclude the bool says so with an assertion (`DG-Assert`).
+  > `is_float` is true exactly for the `Float` types; `min_value`, `max_value` and `bits_excluding_sign` are ill-formed on them, while `not_a_number` and `infinity` are defined on them.
+  > The queries live in `std.numbers` with the number types themselves, while `std.types` keeps the layout questions every type answers.
 - **[N-Convert] Integer Extension and Truncation:**  
   $$
   \frac{\text{size}(T_{in}) \le \text{size}(T_{out})}{\mathrm{std.numbers.widen}(v) : T_{out} = \begin{cases} \text{sign-extend}(v) & \text{Signed} \in \text{Flags}(T_{in}) \\ \text{zero-extend}(v) & \text{otherwise} \end{cases}} \qquad \frac{\text{size}(T_{in}) \ge \text{size}(T_{out})}{\mathrm{std.numbers.truncate}(v) : T_{out} = v \bmod 2^{\text{size}(T_{out})}}
@@ -1165,7 +1198,17 @@ where $\pi^{*}$ applies $\pi$ to every entity id inside a component value (`Pare
   $$
   \text{Rank}(e) = \begin{cases} \text{rank}(\text{LevelOf}(e)) & e \text{ is declared in source} \\ \text{rank}(E) & e \text{ is created during } \text{cmp}(E) \text{ (a specialization, a former result, a copy)} \end{cases}
   $$
-  > **In Plain English:** A build is a set of files, one of which the build names as the program (`L-Entry`); the order the files are named in means nothing. The tower is read from the files themselves (`L-Scan`). Its levels are each file's root, each namespace made into a level by `compiler.levels.make`, and the builtin block, which is the level `compiler.levels.builtin`; its edges say what lowers onto what (`L-Lower`). The tower is a directed acyclic graph, not a chain: `std` may lower onto x86 and SPIR-V at once, and a slang level onto SPIR-V alone. A declaration belongs to the innermost level around it, so a backend namespace inside a file is a level of its own, apart from the file root that holds it. A level's rank, the longest path from it down to `builtin`, is the $\text{Rank}$ every rule that compares levels reads. The conventional build ranks the builtin block 0, each backend and the backends file's root 1 (the root names nothing but the builtin block, since the arguments the scan reads do not count, `L-Lower`), `std` 2, and the program 3. A file brought in by `std.import` joins the level that imports it, once in each level that does (`I-Import`); one pasted by `compiler.paste_file` becomes part of the block it is pasted into (`I-Paste`). Neither starts a level. An entity the compiler makes while running $E$'s comptime belongs to $E$, even if it specializes a function of a lower level, so it is not caught by that level's freeze (`M-Freeze`). How a build names its files is the driver's business; [`reference/compiler.doir`](reference/compiler.doir) is the builtin block, and [`reference/backends.doir`](reference/backends.doir) makes a level of [`reference/machine.doir`](reference/machine.doir) and lowers `std` onto it.
+  > **In Plain English:** A build is a set of files, one of which the build names as the program (`L-Entry`); the order the files are named in means nothing.
+  > The tower is read from the files themselves (`L-Scan`).
+  > Its levels are each file's root, each namespace made into a level by `compiler.levels.make`, and the builtin block, which is the level `compiler.levels.builtin`; its edges say what lowers onto what (`L-Lower`).
+  > The tower is a directed acyclic graph, not a chain: `std` may lower onto x86 and SPIR-V at once, and a slang level onto SPIR-V alone.
+  > A declaration belongs to the innermost level around it, so a backend namespace inside a file is a level of its own, apart from the file root that holds it.
+  > A level's rank, the longest path from it down to `builtin`, is the $\text{Rank}$ every rule that compares levels reads.
+  > The conventional build ranks the builtin block 0, each backend and the backends file's root 1 (the root names nothing but the builtin block, since the arguments the scan reads do not count, `L-Lower`), `std` 2, and the program 3.
+  > A file brought in by `std.import` joins the level that imports it, once in each level that does (`I-Import`); one pasted by `compiler.paste_file` becomes part of the block it is pasted into (`I-Paste`).
+  > Neither starts a level.
+  > An entity the compiler makes while running $E$'s comptime belongs to $E$, even if it specializes a function of a lower level, so it is not caught by that level's freeze (`M-Freeze`).
+  > How a build names its files is the driver's business; [`reference/compiler.doir`](reference/compiler.doir) is the builtin block, and [`reference/backends.doir`](reference/backends.doir) makes a level of [`reference/machine.doir`](reference/machine.doir) and lowers `std` onto it.
 - **[L-Scan] The Tower Is Found Before Ascent:**  
   $$
   \text{before any } \text{sema}(E)\text{, the scan reads every call written } \mathrm{compiler.levels.make}(b),\ \mathrm{compiler.levels.this\_file}() \text{ or } \mathrm{compiler.levels.lower\_to}(f, t, s) \text{ and resolves } b, f, t \text{ by name alone}

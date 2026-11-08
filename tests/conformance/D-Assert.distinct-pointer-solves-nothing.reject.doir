@@ -1,0 +1,13 @@
+// D-Assert: a distinct copy of a pointer type was not built by std.types.pointer, so T stays unsolved (D-Deduce).
+deref : (T : deduced type, Tptr : deduced type, ptr : Tptr) -> std.u8 = {
+	built : type = std.types.pointer(T)
+	same : std.u1 = std.types.is_same_type(Tptr, built)
+	message : std.c_string = "D-Assert: ptr is not a pointer to T"
+	_ : void = std.diagnostics.assert(same, message)
+	zero : std.u8 = 0
+	_ : _ = std.return(zero)
+}
+u8_pointer : type = std.types.pointer(std.u8)
+handle : type = std.types.distinct_copy(u8_pointer)
+p : handle = std.stack.allocate(std.u8)
+v : std.u8 = deref(p)
