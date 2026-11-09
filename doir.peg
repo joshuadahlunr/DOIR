@@ -20,7 +20,7 @@ Identifier <- '%' '"' StringChar* '"' / !Keywords ([%] / UnicodeIdentifierStart)
 Keywords <- ('deduced' / 'export' / 'flatten' / 'inline' / 'language' / 'tail') !UnicodeIdentifierContinue
 SourceInfo <- ('<"' (!'"' .)* '":' / '<' (!':' .)* ':') IntegerConstant ('-' IntegerConstant)? ':' IntegerConstant ('-' IntegerConstant)? '>'
 
-Constant <- FloatConstant / IntegerConstant / RawString / ('"' StringChar* '"') / ('\'' StringChar '\'')
+Constant <- '-'? FloatConstant / '-'? IntegerConstant / RawString / ('"' StringChar* '"') / ('\'' StringChar '\'')
 IntegerConstant <- ('0x' HexDigit+) / ('0b' [01]+) / ('0' [0-7]*) / ([1-9][0-9]*)
 FloatConstant <- ('0x' (HexDigit* '.' HexDigit+ / HexDigit+ '.' HexDigit*) HexExponent? / '0x' HexDigit+ HexExponent) / (([0-9]* '.' [0-9]+ / [0-9]+ '.' [0-9]*) DecExponent? / [0-9]+ DecExponent)
 HexExponent <- [pP][-+]? [0-9]+

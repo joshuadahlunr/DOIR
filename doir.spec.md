@@ -52,7 +52,7 @@ math : namespace = {                            // #5: Namespace
 }
 ```
 
-A constant is an integer (decimal, `0x`, `0b`, or leading-`0` octal), a float, a character in single quotes, a string in double quotes, or a raw string in `"""` delimiters; how each is typed is `V-Literal`.
+A constant is an integer (decimal, `0x`, `0b`, or leading-`0` octal, optionally preceded by `-`), a float (optionally preceded by `-`), a character in single quotes, a string in double quotes, or a raw string in `"""` delimiters; how each is typed is `V-Literal`.
 
 The underscore `_` means two different things depending on position:
 

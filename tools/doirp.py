@@ -188,7 +188,11 @@ class Lowering:
 			hoists, type_str, type_span = self.type(inner.child("plus_type"))
 			return hoists, declared or type_str, self.text(constant), merge(span_of(constant), type_span)
 		if inner.name == "bare_constant":
-			return [], declared or "_", self.text(constant), span_of(constant)
+			if declared is None:
+				span = span_of(constant)
+				line, column = doir_grammar.line_at(self.src, span[0]), doir_grammar.column_at(self.src, span[0])
+				raise LoweringError(f"{self.filename}:{line}:{column}: V-Literal: a constant's type cannot be inferred; write it, as in `x : std.i64 = {self.text(constant)}`")
+			return [], declared, self.text(constant), span_of(constant)
 		hoists, value = self.expr(inner)
 		# V-NoImplicitCopy: naming a binding is not copying it, so the declaration is an alias.
 		return hoists, "alias" if value.is_name else declared or "_", value.text, value.span
