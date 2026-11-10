@@ -1,0 +1,8 @@
+// N-Kind: `std.is_less` on integers is `std.integer.is_less`, so the two answers agree and the assertion that they differ fails.
+a : std.u8 = 3
+b : std.u8 = 200
+through_wrapper : std.u1 = std.is_less(a, b)
+through_family : std.u1 = std.integer.is_less(a, b)
+differ : std.u1 = std.is_not_equal(through_wrapper, through_family)
+message : std.c_string = "N-Kind: std.is_less hands integers to std.integer.is_less, so the answers agree and this assertion fails"
+_ : void = std.diagnostics.assert(differ, message)

@@ -169,9 +169,11 @@ Legacy behavior reference: [doir-lang/DOIR/tree/D](https://github.com/doir-lang/
 - **Deliverables:**
   - A second CPU backend: a 32-bit variant of the Mizu backend, which provides `machine.u32` as its pointer width and lacks `machine.u64`.
   - `standard.doir` compiled in one build over the Mizu target and that variant's (Phase 7), with an optional name (`T-Optional`) one provides and the other lacks, used behind `std.numbers.integer_available` so `C-Splice` drops it where it is absent.
-  - Every `std` prototype that is not a host hook given a body by both backends (`I-Extern`), checked against `reference/machine.doir`.
+  - Every `std` prototype that is not a host hook bound to a body on both backends (`I-Extern`), checked against `reference/machine.doir`: the backend's own, or the software body `standard.emulated.doir` gives `std`, which the lowest-ranked definition replaces.
+    The 32-bit variant defines only the primitives of `reference/machine.doir`'s first `std` block, so the emulation is what it runs.
+    It also declares `machine.f32` but defines nothing in `std.float` (`N-Kind`), so its binary32 arithmetic is the software floats, whose steps `tests/software_float.py` already checks.
   - Overload sets (`TF-Overload`): the `std.meta.functions.create_overload_set` and `add_overload` hooks, and call resolution as a query keyed by ⟨call, position⟩ that picks the one viable exact member, else the one viable generic one.
-- **Verification:** `test_standard.doir` compiles and passes verification without errors.
+- **Verification:** `test_standard.doir` compiles and passes verification without errors on both targets, and gives the same results on the variant, which emulates, as on Mizu, which does not: bit for bit for floats, NaN payloads aside.
 
 ### Phase 9: Graphics Target Backend (Chapter 6)
 - **Goal:** Prove that a target is ordinary library code and that the same source runs on two targets. Chapter 6 is due before Chapter 4, so this phase starts as soon as Phase 5 makes the host ABI callable, and runs in parallel with Phase 8.

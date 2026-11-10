@@ -1,6 +1,9 @@
 // A backend's contract, everything `standard.doir` and the spec require a machine to provide, written as the declarations a backend makes: `T-Sig` (Part II §17) calls it sig(std), and a level stacked on a target that omits any of it fails to resolve. Transcribed from the prototype machine (`mizu.doir`, `standard.mizu.doir` in `tree/D`) and restated against the abstract `machine` namespace the spec uses.
 //
-// A declaration with a type and no body is a symbol the backend has to supply (`I-Extern`): a real backend gives each of them a body. The file is a backend's contents: a backends file pastes it into a namespace, makes that namespace a level and lowers it onto `compiler.levels.builtin` (`L-Lower`, `reference/backends.doir`), so its root namespaces are exported. Its signatures name only level-0 and machine entities (`L-Mono`).
+// A declaration with a type and no body is a symbol the backend has to supply (`I-Extern`): a real backend gives each of them a body.
+// The second `std` block is the exception: `standard.emulated.doir` gives those a software body, so a backend defines only the ones it has an instruction for.
+// The file is a backend's contents: a backends file pastes it into a namespace, makes that namespace a level and lowers it onto `compiler.levels.builtin` (`L-Lower`, `reference/backends.doir`), so its root namespaces are exported.
+// Its signatures name only level-0 and machine entities (`L-Mono`).
 
 // Primitive types (`T-Sig`). Widths are the target's, not the host's: `H-Target` makes comptime layouts use the target's, and `compiler.pointer_sized` is only the host word the widths are written in.
 export machine : namespace = {
@@ -102,39 +105,24 @@ export compiler_impl : namespace = {
 	bridges : namespace = {}
 }
 
-// Backend primitives (`T-Sig`, `I-Extern`): the bodyless prototypes of `standard.doir` that are not host hooks, under the same names, so `R-Mangle` gives them the same symbols. Their flags are `std`'s. Host hooks are the compiler's, on every target (`H-Hook`, `reference/host.doir`); the wrappers of `std.types`, `std.functions` and `std.numbers` already have bodies.
+// Backend primitives (`T-Sig`, `I-Extern`): the bodyless prototypes of `standard.doir` that are neither host hooks nor emulated, under the same names, so `R-Mangle` gives them the same symbols.
+// Their flags are `std`'s.
+// Host hooks are the compiler's, on every target (`H-Hook`, `reference/host.doir`); the wrappers of `std.types`, `std.functions` and `std.numbers` already have bodies, and the emulated names are in the next `std` block.
 export std : namespace = {
-	// Width changes and conversions (N-Convert, N-FloatConvert); `float_convert` only with a float type (T-Optional).
+	// Width changes (N-Convert).
 	numbers : namespace = {
 		widen : (Tout: deduced type, Tin: deduced type, v: Tin) -> Tout
 		truncate : (Tout: deduced type, Tin: deduced type, v: Tin) -> Tout
-		float_convert : (Tout: deduced type, Tin: deduced type, v: Tin) -> Tout
-	}
-
-	// Whether an operation would leave its type's range (N-Overflow).
-	would_overflow : namespace = {
-		add : (T: deduced type, a: T, b: T) -> machine.u1
-		subtract : (T: deduced type, a: T, b: T) -> machine.u1
-		multiply : (T: deduced type, a: T, b: T) -> machine.u1
-		divide : (T: deduced type, a: T, b: T) -> machine.u1
-		remainder : (T: deduced type, a: T, b: T) -> machine.u1
-		shift_left : (T: deduced type, a: T, b: T) -> machine.u1
-		negate : (T: deduced type, v: T) -> machine.u1
-		truncate : (Tout: deduced type, Tin: deduced type, v: Tin) -> machine.u1
 	}
 
 	reinterpret_bits : (Tin: deduced type, in: Tin, Tout: deduced type) -> Tout
 	copy : (T: type, v: T) -> T
 	comptime_to_runtime : (T: deduced type, v: T) -> T
 
-	// Control flow (B-Inline, B-Loop, B-If). A label is `std.label`, a distinct copy of the entity handle (B-Label).
+	// Splicing, deferral, terminators, and the labels and jumps the emulated control flow is built from (B-Inline, B-Defer, B-Label).
+	// A label is `std.label`, a distinct copy of the entity handle (B-Label).
 	run_block : (body: block) -> _
 	defer : (body: block) -> void
-	while : (condition: block, body: block) -> _
-	for : (init: block, condition: block, step: block, body: block) -> _
-	loop_length : (Tptr: deduced type, result: Tptr) -> machine.pointer_sized
-	free_loop_result : (Tptr: deduced type, result: Tptr) -> void
-	if : (condition: machine.u1, then: block, else: block) -> _
 	return : (T: deduced type, value: T) -> T
 	block_result : (T: deduced type, value: T) -> T
 	place_label : () -> compiler.entity
@@ -148,15 +136,13 @@ export std : namespace = {
 		load : (Tptr: deduced type, Tvalue: deduced type, pointer: Tptr) -> Tvalue
 		store : (Tptr: deduced type, Tvalue: deduced type, pointer: Tptr, value: Tvalue) -> Tvalue
 		offset : (Tptr: deduced type, pointer: Tptr, byte_offset: machine.pointer_difference) -> Tptr
-		element_pointer : (Tptr: deduced type, pointer: Tptr, index: machine.pointer_sized) -> Tptr
-		difference : (Tptr: deduced type, a: Tptr, b: Tptr) -> machine.pointer_difference
-		is_null : (Tptr: deduced type, pointer: Tptr) -> machine.u1
 		load_field : (Tptr: deduced type, Tvalue: deduced type, object: Tptr, field: compiler.entity) -> Tvalue
 		store_field : (Tptr: deduced type, Tvalue: deduced type, object: Tptr, field: compiler.entity, value: Tvalue) -> Tvalue
 		null : (Tptr: deduced type) -> Tptr
 	}
 
 	// The runtime stack (MEM-Stack); `alignment` is in bytes, a power of two.
+	// `load` and `store` are offsets from `top`, which a body called out of line would read from its own frame, so they are not emulated.
 	stack : namespace = {
 		load : (T: deduced type, stack_offset: machine.pointer_sized) -> T
 		store : (T: deduced type, value: T, stack_offset: machine.pointer_sized) -> T
@@ -173,33 +159,96 @@ export std : namespace = {
 		free : (p: compiler.byte_pointer) -> void
 	}
 
-	// Arithmetic and comparison (Part II §13). On a float type they follow IEEE 754 (N-Float).
-	is_equal : (T: deduced type, a: T, b: T) -> machine.u1
-	is_not_equal : (T: deduced type, a: T, b: T) -> machine.u1
-	is_less : (T: deduced type, a: T, b: T) -> machine.u1
-	is_less_equal : (T: deduced type, a: T, b: T) -> machine.u1
-	is_greater : (T: deduced type, a: T, b: T) -> machine.u1
-	is_greater_equal : (T: deduced type, a: T, b: T) -> machine.u1
-	add : (T: deduced type, a: T, b: T) -> T
-	subtract : (T: deduced type, a: T, b: T) -> T
-	divide : (T: deduced type, a: T, b: T) -> T
-	multiply : (T: deduced type, a: T, b: T) -> T
-	remainder : (T: deduced type, a: T, b: T) -> T
-	negate : (T: deduced type, v: T) -> T
-	max : (T: deduced type, a: T, b: T) -> T
-	min : (T: deduced type, a: T, b: T) -> T
+	// The arithmetic every emulated body is written over (Part II §13): one adder, a complete pair of bitwise operations, and one ordering, all on integers (N-Kind).
+	// `is_less` also orders pointers, as unsigned addresses (N-Operand).
+	integer : namespace = {
+		add : (T: deduced type, a: T, b: T) -> T
+		is_less : (T: deduced type, a: T, b: T) -> machine.u1
+	}
+	bitwise_and : (T: deduced type, a: T, b: T) -> T
+	bitwise_not : (T: deduced type, v: T) -> T
+}
+
+// Emulated unless defined here (`I-Extern`): `standard.emulated.doir` gives each a software body over the primitives above, and a definition here replaces it for every operand type the operation takes.
+// The operations over both kinds are split by kind (N-Kind), so a machine with no float unit defines the `integer` ones it has instructions for and none of `float`, and every float operation runs in software.
+// The software floats need an unsigned integer as wide as the float; a machine with a float type and no such integer defines `float` itself.
+// The prototype machine has an instruction for each, so it defines them all.
+export std : namespace = {
+	// Whether an operation would leave its type's range (N-Overflow).
+	would_overflow : namespace = {
+		add : (T: deduced type, a: T, b: T) -> machine.u1
+		subtract : (T: deduced type, a: T, b: T) -> machine.u1
+		multiply : (T: deduced type, a: T, b: T) -> machine.u1
+		divide : (T: deduced type, a: T, b: T) -> machine.u1
+		remainder : (T: deduced type, a: T, b: T) -> machine.u1
+		shift_left : (T: deduced type, a: T, b: T) -> machine.u1
+		negate : (T: deduced type, v: T) -> machine.u1
+		truncate : (Tout: deduced type, Tin: deduced type, v: Tin) -> machine.u1
+	}
+
+	// Control flow over labels and jumps (B-If, B-Loop), and the heap loop result's header (B-Loop).
+	if : (condition: machine.u1, then: block, else: block) -> _
+	while : (condition: block, body: block) -> _
+	for : (init: block, condition: block, step: block, body: block) -> _
+	loop_length : (Tptr: deduced type, result: Tptr) -> machine.pointer_sized
+	free_loop_result : (Tptr: deduced type, result: Tptr) -> void
+
+	pointers : namespace = {
+		element_pointer : (Tptr: deduced type, pointer: Tptr, index: machine.pointer_sized) -> Tptr
+		difference : (Tptr: deduced type, a: Tptr, b: Tptr) -> machine.pointer_difference
+		is_null : (Tptr: deduced type, pointer: Tptr) -> machine.u1
+	}
+
+	integer : namespace = {
+		is_equal : (T: deduced type, a: T, b: T) -> machine.u1
+		is_not_equal : (T: deduced type, a: T, b: T) -> machine.u1
+		is_less_equal : (T: deduced type, a: T, b: T) -> machine.u1
+		is_greater : (T: deduced type, a: T, b: T) -> machine.u1
+		is_greater_equal : (T: deduced type, a: T, b: T) -> machine.u1
+		subtract : (T: deduced type, a: T, b: T) -> T
+		multiply : (T: deduced type, a: T, b: T) -> T
+		divide : (T: deduced type, a: T, b: T) -> T
+		remainder : (T: deduced type, a: T, b: T) -> T
+		negate : (T: deduced type, v: T) -> T
+		max : (T: deduced type, a: T, b: T) -> T
+		min : (T: deduced type, a: T, b: T) -> T
+		is_negative : (T: deduced type, v: T) -> machine.u1
+		is_positive : (T: deduced type, v: T) -> machine.u1
+	}
+
+	// IEEE 754 (N-Float), the whole family in software unless defined here.
+	float : namespace = {
+		is_equal : (T: deduced type, a: T, b: T) -> machine.u1
+		is_not_equal : (T: deduced type, a: T, b: T) -> machine.u1
+		is_less : (T: deduced type, a: T, b: T) -> machine.u1
+		is_less_equal : (T: deduced type, a: T, b: T) -> machine.u1
+		is_greater : (T: deduced type, a: T, b: T) -> machine.u1
+		is_greater_equal : (T: deduced type, a: T, b: T) -> machine.u1
+		add : (T: deduced type, a: T, b: T) -> T
+		subtract : (T: deduced type, a: T, b: T) -> T
+		multiply : (T: deduced type, a: T, b: T) -> T
+		divide : (T: deduced type, a: T, b: T) -> T
+		remainder : (T: deduced type, a: T, b: T) -> T
+		negate : (T: deduced type, v: T) -> T
+		max : (T: deduced type, a: T, b: T) -> T
+		min : (T: deduced type, a: T, b: T) -> T
+		is_negative : (T: deduced type, v: T) -> machine.u1
+		is_positive : (T: deduced type, v: T) -> machine.u1
+	}
+
+	// Only with a float type (T-Optional), and in software unless defined here.
+	numbers : namespace = {
+		float_convert : (Tout: deduced type, Tin: deduced type, v: Tin) -> Tout
+	}
 	square_root : (T: deduced type, v: T) -> T
+
 	shift_left : (T: deduced type, a: T, b: T) -> T
 	shift_right : (T: deduced type, a: T, b: T) -> T
 	bitwise_xor : (T: deduced type, a: T, b: T) -> T
 	bitwise_or : (T: deduced type, a: T, b: T) -> T
-	bitwise_and : (T: deduced type, a: T, b: T) -> T
-	bitwise_not : (T: deduced type, v: T) -> T
 	logical_not : (v: machine.u1) -> machine.u1
 	logical_and : (a: machine.u1, b: machine.u1) -> machine.u1
 	logical_or : (a: machine.u1, b: machine.u1) -> machine.u1
-	is_negative : (T: deduced type, v: T) -> machine.u1
-	is_positive : (T: deduced type, v: T) -> machine.u1
 	is_infinite : (T: deduced type, v: T) -> machine.u1
 	is_not_a_number : (T: deduced type, v: T) -> machine.u1
 }
@@ -216,7 +265,8 @@ export machine : namespace = {
 	i16 : type = compiler.signed_base_type(%16, %16)
 	i32 : type = compiler.signed_base_type(%32, %32)
 
-	// IEEE 754 binary32 and binary64 (N-Float). A machine that provides one gives the float bodies of `std.square_root`, `is_not_a_number`, `is_infinite` and `numbers.float_convert`.
+	// IEEE 754 binary32 and binary64 (N-Float).
+	// Declaring one needs no float unit: the type is only storage, and `standard.emulated.doir` gives every float operation a software body.
 	f32 : type = compiler.float_base_type(%32, %32)
 	f64 : type = compiler.float_base_type(%64, %64)
 }

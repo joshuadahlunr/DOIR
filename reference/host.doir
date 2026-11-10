@@ -4,7 +4,7 @@
 //
 // How an argument crosses: one of an always-comptime type (`type`, `std.meta.entity`, `pack`, `compiler.level`) as the `compiler.entity` naming it; one of a fixed type as its value in the target's layout (`H-Target`), written here as its `std` type. A hook's value of a deduced type crosses as the entity naming its binding, and so does a `_` result, which the destination aliases (`A-Bind`). A primitive's value of a deduced type crosses as a `compiler.byte_pointer` to its bytes in comptime memory, its type's entity giving the layout, and a result of a deduced type is written through `result`.
 host_services : namespace = {
-	revision : compiler.pointer_sized = 1
+	revision : compiler.pointer_sized = 2
 
 	import : (path: std.c_string) -> std.pointer_sized
 
@@ -187,20 +187,43 @@ host_services : namespace = {
 	copy : (T: compiler.entity, v: compiler.byte_pointer, result: compiler.byte_pointer)
 
 	// Arithmetic and comparison (Part II §13), with the semantics the spec gives each.
-	is_equal : (T: compiler.entity, a: compiler.byte_pointer, b: compiler.byte_pointer) -> std.u1
-	is_not_equal : (T: compiler.entity, a: compiler.byte_pointer, b: compiler.byte_pointer) -> std.u1
-	is_less : (T: compiler.entity, a: compiler.byte_pointer, b: compiler.byte_pointer) -> std.u1
-	is_less_equal : (T: compiler.entity, a: compiler.byte_pointer, b: compiler.byte_pointer) -> std.u1
-	is_greater : (T: compiler.entity, a: compiler.byte_pointer, b: compiler.byte_pointer) -> std.u1
-	is_greater_equal : (T: compiler.entity, a: compiler.byte_pointer, b: compiler.byte_pointer) -> std.u1
-	add : (T: compiler.entity, a: compiler.byte_pointer, b: compiler.byte_pointer, result: compiler.byte_pointer)
-	subtract : (T: compiler.entity, a: compiler.byte_pointer, b: compiler.byte_pointer, result: compiler.byte_pointer)
-	divide : (T: compiler.entity, a: compiler.byte_pointer, b: compiler.byte_pointer, result: compiler.byte_pointer)
-	multiply : (T: compiler.entity, a: compiler.byte_pointer, b: compiler.byte_pointer, result: compiler.byte_pointer)
-	remainder : (T: compiler.entity, a: compiler.byte_pointer, b: compiler.byte_pointer, result: compiler.byte_pointer)
-	negate : (T: compiler.entity, v: compiler.byte_pointer, result: compiler.byte_pointer)
-	max : (T: compiler.entity, a: compiler.byte_pointer, b: compiler.byte_pointer, result: compiler.byte_pointer)
-	min : (T: compiler.entity, a: compiler.byte_pointer, b: compiler.byte_pointer, result: compiler.byte_pointer)
+	// The operations over both kinds, once per kind, as `standard.doir` declares them (N-Kind): the `std` wrappers over them have bodies, which the interpreter runs.
+	integer : namespace = {
+		is_equal : (T: compiler.entity, a: compiler.byte_pointer, b: compiler.byte_pointer) -> std.u1
+		is_not_equal : (T: compiler.entity, a: compiler.byte_pointer, b: compiler.byte_pointer) -> std.u1
+		is_less : (T: compiler.entity, a: compiler.byte_pointer, b: compiler.byte_pointer) -> std.u1
+		is_less_equal : (T: compiler.entity, a: compiler.byte_pointer, b: compiler.byte_pointer) -> std.u1
+		is_greater : (T: compiler.entity, a: compiler.byte_pointer, b: compiler.byte_pointer) -> std.u1
+		is_greater_equal : (T: compiler.entity, a: compiler.byte_pointer, b: compiler.byte_pointer) -> std.u1
+		add : (T: compiler.entity, a: compiler.byte_pointer, b: compiler.byte_pointer, result: compiler.byte_pointer)
+		subtract : (T: compiler.entity, a: compiler.byte_pointer, b: compiler.byte_pointer, result: compiler.byte_pointer)
+		divide : (T: compiler.entity, a: compiler.byte_pointer, b: compiler.byte_pointer, result: compiler.byte_pointer)
+		multiply : (T: compiler.entity, a: compiler.byte_pointer, b: compiler.byte_pointer, result: compiler.byte_pointer)
+		remainder : (T: compiler.entity, a: compiler.byte_pointer, b: compiler.byte_pointer, result: compiler.byte_pointer)
+		negate : (T: compiler.entity, v: compiler.byte_pointer, result: compiler.byte_pointer)
+		max : (T: compiler.entity, a: compiler.byte_pointer, b: compiler.byte_pointer, result: compiler.byte_pointer)
+		min : (T: compiler.entity, a: compiler.byte_pointer, b: compiler.byte_pointer, result: compiler.byte_pointer)
+		is_negative : (T: compiler.entity, v: compiler.byte_pointer) -> std.u1
+		is_positive : (T: compiler.entity, v: compiler.byte_pointer) -> std.u1
+	}
+	float : namespace = {
+		is_equal : (T: compiler.entity, a: compiler.byte_pointer, b: compiler.byte_pointer) -> std.u1
+		is_not_equal : (T: compiler.entity, a: compiler.byte_pointer, b: compiler.byte_pointer) -> std.u1
+		is_less : (T: compiler.entity, a: compiler.byte_pointer, b: compiler.byte_pointer) -> std.u1
+		is_less_equal : (T: compiler.entity, a: compiler.byte_pointer, b: compiler.byte_pointer) -> std.u1
+		is_greater : (T: compiler.entity, a: compiler.byte_pointer, b: compiler.byte_pointer) -> std.u1
+		is_greater_equal : (T: compiler.entity, a: compiler.byte_pointer, b: compiler.byte_pointer) -> std.u1
+		add : (T: compiler.entity, a: compiler.byte_pointer, b: compiler.byte_pointer, result: compiler.byte_pointer)
+		subtract : (T: compiler.entity, a: compiler.byte_pointer, b: compiler.byte_pointer, result: compiler.byte_pointer)
+		divide : (T: compiler.entity, a: compiler.byte_pointer, b: compiler.byte_pointer, result: compiler.byte_pointer)
+		multiply : (T: compiler.entity, a: compiler.byte_pointer, b: compiler.byte_pointer, result: compiler.byte_pointer)
+		remainder : (T: compiler.entity, a: compiler.byte_pointer, b: compiler.byte_pointer, result: compiler.byte_pointer)
+		negate : (T: compiler.entity, v: compiler.byte_pointer, result: compiler.byte_pointer)
+		max : (T: compiler.entity, a: compiler.byte_pointer, b: compiler.byte_pointer, result: compiler.byte_pointer)
+		min : (T: compiler.entity, a: compiler.byte_pointer, b: compiler.byte_pointer, result: compiler.byte_pointer)
+		is_negative : (T: compiler.entity, v: compiler.byte_pointer) -> std.u1
+		is_positive : (T: compiler.entity, v: compiler.byte_pointer) -> std.u1
+	}
 	square_root : (T: compiler.entity, v: compiler.byte_pointer, result: compiler.byte_pointer)
 	shift_left : (T: compiler.entity, a: compiler.byte_pointer, b: compiler.byte_pointer, result: compiler.byte_pointer)
 	shift_right : (T: compiler.entity, a: compiler.byte_pointer, b: compiler.byte_pointer, result: compiler.byte_pointer)
@@ -211,8 +234,6 @@ host_services : namespace = {
 	logical_not : (v: std.u1) -> std.u1
 	logical_and : (a: std.u1, b: std.u1) -> std.u1
 	logical_or : (a: std.u1, b: std.u1) -> std.u1
-	is_negative : (T: compiler.entity, v: compiler.byte_pointer) -> std.u1
-	is_positive : (T: compiler.entity, v: compiler.byte_pointer) -> std.u1
 	is_infinite : (T: compiler.entity, v: compiler.byte_pointer) -> std.u1
 	is_not_a_number : (T: compiler.entity, v: compiler.byte_pointer) -> std.u1
 }

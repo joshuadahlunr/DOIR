@@ -456,7 +456,10 @@ where $\pi^{*}$ applies $\pi$ to every entity id inside a component value (`Pare
   $$
   \forall e \text{ declared directly in namespace } N: \quad \text{SymbolName}(e) := \text{SymbolName}(N) \cdot \texttt{"."} \cdot \text{Name}(e)
   $$
-  > **In Plain English:** Namespaces do not exist as data structures at runtime. A symbol's ABI name is its namespace path joined with dots (`math` + `add` becomes `math.add`); its `Name` stays `add`, so lookup is unaffected. A namespace made into a level adds no prefix: its members are named as though declared at a file root, so `x86_backend.std.add` has the symbol `std.add` (`I-Extern`). `M-SymbolName` replaces the result.
+  > **In Plain English:** Namespaces do not exist as data structures at runtime.
+  > A symbol's ABI name is its namespace path joined with dots (`math` + `add` becomes `math.add`); its `Name` stays `add`, so lookup is unaffected.
+  > A namespace made into a level adds no prefix: its members are named as though declared at a file root, so `x86_backend.std.integer.add` has the symbol `std.integer.add` (`I-Extern`).
+  > `M-SymbolName` replaces the result.
 
 ---
 
@@ -497,9 +500,16 @@ where $\pi^{*}$ applies $\pi$ to every entity id inside a component value (`Pare
   \frac{f : \text{FunctionType} \quad \text{val}(f) = \{\text{FunctionReturn}, \text{Valueless}\}}{f \text{ is callable; a call to it calls the definition bound to it}}
   $$
   $$
-  \text{bound to: the host (H-Hook); else, for target } \tau\text{, the definition with the same } \text{SymbolName} \text{ in } \text{LevelOf}(f) \text{ or a level of } \text{View}_\tau(\text{LevelOf}(f)) \text{ (R-Unqual), nearest first; else the linker}
+  \text{bound to: the host (H-Hook); else, for target } \tau\text{, the definition with the same } \text{SymbolName} \text{ in } \text{LevelOf}(f) \text{ or a level of } \text{View}_\tau(\text{LevelOf}(f)) \text{ (R-Unqual), lowest rank first; else the linker}
   $$
-  > **In Plain English:** Naming a function with a type but no body is how DOIR refers to something it does not define. A host hook is supplied by the compiler. Otherwise the prototype binds to a definition with the same symbol name in its own level or one below it that is visible under the target being lowered for (`R-Unqual`), nearest first: a backend supplies `std.add` by declaring `std : namespace = { add : ... = { ... } }` in its namespace, whose symbol is also `std.add` (`R-Mangle`), so each target binds its own. The definition's type must be equivalent to the prototype's (`S-Struct`). With no definition anywhere, the symbol is left for the linker, so calling one whose body never appears is a link error, not a compile error.
+  > **In Plain English:** Naming a function with a type but no body is how DOIR refers to something it does not define.
+  > A host hook is supplied by the compiler.
+  > Otherwise the prototype binds to a definition with the same symbol name in its own level or one below it that is visible under the target being lowered for (`R-Unqual`): a backend supplies `std.integer.add` by declaring `std : namespace = { integer : namespace = { add : ... = { ... } } }` in its namespace, whose symbol is also `std.integer.add` (`R-Mangle`), so each target binds its own.
+  > The lowest-ranked definition wins, the one nearest the target, so a portable body written higher up is a default the target can replace.
+  > That is how `standard.emulated.doir` works: it gives `std` a software body for each prototype it can write over a few primitives, each renamed to its prototype's symbol (`M-SymbolName`), and a backend that defines the same name replaces it without either naming the other.
+  > A definition passed over is not lowered for that target, so the symbol is defined once; two definitions of equal rank are ambiguous, as in `R-Unqual`.
+  > The definition's type must be equivalent to the prototype's (`S-Struct`).
+  > With no definition anywhere, the symbol is left for the linker, so calling one whose body never appears is a link error, not a compile error.
 
 ---
 
@@ -907,7 +917,11 @@ where $\pi^{*}$ applies $\pi$ to every entity id inside a component value (`Pare
   $$
   \frac{\text{a call } e \text{ is folded} \quad e' \text{ is a call in the body of } \alpha(\text{Call}(e))}{e' \text{ is executed by the comptime interpreter, whatever the flags of its callee's type}}
   $$
-  > **In Plain English:** `NeverComptime` is a statement about call sites the compiler would otherwise emit: such a call is never folded *there*. Inside a body the interpreter is already running, there is nothing to emit, so every call is executed — including memory primitives (`MEM-Comptime`), indirect calls through a comptime function address (`FP-Call`), and `std.comptime_to_runtime`, which is the identity there, since there is no runtime to cross to. Behavior that would be undefined at runtime (`UB`) is a compile error when the interpreter meets it. This is what lets a comptime metaprogram use the same containers the program uses at runtime. A prototype the machine supplies (`I-Extern`) is never run by interpreting the machine's body, which may be machine code and differs per target: the host runs it with the semantics this specification gives it (§14, §13, `N-Convert`, `N-FloatConvert`, `N-Overflow`, `std.reinterpret_bits`, `std.copy`), at the target's widths (`H-Target`), so the answer depends on neither host nor machine (`H-Det`).
+  > **In Plain English:** `NeverComptime` is a statement about call sites the compiler would otherwise emit: such a call is never folded *there*.
+  > Inside a body the interpreter is already running, there is nothing to emit, so every call is executed — including memory primitives (`MEM-Comptime`), indirect calls through a comptime function address (`FP-Call`), and `std.comptime_to_runtime`, which is the identity there, since there is no runtime to cross to.
+  > Behavior that would be undefined at runtime (`UB`) is a compile error when the interpreter meets it.
+  > This is what lets a comptime metaprogram use the same containers the program uses at runtime.
+  > A prototype the machine supplies (`I-Extern`) is never run by interpreting the body bound to it, which may be machine code or a software body from `standard.emulated.doir`, and differs per target: the host runs it with the semantics this specification gives it (§14, §13, `N-Convert`, `N-FloatConvert`, `N-Overflow`, `std.reinterpret_bits`, `std.copy`), at the target's widths (`H-Target`), so the answer depends on neither host nor machine (`H-Det`).
 - **[Q-Cycle] Cycles Are Errors:**  
   $$
   \frac{\text{answering query } q \text{ requires the answer to } q}{\text{ill-formed, reported with the chain of queries that closes the cycle}}
@@ -1053,7 +1067,17 @@ where $\pi^{*}$ applies $\pi$ to every entity id inside a component value (`Pare
   $$
   \text{arithmetic, bitwise and } \mathtt{max}/\mathtt{min} \text{ take base types}; \quad \text{comparisons also take pointers}; \quad \text{logical operations take } \mathtt{std.u1}
   $$
-  > **In Plain English:** `add`, `subtract`, `multiply`, `divide`, `remainder`, `negate`, `max` and `min` work on integer and `Float` types; the bitwise operations and shifts on integer types only; `square_root`, `is_not_a_number` and `is_infinite` on `Float` types only. The six comparisons work on base types and on pointers, comparing pointer addresses as unsigned integers. Nothing applies to aggregates: compare them field by field.
+  > **In Plain English:** `add`, `subtract`, `multiply`, `divide`, `remainder`, `negate`, `max` and `min` work on integer and `Float` types; the bitwise operations and shifts on integer types only; `square_root`, `is_not_a_number` and `is_infinite` on `Float` types only.
+  > The six comparisons work on base types and on pointers, comparing pointer addresses as unsigned integers.
+  > Nothing applies to aggregates: compare them field by field.
+- **[N-Kind] One Prototype per Kind:**  
+  $$
+  \mathtt{std}.\omega(a, \dots) = \begin{cases} \mathtt{std.float}.\omega(a, \dots) & \text{Float} \in \text{Flags}(T) \\ \mathtt{std.integer}.\omega(a, \dots) & \text{otherwise} \end{cases} \qquad \omega \in \{\mathtt{add}, \mathtt{subtract}, \mathtt{multiply}, \mathtt{divide}, \mathtt{remainder}, \mathtt{negate}, \mathtt{max}, \mathtt{min}, \mathtt{is\_negative}, \mathtt{is\_positive}\} \cup \text{the six comparisons}
+  $$
+  > **In Plain English:** The operations that take both integers and floats are inline wrappers in `std`, each handing its operands to the prototype of the same name in `std.integer` or `std.float`, by the kind of their type.
+  > Callers name only the wrapper; the split is for backends, because a prototype binds per operation, not per type (`I-Extern`).
+  > A machine with integer instructions and no float unit defines `std.integer.add` and leaves `std.float` to the software bodies of `standard.emulated.doir`, so every float operation still works there.
+  > `std.integer` takes pointers too, for the comparisons (`N-Operand`), and each family has the semantics this section gives the operation on its kind.
 - **[N-Wrap] Integer Arithmetic Wraps:**  
   $$
   \omega(a, b) = \text{exact}(\omega(a, b)) \bmod 2^{n} \quad \text{for } \omega \in \{\mathtt{add}, \mathtt{subtract}, \mathtt{multiply}, \mathtt{negate}, \mathtt{shift\_left}\}
@@ -1379,7 +1403,10 @@ where $\pi^{*}$ applies $\pi$ to every entity id inside a component value (`Pare
 
   Types are reached through the `machine` namespace (`R-Unqual`). The compiler calls the `compiler_impl` hooks itself while lowering a function. Their signatures name only `compiler` and `machine` entities, so `L-Mono` holds: the entity handle they take is `compiler.entity`, which `std.meta.entity` aliases.
 
-  Beyond the table a backend supplies the body of every `standard.doir` prototype that is not a host hook (`H-Hook`, `I-Extern`), including the runtime heap behind `std.heap` (`MEM-Heap`), and its physical register classes (`REG-Phys`, Part I §7), which are calls into the builtin block. Its descent passes are not in the namespace: they are the passes of its edge onto `compiler.levels.builtin` (`L-Lower`). `reference/machine.doir` states the whole contract as declarations.
+  Beyond the table a backend supplies the body of every `standard.doir` prototype that is neither a host hook (`H-Hook`) nor given a software body by `standard.emulated.doir` (`I-Extern`), including the runtime heap behind `std.heap` (`MEM-Heap`), and its physical register classes (`REG-Phys`, Part I §7), which are calls into the builtin block.
+  It may define an emulated one too, and its definition then replaces the software body for every operand type that operation takes; the operations over both integers and floats have one prototype per kind (`N-Kind`), so a backend replaces the integer and float bodies separately.
+  Its descent passes are not in the namespace: they are the passes of its edge onto `compiler.levels.builtin` (`L-Lower`).
+  `reference/machine.doir` states the whole contract as declarations.
 - **[T-Optional] Optional Target Features:**  
   $$
   \frac{n \in \text{opt}(\mathtt{std}) \quad S \text{ does not provide } n}{\text{every alias of } n \text{ is absent: declaring it is well-formed, using it is ill-formed (A-Res)}}

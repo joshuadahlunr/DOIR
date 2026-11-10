@@ -1,0 +1,2467 @@
+// Software bodies for the `standard.doir` prototypes that can be written over a few primitives, so a backend need supply only those primitives (rules I-Extern, T-Sig).
+// `standard.doir` pastes this file into `std` (rule I-Paste): an import could not hold it, since these bodies call `std` and an imported file cannot see its importer (rule I-Import).
+// Each body takes its prototype's symbol (rule M-SymbolName), and a prototype binds to the definition nearest the target (rule I-Extern), so a backend that defines the same name replaces the body here.
+// A replacement serves every operand type the operation takes: the choice is per operation, not per type.
+//
+// Bodies reach one another only through the `std` prototypes, so a backend's replacement serves them too.
+// They form no cycle: every chain of calls ends at a primitive, so a backend that supplies only the primitives still binds every name.
+// `reference/machine.doir` lists those primitives, and every body here is written over them.
+//
+// Comptime never runs these bodies: the host runs a prototype with the semantics the specification gives it (rule C-Interpret), so emulation changes only emitted code.
+// Every constant a body hands a prototype is converted to runtime first (rule WF-ToRuntime), and every `std.if` on a type's shape or on a comptime parameter folds (rule C-Splice).
+//
+// The operations over both kinds have a body per kind, in `integer` and `float` (rule N-Kind), so a backend with integer instructions and no float unit gets every float operation in software.
+// The software floats work on the float's bits as an unsigned integer as wide, so a machine with a float type also needs that integer, or defines the float operations itself.
+// They are binary32 and binary64, rounding to nearest, ties to even (rule N-Float); `tests/software_float.py` models each step for step and checks it against IEEE 754, since nothing runs them yet.
+// Their exponents are biased fields held in that integer and read as two's complement, so one below 1 marks a subnormal result, or one that rounds to zero.
+emulated : namespace = {
+	binary_t : type = (T: deduced type, a: T, b: T) -> T
+	unary_t : type = (T: deduced type, v: T) -> T
+	compare_t : type = (T: deduced type, a: T, b: T) -> std.u1
+	test_t : type = (T: deduced type, v: T) -> std.u1
+	logical_t : type = (a: std.u1, b: std.u1) -> std.u1
+
+	// Whole bytes holding `bits` bits; a `u1` takes one, so no cell size or alignment is zero bytes (rule MEM-Stack).
+	bytes_t : type = (bits: std.pointer_sized) -> std.pointer_sized
+	_ : type = std.types.always_comptime(bytes_t)
+	bytes_for_bits : bytes_t = {
+		seven : std.pointer_sized = 7
+		eight : std.pointer_sized = 8
+		rounded_up : std.pointer_sized = std.add(bits, seven)
+		out : std.pointer_sized = std.divide(rounded_up, eight)
+		_ : _ = std.return(out)
+	}
+
+	// The bytes between the start of a heap loop result and its element 0: the length, rounded up to the alignment of `Element` (rule B-Loop).
+	header_t : type = (Element: type) -> std.pointer_sized
+	_ : type = std.types.always_comptime(header_t)
+	header_bytes : header_t = {
+		length_bits : std.pointer_sized = std.types.size_bits(std.pointer_sized)
+		length_bytes : std.pointer_sized = bytes_for_bits(length_bits)
+		alignment_bits : std.pointer_sized = std.types.align_bits(Element)
+		alignment : std.pointer_sized = bytes_for_bits(alignment_bits)
+		one : std.pointer_sized = 1
+		slack : std.pointer_sized = std.subtract(alignment, one)
+		padded : std.pointer_sized = std.add(length_bytes, slack)
+		units : std.pointer_sized = std.divide(padded, alignment)
+		out : std.pointer_sized = std.multiply(units, alignment)
+		_ : _ = std.return(out)
+	}
+
+	// The unsigned integer type as wide as `T`, the bit pattern that signed division and the software floats work on.
+	// A machine without one stops the build, since the emulation has nothing to work in (rule T-Optional).
+	twin_t : type = (T: type) -> type
+	_ : type = std.types.always_comptime(twin_t)
+	unsigned_twin : twin_t = {
+		bits : std.pointer_sized = std.types.size_bits(T)
+		alignment : std.pointer_sized = std.types.align_bits(T)
+		signed : std.u1 = 0
+		available : std.u1 = std.numbers.integer_available(bits, signed)
+		message : std.c_string = "emulating this operation needs an unsigned integer as wide as its operands; define the operation in the backend instead (I-Extern)"
+		_ : void = std.diagnostics.assert(available, message)
+		out : type = compiler.base_type(bits, alignment)
+		_ : _ = std.return(out)
+	}
+
+	// `u1` is an integer type, so the logical operations are the bitwise ones on it.
+	logical_not : (v: std.u1) -> std.u1 = {
+		out : std.u1 = std.bitwise_not(v)
+		_ : _ = std.return(out)
+	}
+	logical_not_symbol : std.c_string = "std.logical_not"
+	_ : _ = std.functions.set_symbol_name(logical_not, logical_not_symbol)
+
+	logical_and : logical_t = {
+		out : std.u1 = std.bitwise_and(a, b)
+		_ : _ = std.return(out)
+	}
+	logical_and_symbol : std.c_string = "std.logical_and"
+	_ : _ = std.functions.set_symbol_name(logical_and, logical_and_symbol)
+
+	logical_or : logical_t = {
+		out : std.u1 = std.bitwise_or(a, b)
+		_ : _ = std.return(out)
+	}
+	logical_or_symbol : std.c_string = "std.logical_or"
+	_ : _ = std.functions.set_symbol_name(logical_or, logical_or_symbol)
+
+	// De Morgan: the bits set in neither operand are the bits of `and(not a, not b)`.
+	bitwise_or : binary_t = {
+		not_a : T = std.bitwise_not(a)
+		not_b : T = std.bitwise_not(b)
+		neither : T = std.bitwise_and(not_a, not_b)
+		out : T = std.bitwise_not(neither)
+		_ : _ = std.return(out)
+	}
+	bitwise_or_symbol : std.c_string = "std.bitwise_or"
+	_ : _ = std.functions.set_symbol_name(bitwise_or, bitwise_or_symbol)
+
+	// The bits set in either operand but not in both.
+	bitwise_xor : binary_t = {
+		either : T = std.bitwise_or(a, b)
+		both : T = std.bitwise_and(a, b)
+		not_both : T = std.bitwise_not(both)
+		out : T = std.bitwise_and(either, not_both)
+		_ : _ = std.return(out)
+	}
+	bitwise_xor_symbol : std.c_string = "std.bitwise_xor"
+	_ : _ = std.functions.set_symbol_name(bitwise_xor, bitwise_xor_symbol)
+
+	is_not_a_number : test_t = {
+		out : std.u1 = std.is_not_equal(v, v)
+		_ : _ = std.return(out)
+	}
+	is_not_a_number_symbol : std.c_string = "std.is_not_a_number"
+	_ : _ = std.functions.set_symbol_name(is_not_a_number, is_not_a_number_symbol)
+
+	is_infinite : test_t = {
+		positive : T = std.numbers.infinity(T)
+		negative : T = std.negate(positive)
+		positive_runtime : T = std.comptime_to_runtime(positive)
+		negative_runtime : T = std.comptime_to_runtime(negative)
+		above : std.u1 = std.is_equal(v, positive_runtime)
+		below : std.u1 = std.is_equal(v, negative_runtime)
+		out : std.u1 = std.logical_or(above, below)
+		_ : _ = std.return(out)
+	}
+	is_infinite_symbol : std.c_string = "std.is_infinite"
+	_ : _ = std.functions.set_symbol_name(is_infinite, is_infinite_symbol)
+
+	// Doubles `a` once per unit of `b`; a shift of at least the width is undefined (rule N-Undefined), so it runs fewer times than the width.
+	shift_left : binary_t = {
+		Cell : type = std.types.pointer(T)
+		zero : T = 0
+		zero_runtime : T = std.comptime_to_runtime(zero)
+		one : T = 1
+		one_runtime : T = std.comptime_to_runtime(one)
+		value_cell : Cell = std.stack.allocate(T)
+		count_cell : Cell = std.stack.allocate(T)
+		_ : T = std.pointers.store(value_cell, a)
+		_ : T = std.pointers.store(count_cell, b)
+		more : block = {
+			count : T = std.pointers.load(count_cell)
+			going : std.u1 = std.is_less(zero_runtime, count)
+			_ : _ = std.block_result(going)
+		}
+		double : block = {
+			value : T = std.pointers.load(value_cell)
+			doubled : T = std.add(value, value)
+			_ : T = std.pointers.store(value_cell, doubled)
+			count : T = std.pointers.load(count_cell)
+			left : T = std.subtract(count, one_runtime)
+			_ : T = std.pointers.store(count_cell, left)
+			_ : _ = std.block_result(std.nothing)
+		}
+		_ : void = std.while(more, double)
+		out : T = std.pointers.load(value_cell)
+		_ : _ = std.return(out)
+	}
+	shift_left_symbol : std.c_string = "std.shift_left"
+	_ : _ = std.functions.set_symbol_name(shift_left, shift_left_symbol)
+
+	// Copies bit `i + b` of `a` to bit `i` for every `i` below the width less `b`, then fills the vacated top bits with the sign on a signed type (rule N-Wrap).
+	shift_right : binary_t = {
+		Cell : type = std.types.pointer(T)
+		zero : T = 0
+		zero_runtime : T = std.comptime_to_runtime(zero)
+		one : T = 1
+		one_runtime : T = std.comptime_to_runtime(one)
+		width_bits : std.pointer_sized = std.types.size_bits(T)
+		width : T = std.numbers.truncate(width_bits)
+		width_runtime : T = std.comptime_to_runtime(width)
+		kept : T = std.subtract(width_runtime, b)
+		first_source : T = std.shift_left(one_runtime, b)
+		result_cell : Cell = std.stack.allocate(T)
+		source_cell : Cell = std.stack.allocate(T)
+		target_cell : Cell = std.stack.allocate(T)
+		count_cell : Cell = std.stack.allocate(T)
+		_ : T = std.pointers.store(result_cell, zero_runtime)
+		_ : T = std.pointers.store(source_cell, first_source)
+		_ : T = std.pointers.store(target_cell, one_runtime)
+		_ : T = std.pointers.store(count_cell, kept)
+		more : block = {
+			count : T = std.pointers.load(count_cell)
+			going : std.u1 = std.is_less(zero_runtime, count)
+			_ : _ = std.block_result(going)
+		}
+		copy_bit : block = {
+			source : T = std.pointers.load(source_cell)
+			target : T = std.pointers.load(target_cell)
+			bit : T = std.bitwise_and(a, source)
+			set : std.u1 = std.is_not_equal(bit, zero_runtime)
+			set_wide : T = std.numbers.widen(set)
+			all_or_none : T = std.negate(set_wide)
+			contribution : T = std.bitwise_and(target, all_or_none)
+			result : T = std.pointers.load(result_cell)
+			sum : T = std.add(result, contribution)
+			_ : T = std.pointers.store(result_cell, sum)
+			next_source : T = std.add(source, source)
+			_ : T = std.pointers.store(source_cell, next_source)
+			next_target : T = std.add(target, target)
+			_ : T = std.pointers.store(target_cell, next_target)
+			count : T = std.pointers.load(count_cell)
+			left : T = std.subtract(count, one_runtime)
+			_ : T = std.pointers.store(count_cell, left)
+			_ : _ = std.block_result(std.nothing)
+		}
+		_ : void = std.while(more, copy_bit)
+		shifted : T = std.pointers.load(result_cell)
+		is_signed : std.u1 = std.numbers.is_signed(T)
+		logical : block = { _ : _ = std.block_result(shifted) ; }
+		arithmetic : block = {
+			negative : std.u1 = std.is_negative(a)
+			moved : std.u1 = std.is_less(zero_runtime, b)
+			fill : std.u1 = std.logical_and(negative, moved)
+			filled : block = {
+				all_ones : T = std.bitwise_not(zero_runtime)
+				vacated : T = std.shift_left(all_ones, kept)
+				with_sign : T = std.bitwise_or(shifted, vacated)
+				_ : _ = std.block_result(with_sign)
+			}
+			unfilled : block = { _ : _ = std.block_result(shifted) ; }
+			answer : T = std.if(fill, filled, unfilled)
+			_ : _ = std.block_result(answer)
+		}
+		out : T = std.if(is_signed, arithmetic, logical)
+		_ : _ = std.return(out)
+	}
+	shift_right_symbol : std.c_string = "std.shift_right"
+	_ : _ = std.functions.set_symbol_name(shift_right, shift_right_symbol)
+
+	// Restoring division of an unsigned `dividend` by `divisor`, one bit per step from the top.
+	// `want_remainder` is comptime, so each specialization keeps one answer (rule C-Specialize).
+	long_division_t : type = (U: deduced type, dividend: U, divisor: U, want_remainder: std.u1) -> U
+	long_division : long_division_t = {
+		Cell : type = std.types.pointer(U)
+		zero : U = 0
+		zero_runtime : U = std.comptime_to_runtime(zero)
+		bits : std.pointer_sized = std.types.size_bits(U)
+		one_bit : std.pointer_sized = 1
+		top : std.pointer_sized = std.subtract(bits, one_bit)
+		top_index : U = std.numbers.truncate(top)
+		unit : U = 1
+		top_bit : U = std.shift_left(unit, top_index)
+		top_bit_runtime : U = std.comptime_to_runtime(top_bit)
+		bits_runtime : std.pointer_sized = std.comptime_to_runtime(bits)
+		none : std.pointer_sized = 0
+		none_runtime : std.pointer_sized = std.comptime_to_runtime(none)
+		one_runtime : std.pointer_sized = std.comptime_to_runtime(one_bit)
+		rest_cell : Cell = std.stack.allocate(U)
+		remainder_cell : Cell = std.stack.allocate(U)
+		quotient_cell : Cell = std.stack.allocate(U)
+		count_cell : std.pointer_sized_pointer = std.stack.allocate(std.pointer_sized)
+		_ : U = std.pointers.store(rest_cell, dividend)
+		_ : U = std.pointers.store(remainder_cell, zero_runtime)
+		_ : U = std.pointers.store(quotient_cell, zero_runtime)
+		_ : std.pointer_sized = std.pointers.store(count_cell, bits_runtime)
+		more : block = {
+			count : std.pointer_sized = std.pointers.load(count_cell)
+			going : std.u1 = std.is_less(none_runtime, count)
+			_ : _ = std.block_result(going)
+		}
+		// A remainder with its top bit set doubles past the width, but then it certainly fits the divisor, and the wrapped subtraction is still exact.
+		step : block = {
+			rest : U = std.pointers.load(rest_cell)
+			high : std.u1 = std.is_less_equal(top_bit_runtime, rest)
+			high_wide : U = std.numbers.widen(high)
+			next_rest : U = std.add(rest, rest)
+			_ : U = std.pointers.store(rest_cell, next_rest)
+			remainder : U = std.pointers.load(remainder_cell)
+			carries : std.u1 = std.is_less_equal(top_bit_runtime, remainder)
+			doubled : U = std.add(remainder, remainder)
+			shifted_in : U = std.add(doubled, high_wide)
+			large_enough : std.u1 = std.is_less_equal(divisor, shifted_in)
+			fits : std.u1 = std.logical_or(carries, large_enough)
+			fits_wide : U = std.numbers.widen(fits)
+			all_or_none : U = std.negate(fits_wide)
+			taken : U = std.bitwise_and(divisor, all_or_none)
+			reduced : U = std.subtract(shifted_in, taken)
+			_ : U = std.pointers.store(remainder_cell, reduced)
+			quotient : U = std.pointers.load(quotient_cell)
+			quotient_doubled : U = std.add(quotient, quotient)
+			next_quotient : U = std.add(quotient_doubled, fits_wide)
+			_ : U = std.pointers.store(quotient_cell, next_quotient)
+			count : std.pointer_sized = std.pointers.load(count_cell)
+			left : std.pointer_sized = std.subtract(count, one_runtime)
+			_ : std.pointer_sized = std.pointers.store(count_cell, left)
+			_ : _ = std.block_result(std.nothing)
+		}
+		_ : void = std.while(more, step)
+		remainder_answer : block = {
+			remainder : U = std.pointers.load(remainder_cell)
+			_ : _ = std.block_result(remainder)
+		}
+		quotient_answer : block = {
+			quotient : U = std.pointers.load(quotient_cell)
+			_ : _ = std.block_result(quotient)
+		}
+		out : U = std.if(want_remainder, remainder_answer, quotient_answer)
+		_ : _ = std.return(out)
+	}
+
+	// `v` when `negative` is 0, and `-v` when it is 1: with `s` all ones or none, `(v xor s) - s` is the two's complement negation or `v` itself.
+	apply_sign_t : type = (T: deduced type, v: T, negative: std.u1) -> T
+	apply_sign : apply_sign_t = {
+		negative_wide : T = std.numbers.widen(negative)
+		all_or_none : T = std.negate(negative_wide)
+		flipped : T = std.bitwise_xor(v, all_or_none)
+		out : T = std.subtract(flipped, all_or_none)
+		_ : _ = std.return(out)
+	}
+
+	// Division truncating toward zero, or its remainder, which takes the dividend's sign (rule N-Wrap): long division on the magnitudes, then the sign.
+	// The magnitude of the most negative value is itself, which read as the unsigned twin is the right magnitude, so it needs no special case.
+	integer_division_t : type = (T: deduced type, a: T, b: T, want_remainder: std.u1) -> T
+	integer_division : integer_division_t = {
+		is_signed : std.u1 = std.numbers.is_signed(T)
+		unsigned : block = {
+			answer : T = long_division(a, b, want_remainder)
+			_ : _ = std.block_result(answer)
+		}
+		signed : block = {
+			U : type = unsigned_twin(T)
+			a_negative : std.u1 = std.is_negative(a)
+			b_negative : std.u1 = std.is_negative(b)
+			a_magnitude : T = apply_sign(a, a_negative)
+			b_magnitude : T = apply_sign(b, b_negative)
+			a_bits : U = std.reinterpret_bits(a_magnitude)
+			b_bits : U = std.reinterpret_bits(b_magnitude)
+			magnitude_bits : U = long_division(a_bits, b_bits, want_remainder)
+			magnitude : T = std.reinterpret_bits(magnitude_bits)
+			remainder_sign : block = { _ : _ = std.block_result(a_negative) ; }
+			quotient_sign : block = {
+				differ : std.u1 = std.is_not_equal(a_negative, b_negative)
+				_ : _ = std.block_result(differ)
+			}
+			negative : std.u1 = std.if(want_remainder, remainder_sign, quotient_sign)
+			answer : T = apply_sign(magnitude, negative)
+			_ : _ = std.block_result(answer)
+		}
+		out : T = std.if(is_signed, signed, unsigned)
+		_ : _ = std.return(out)
+	}
+
+	// `std.integer` (rule N-Kind), except its primitives `add` and `is_less`; the comparisons take pointers as well, as unsigned addresses (rule N-Operand).
+	integer : namespace = {
+		// Neither is less than the other.
+		is_equal : compare_t = {
+			less : std.u1 = std.is_less(a, b)
+			greater : std.u1 = std.is_less(b, a)
+			ordered : std.u1 = std.logical_or(less, greater)
+			out : std.u1 = std.logical_not(ordered)
+			_ : _ = std.return(out)
+		}
+		is_equal_symbol : std.c_string = "std.integer.is_equal"
+		_ : _ = std.functions.set_symbol_name(is_equal, is_equal_symbol)
+
+		is_not_equal : compare_t = {
+			equal : std.u1 = std.is_equal(a, b)
+			out : std.u1 = std.logical_not(equal)
+			_ : _ = std.return(out)
+		}
+		is_not_equal_symbol : std.c_string = "std.integer.is_not_equal"
+		_ : _ = std.functions.set_symbol_name(is_not_equal, is_not_equal_symbol)
+
+		is_greater : compare_t = {
+			out : std.u1 = std.is_less(b, a)
+			_ : _ = std.return(out)
+		}
+		is_greater_symbol : std.c_string = "std.integer.is_greater"
+		_ : _ = std.functions.set_symbol_name(is_greater, is_greater_symbol)
+
+		is_less_equal : compare_t = {
+			greater : std.u1 = std.is_less(b, a)
+			out : std.u1 = std.logical_not(greater)
+			_ : _ = std.return(out)
+		}
+		is_less_equal_symbol : std.c_string = "std.integer.is_less_equal"
+		_ : _ = std.functions.set_symbol_name(is_less_equal, is_less_equal_symbol)
+
+		is_greater_equal : compare_t = {
+			out : std.u1 = std.is_less_equal(b, a)
+			_ : _ = std.return(out)
+		}
+		is_greater_equal_symbol : std.c_string = "std.integer.is_greater_equal"
+		_ : _ = std.functions.set_symbol_name(is_greater_equal, is_greater_equal_symbol)
+
+		// `a + -b`, which wraps as N-Wrap says.
+		subtract : binary_t = {
+			negated : T = std.negate(b)
+			out : T = std.add(a, negated)
+			_ : _ = std.return(out)
+		}
+		subtract_symbol : std.c_string = "std.integer.subtract"
+		_ : _ = std.functions.set_symbol_name(subtract, subtract_symbol)
+
+		// Adds `a`, doubled at each step, for each set bit of `b`; the low bits of a product do not depend on signedness, so it wraps as N-Wrap says.
+		multiply : binary_t = {
+			Cell : type = std.types.pointer(T)
+			zero : T = 0
+			zero_runtime : T = std.comptime_to_runtime(zero)
+			one : T = 1
+			one_runtime : T = std.comptime_to_runtime(one)
+			product_cell : Cell = std.stack.allocate(T)
+			addend_cell : Cell = std.stack.allocate(T)
+			mask_cell : Cell = std.stack.allocate(T)
+			_ : T = std.pointers.store(product_cell, zero_runtime)
+			_ : T = std.pointers.store(addend_cell, a)
+			_ : T = std.pointers.store(mask_cell, one_runtime)
+			// The mask doubles past the top bit to zero, which ends the loop after one step per bit.
+			more : block = {
+				mask : T = std.pointers.load(mask_cell)
+				going : std.u1 = std.is_not_equal(mask, zero_runtime)
+				_ : _ = std.block_result(going)
+			}
+			add_bit : block = {
+				mask : T = std.pointers.load(mask_cell)
+				bit : T = std.bitwise_and(b, mask)
+				set : std.u1 = std.is_not_equal(bit, zero_runtime)
+				set_wide : T = std.numbers.widen(set)
+				all_or_none : T = std.negate(set_wide)
+				addend : T = std.pointers.load(addend_cell)
+				contribution : T = std.bitwise_and(addend, all_or_none)
+				product : T = std.pointers.load(product_cell)
+				sum : T = std.add(product, contribution)
+				_ : T = std.pointers.store(product_cell, sum)
+				doubled : T = std.add(addend, addend)
+				_ : T = std.pointers.store(addend_cell, doubled)
+				next_mask : T = std.add(mask, mask)
+				_ : T = std.pointers.store(mask_cell, next_mask)
+				_ : _ = std.block_result(std.nothing)
+			}
+			_ : void = std.while(more, add_bit)
+			out : T = std.pointers.load(product_cell)
+			_ : _ = std.return(out)
+		}
+		multiply_symbol : std.c_string = "std.integer.multiply"
+		_ : _ = std.functions.set_symbol_name(multiply, multiply_symbol)
+
+		divide : binary_t = {
+			quotient : std.u1 = 0
+			out : T = integer_division(a, b, quotient)
+			_ : _ = std.return(out)
+		}
+		divide_symbol : std.c_string = "std.integer.divide"
+		_ : _ = std.functions.set_symbol_name(divide, divide_symbol)
+
+		remainder : binary_t = {
+			wanted : std.u1 = 1
+			out : T = integer_division(a, b, wanted)
+			_ : _ = std.return(out)
+		}
+		remainder_symbol : std.c_string = "std.integer.remainder"
+		_ : _ = std.functions.set_symbol_name(remainder, remainder_symbol)
+
+		// Two's complement: the bits flipped, plus one (rule N-Wrap).
+		negate : unary_t = {
+			flipped : T = std.bitwise_not(v)
+			one : T = 1
+			one_runtime : T = std.comptime_to_runtime(one)
+			out : T = std.add(flipped, one_runtime)
+			_ : _ = std.return(out)
+		}
+		negate_symbol : std.c_string = "std.integer.negate"
+		_ : _ = std.functions.set_symbol_name(negate, negate_symbol)
+
+		max : binary_t = {
+			b_larger : std.u1 = std.is_less(a, b)
+			out : T = select(b_larger, b, a)
+			_ : _ = std.return(out)
+		}
+		max_symbol : std.c_string = "std.integer.max"
+		_ : _ = std.functions.set_symbol_name(max, max_symbol)
+
+		min : binary_t = {
+			b_smaller : std.u1 = std.is_less(b, a)
+			out : T = select(b_smaller, b, a)
+			_ : _ = std.return(out)
+		}
+		min_symbol : std.c_string = "std.integer.min"
+		_ : _ = std.functions.set_symbol_name(min, min_symbol)
+
+		// Always 0 on an unsigned type (rule N-Wrap).
+		is_negative : test_t = {
+			is_unsigned : std.u1 = std.numbers.is_unsigned(T)
+			never : block = {
+				no : std.u1 = 0
+				no_runtime : std.u1 = std.comptime_to_runtime(no)
+				_ : _ = std.block_result(no_runtime)
+			}
+			compared : block = {
+				zero : T = 0
+				zero_runtime : T = std.comptime_to_runtime(zero)
+				below : std.u1 = std.is_less(v, zero_runtime)
+				_ : _ = std.block_result(below)
+			}
+			out : std.u1 = std.if(is_unsigned, never, compared)
+			_ : _ = std.return(out)
+		}
+		is_negative_symbol : std.c_string = "std.integer.is_negative"
+		_ : _ = std.functions.set_symbol_name(is_negative, is_negative_symbol)
+
+		is_positive : test_t = {
+			zero : T = 0
+			zero_runtime : T = std.comptime_to_runtime(zero)
+			out : std.u1 = std.is_less(zero_runtime, v)
+			_ : _ = std.return(out)
+		}
+		is_positive_symbol : std.c_string = "std.integer.is_positive"
+		_ : _ = std.functions.set_symbol_name(is_positive, is_positive_symbol)
+	}
+
+	// The width of the exponent field of a float as wide as `U`; only the two widths a machine can provide have one (rule T-Optional).
+	format_width_t : type = (U: type) -> std.pointer_sized
+	_ : type = std.types.always_comptime(format_width_t)
+	exponent_width : format_width_t = {
+		bits : std.pointer_sized = std.types.size_bits(U)
+		thirty_two : std.pointer_sized = 32
+		sixty_four : std.pointer_sized = 64
+		is_single : std.u1 = std.is_equal(bits, thirty_two)
+		is_double : std.u1 = std.is_equal(bits, sixty_four)
+		known : std.u1 = std.logical_or(is_single, is_double)
+		message : std.c_string = "a software float is binary32 or binary64, the float types a machine can provide (N-Float, T-Optional)"
+		_ : void = std.diagnostics.assert(known, message)
+		single : block = {
+			eight : std.pointer_sized = 8
+			_ : _ = std.block_result(eight)
+		}
+		double : block = {
+			eleven : std.pointer_sized = 11
+			_ : _ = std.block_result(eleven)
+		}
+		out : std.pointer_sized = std.if(is_single, single, double)
+		_ : _ = std.return(out)
+	}
+
+	fraction_width : format_width_t = {
+		bits : std.pointer_sized = std.types.size_bits(U)
+		exponent : std.pointer_sized = exponent_width(U)
+		one : std.pointer_sized = 1
+		above_fraction : std.pointer_sized = std.add(exponent, one)
+		out : std.pointer_sized = std.subtract(bits, above_fraction)
+		_ : _ = std.return(out)
+	}
+
+	// The bits below the rounding point while an operation runs: a working significand has its top bit at `width - 2`, one below where a carry lands.
+	guard_width : format_width_t = {
+		exponent : std.pointer_sized = exponent_width(U)
+		one : std.pointer_sized = 1
+		out : std.pointer_sized = std.subtract(exponent, one)
+		_ : _ = std.return(out)
+	}
+
+	bias_of : format_width_t = {
+		exponent : std.pointer_sized = exponent_width(U)
+		one : std.pointer_sized = 1
+		top : std.pointer_sized = std.subtract(exponent, one)
+		power : std.pointer_sized = std.shift_left(one, top)
+		out : std.pointer_sized = std.subtract(power, one)
+		_ : _ = std.return(out)
+	}
+
+	resize_t : type = (Tout: deduced type, Tin: deduced type, v: Tin) -> Tout
+
+	// `v` at the width of the destination's type: widened when that is at least as wide, truncated when it is narrower (rule N-Convert).
+	// A comptime `v` folds, so it also makes a comptime constant of any width from a `std.pointer_sized`.
+	resize : resize_t = {
+		out_bits : std.pointer_sized = std.types.size_bits(Tout)
+		in_bits : std.pointer_sized = std.types.size_bits(Tin)
+		narrower : std.u1 = std.is_less(out_bits, in_bits)
+		truncated : block = {
+			kept : Tout = std.numbers.truncate(v)
+			_ : _ = std.block_result(kept)
+		}
+		widened : block = {
+			extended : Tout = std.numbers.widen(v)
+			_ : _ = std.block_result(extended)
+		}
+		out : Tout = std.if(narrower, truncated, widened)
+		_ : _ = std.return(out)
+	}
+
+	// Constants of the format as wide as `U`, as bits of `U`.
+	format_bits_t : type = (U: type) -> U
+	_ : type = std.types.always_comptime(format_bits_t)
+	top_index : format_bits_t = {
+		bits : std.pointer_sized = std.types.size_bits(U)
+		one : std.pointer_sized = 1
+		top : std.pointer_sized = std.subtract(bits, one)
+		out : U = resize(top)
+		_ : _ = std.return(out)
+	}
+
+	// The sign bit of a float, and the top bit of an integer.
+	top_bit : format_bits_t = {
+		index : U = top_index(U)
+		unit : U = 1
+		out : U = std.shift_left(unit, index)
+		_ : _ = std.return(out)
+	}
+
+	fraction_index : format_bits_t = {
+		fraction : std.pointer_sized = fraction_width(U)
+		out : U = resize(fraction)
+		_ : _ = std.return(out)
+	}
+
+	guard_index : format_bits_t = {
+		guard : std.pointer_sized = guard_width(U)
+		out : U = resize(guard)
+		_ : _ = std.return(out)
+	}
+
+	// The bit just above the fraction, which a normal float's significand has and its bits leave out.
+	implicit_bit : format_bits_t = {
+		index : U = fraction_index(U)
+		unit : U = 1
+		out : U = std.shift_left(unit, index)
+		_ : _ = std.return(out)
+	}
+
+	fraction_mask : format_bits_t = {
+		implicit : U = implicit_bit(U)
+		one : U = 1
+		out : U = std.subtract(implicit, one)
+		_ : _ = std.return(out)
+	}
+
+	// Every exponent bit set, which is also the bits of positive infinity.
+	exponent_mask : format_bits_t = {
+		sign : U = top_bit(U)
+		implicit : U = implicit_bit(U)
+		out : U = std.subtract(sign, implicit)
+		_ : _ = std.return(out)
+	}
+
+	// The top fraction bit, which marks a NaN quiet.
+	quiet_bit : format_bits_t = {
+		implicit : U = implicit_bit(U)
+		one : U = 1
+		out : U = std.shift_right(implicit, one)
+		_ : _ = std.return(out)
+	}
+
+	// The NaN an invalid operation gives; N-Float fixes no payload, so any NaN would do.
+	default_nan : format_bits_t = {
+		exponent : U = exponent_mask(U)
+		quiet : U = quiet_bit(U)
+		out : U = std.bitwise_or(exponent, quiet)
+		_ : _ = std.return(out)
+	}
+
+	// The weight of half a unit in the last place, among the guard bits of a working significand.
+	round_half : format_bits_t = {
+		guard : std.pointer_sized = guard_width(U)
+		one : std.pointer_sized = 1
+		below : std.pointer_sized = std.subtract(guard, one)
+		index : U = resize(below)
+		unit : U = 1
+		out : U = std.shift_left(unit, index)
+		_ : _ = std.return(out)
+	}
+
+	bias_bits : format_bits_t = {
+		bias : std.pointer_sized = bias_of(U)
+		out : U = resize(bias)
+		_ : _ = std.return(out)
+	}
+
+	sticky_t : type = (U: deduced type, v: U, count: U) -> U
+
+	// `v` shifted right by `count`, which may reach the width, with 1 in the low bit when a set bit was shifted out: rounding needs only whether any was.
+	shift_right_sticky : sticky_t = {
+		zero : U = 0
+		zero_runtime : U = std.comptime_to_runtime(zero)
+		one : U = 1
+		one_runtime : U = std.comptime_to_runtime(one)
+		bits : std.pointer_sized = std.types.size_bits(U)
+		width : U = resize(bits)
+		width_runtime : U = std.comptime_to_runtime(width)
+		within : std.u1 = std.is_less(count, width_runtime)
+		partial : block = {
+			reach : U = std.shift_left(one_runtime, count)
+			below : U = std.subtract(reach, one_runtime)
+			lost : U = std.bitwise_and(v, below)
+			kept : U = std.shift_right(v, count)
+			lost_any : std.u1 = std.is_not_equal(lost, zero_runtime)
+			lost_wide : U = std.numbers.widen(lost_any)
+			shifted : U = std.bitwise_or(kept, lost_wide)
+			_ : _ = std.block_result(shifted)
+		}
+		complete : block = {
+			any : std.u1 = std.is_not_equal(v, zero_runtime)
+			any_wide : U = std.numbers.widen(any)
+			_ : _ = std.block_result(any_wide)
+		}
+		out : U = std.if(within, partial, complete)
+		_ : _ = std.return(out)
+	}
+
+	bits_unary_t : type = (U: deduced type, x: U) -> U
+
+	// The zero bits above the highest set bit of `x`; `x` must not be 0, or the count never ends.
+	leading_zeros : bits_unary_t = {
+		Cell : type = std.types.pointer(U)
+		zero : U = 0
+		zero_runtime : U = std.comptime_to_runtime(zero)
+		one : U = 1
+		one_runtime : U = std.comptime_to_runtime(one)
+		top : U = top_bit(U)
+		top_runtime : U = std.comptime_to_runtime(top)
+		value_cell : Cell = std.stack.allocate(U)
+		count_cell : Cell = std.stack.allocate(U)
+		_ : U = std.pointers.store(value_cell, x)
+		_ : U = std.pointers.store(count_cell, zero_runtime)
+		more : block = {
+			value : U = std.pointers.load(value_cell)
+			masked : U = std.bitwise_and(value, top_runtime)
+			clear : std.u1 = std.is_equal(masked, zero_runtime)
+			_ : _ = std.block_result(clear)
+		}
+		step : block = {
+			value : U = std.pointers.load(value_cell)
+			doubled : U = std.add(value, value)
+			_ : U = std.pointers.store(value_cell, doubled)
+			count : U = std.pointers.load(count_cell)
+			counted : U = std.add(count, one_runtime)
+			_ : U = std.pointers.store(count_cell, counted)
+			_ : _ = std.block_result(std.nothing)
+		}
+		_ : void = std.while(more, step)
+		out : U = std.pointers.load(count_cell)
+		_ : _ = std.return(out)
+	}
+
+	pack_t : type = (U: deduced type, sign: U, d: U, sig: U) -> U
+
+	// Rounds away the guard bits of `sig`, to nearest, ties to even, and adds in the sign and the field `d`: a carry out of the significand raises the field, as it should.
+	pack_rounded : pack_t = {
+		half : U = round_half(U)
+		half_runtime : U = std.comptime_to_runtime(half)
+		low : U = std.add(half, half)
+		one : U = 1
+		low_mask : U = std.subtract(low, one)
+		low_mask_runtime : U = std.comptime_to_runtime(low_mask)
+		guard : U = guard_index(U)
+		guard_runtime : U = std.comptime_to_runtime(guard)
+		fraction : U = fraction_index(U)
+		fraction_runtime : U = std.comptime_to_runtime(fraction)
+		top : U = top_index(U)
+		top_runtime : U = std.comptime_to_runtime(top)
+		round_bits : U = std.bitwise_and(sig, low_mask_runtime)
+		raised : U = std.add(sig, half_runtime)
+		rounded : U = std.shift_right(raised, guard_runtime)
+		tie : std.u1 = std.is_equal(round_bits, half_runtime)
+		tie_wide : U = std.numbers.widen(tie)
+		keep : U = std.bitwise_not(tie_wide)
+		even : U = std.bitwise_and(rounded, keep)
+		sign_part : U = std.shift_left(sign, top_runtime)
+		exponent_part : U = std.shift_left(d, fraction_runtime)
+		signed_exponent : U = std.add(sign_part, exponent_part)
+		out : U = std.add(signed_exponent, even)
+		_ : _ = std.return(out)
+	}
+
+	// The float nearest `sig * 2^(d + 1 - bias - (width - 2))`, as its bits; `sig` is below `2^(width - 1)`, its top bit at `width - 2` unless `d` is negative.
+	// A negative `d` is a subnormal result, or one that rounds to zero; past the largest field the result is an infinity.
+	round_pack : pack_t = {
+		zero : U = 0
+		zero_runtime : U = std.comptime_to_runtime(zero)
+		top : U = top_bit(U)
+		top_runtime : U = std.comptime_to_runtime(top)
+		negative : std.u1 = std.is_less_equal(top_runtime, d)
+		subnormal : block = {
+			distance : U = std.subtract(zero_runtime, d)
+			shifted : U = shift_right_sticky(sig, distance)
+			packed : U = pack_rounded(sign, zero_runtime, shifted)
+			_ : _ = std.block_result(packed)
+		}
+		normal : block = {
+			exponent : std.pointer_sized = exponent_width(U)
+			unit : std.pointer_sized = 1
+			fields : std.pointer_sized = std.shift_left(unit, exponent)
+			three : std.pointer_sized = 3
+			largest : std.pointer_sized = std.subtract(fields, three)
+			edge : U = resize(largest)
+			edge_runtime : U = std.comptime_to_runtime(edge)
+			half : U = round_half(U)
+			half_runtime : U = std.comptime_to_runtime(half)
+			beyond : std.u1 = std.is_less(edge_runtime, d)
+			at_edge : std.u1 = std.is_equal(d, edge_runtime)
+			raised : U = std.add(sig, half_runtime)
+			carries : std.u1 = std.is_less_equal(top_runtime, raised)
+			edge_carry : std.u1 = std.logical_and(at_edge, carries)
+			overflows : std.u1 = std.logical_or(beyond, edge_carry)
+			infinite : block = {
+				index : U = top_index(U)
+				index_runtime : U = std.comptime_to_runtime(index)
+				infinity : U = exponent_mask(U)
+				infinity_runtime : U = std.comptime_to_runtime(infinity)
+				sign_part : U = std.shift_left(sign, index_runtime)
+				signed_infinity : U = std.bitwise_or(sign_part, infinity_runtime)
+				_ : _ = std.block_result(signed_infinity)
+			}
+			finite : block = {
+				packed : U = pack_rounded(sign, d, sig)
+				_ : _ = std.block_result(packed)
+			}
+			answer : U = std.if(overflows, infinite, finite)
+			_ : _ = std.block_result(answer)
+		}
+		out : U = std.if(negative, subnormal, normal)
+		_ : _ = std.return(out)
+	}
+
+	// `round_pack` for a `sig` that is not 0, with its top bit anywhere: it is moved to `width - 2` first, and `d` with it.
+	normalize_round_pack : pack_t = {
+		zero : U = 0
+		zero_runtime : U = std.comptime_to_runtime(zero)
+		one : U = 1
+		one_runtime : U = std.comptime_to_runtime(one)
+		zeros : U = leading_zeros(sig)
+		carried : std.u1 = std.is_equal(zeros, zero_runtime)
+		lower : block = {
+			raised : U = std.add(d, one_runtime)
+			halved : U = shift_right_sticky(sig, one_runtime)
+			packed : U = round_pack(sign, raised, halved)
+			_ : _ = std.block_result(packed)
+		}
+		raise : block = {
+			distance : U = std.subtract(zeros, one_runtime)
+			lowered : U = std.subtract(d, distance)
+			moved : U = std.shift_left(sig, distance)
+			packed : U = round_pack(sign, lowered, moved)
+			_ : _ = std.block_result(packed)
+		}
+		out : U = std.if(carried, lower, raise)
+		_ : _ = std.return(out)
+	}
+
+	select_t : type = (U: deduced type, condition: std.u1, chosen: U, otherwise: U) -> U
+
+	// `chosen` when `condition` is 1 and `otherwise` when it is 0, with no branch: both are already computed.
+	select : select_t = {
+		condition_wide : U = std.numbers.widen(condition)
+		all_or_none : U = std.negate(condition_wide)
+		differing : U = std.bitwise_xor(chosen, otherwise)
+		taken : U = std.bitwise_and(differing, all_or_none)
+		out : U = std.bitwise_xor(otherwise, taken)
+		_ : _ = std.return(out)
+	}
+
+	// The bits of `x` but its sign.
+	magnitude : bits_unary_t = {
+		top : U = top_bit(U)
+		top_runtime : U = std.comptime_to_runtime(top)
+		rest : U = std.bitwise_not(top_runtime)
+		out : U = std.bitwise_and(x, rest)
+		_ : _ = std.return(out)
+	}
+
+	// The sign of `x`, as 0 or 1.
+	sign_of : bits_unary_t = {
+		top : U = top_index(U)
+		top_runtime : U = std.comptime_to_runtime(top)
+		out : U = std.shift_right(x, top_runtime)
+		_ : _ = std.return(out)
+	}
+
+	// The biased exponent field of `x`.
+	field_of : bits_unary_t = {
+		exponent : U = exponent_mask(U)
+		exponent_runtime : U = std.comptime_to_runtime(exponent)
+		fraction : U = fraction_index(U)
+		fraction_runtime : U = std.comptime_to_runtime(fraction)
+		masked : U = std.bitwise_and(x, exponent_runtime)
+		out : U = std.shift_right(masked, fraction_runtime)
+		_ : _ = std.return(out)
+	}
+
+	// The field that scales `x`'s significand: a subnormal's field is 0, but it scales like 1.
+	field_or_one : bits_unary_t = {
+		zero : U = 0
+		zero_runtime : U = std.comptime_to_runtime(zero)
+		field : U = field_of(x)
+		subnormal : std.u1 = std.is_equal(field, zero_runtime)
+		bump : U = std.numbers.widen(subnormal)
+		out : U = std.add(field, bump)
+		_ : _ = std.return(out)
+	}
+
+	// The fraction of `x` with the implicit bit when `x` is normal, its place unmoved.
+	raw_significand : bits_unary_t = {
+		zero : U = 0
+		zero_runtime : U = std.comptime_to_runtime(zero)
+		fraction : U = fraction_mask(U)
+		fraction_runtime : U = std.comptime_to_runtime(fraction)
+		index : U = fraction_index(U)
+		index_runtime : U = std.comptime_to_runtime(index)
+		fraction_bits : U = std.bitwise_and(x, fraction_runtime)
+		field : U = field_of(x)
+		normal : std.u1 = std.is_not_equal(field, zero_runtime)
+		normal_wide : U = std.numbers.widen(normal)
+		implicit : U = std.shift_left(normal_wide, index_runtime)
+		out : U = std.bitwise_or(fraction_bits, implicit)
+		_ : _ = std.return(out)
+	}
+
+	// `raw_significand` raised by the guard bits, so its top bit is at `width - 2` when `x` is normal: the form `round_pack` takes.
+	aligned_significand : bits_unary_t = {
+		guard : U = guard_index(U)
+		guard_runtime : U = std.comptime_to_runtime(guard)
+		raw : U = raw_significand(x)
+		out : U = std.shift_left(raw, guard_runtime)
+		_ : _ = std.return(out)
+	}
+
+	// How far a subnormal `x`'s fraction moves up to reach the implicit bit, or 0 for a normal `x`; `x` is finite and not 0.
+	subnormal_shift : bits_unary_t = {
+		zero : U = 0
+		zero_runtime : U = std.comptime_to_runtime(zero)
+		field : U = field_of(x)
+		subnormal : std.u1 = std.is_equal(field, zero_runtime)
+		moved : block = {
+			fraction : U = fraction_mask(U)
+			fraction_runtime : U = std.comptime_to_runtime(fraction)
+			exponent_bits : std.pointer_sized = exponent_width(U)
+			exponent : U = resize(exponent_bits)
+			exponent_runtime : U = std.comptime_to_runtime(exponent)
+			fraction_bits : U = std.bitwise_and(x, fraction_runtime)
+			zeros : U = leading_zeros(fraction_bits)
+			distance : U = std.subtract(zeros, exponent_runtime)
+			_ : _ = std.block_result(distance)
+		}
+		unmoved : block = { _ : _ = std.block_result(zero_runtime) ; }
+		out : U = std.if(subnormal, moved, unmoved)
+		_ : _ = std.return(out)
+	}
+
+	// The significand of the finite nonzero `x` with its top bit at the implicit bit, a subnormal's moved up.
+	significand : bits_unary_t = {
+		raw : U = raw_significand(x)
+		distance : U = subnormal_shift(x)
+		out : U = std.shift_left(raw, distance)
+		_ : _ = std.return(out)
+	}
+
+	// The biased exponent `significand` is scaled by, below 1 for a subnormal.
+	exponent_of : bits_unary_t = {
+		scale : U = field_or_one(x)
+		distance : U = subnormal_shift(x)
+		out : U = std.subtract(scale, distance)
+		_ : _ = std.return(out)
+	}
+
+	// An exponent of all ones and a fraction that is not 0.
+	is_nan_bits : (U: deduced type, x: U) -> std.u1 = {
+		infinity : U = exponent_mask(U)
+		infinity_runtime : U = std.comptime_to_runtime(infinity)
+		size : U = magnitude(x)
+		out : std.u1 = std.is_less(infinity_runtime, size)
+		_ : _ = std.return(out)
+	}
+
+	bits_binary_t : type = (U: deduced type, a: U, b: U) -> U
+
+	// The first NaN operand, made quiet, as IEEE 754 recommends.
+	propagate_nan : bits_binary_t = {
+		quiet : U = quiet_bit(U)
+		quiet_runtime : U = std.comptime_to_runtime(quiet)
+		a_nan : std.u1 = is_nan_bits(a)
+		first : U = select(a_nan, a, b)
+		out : U = std.bitwise_or(first, quiet_runtime)
+		_ : _ = std.return(out)
+	}
+
+	// The sum of two finite floats: the smaller magnitude's significand is lined up under the larger's, keeping what it loses as a sticky bit, then added or subtracted.
+	add_finite : bits_binary_t = {
+		zero : U = 0
+		zero_runtime : U = std.comptime_to_runtime(zero)
+		one : U = 1
+		one_runtime : U = std.comptime_to_runtime(one)
+		top : U = top_index(U)
+		top_runtime : U = std.comptime_to_runtime(top)
+		a_size : U = magnitude(a)
+		b_size : U = magnitude(b)
+		swap : std.u1 = std.is_less(a_size, b_size)
+		big : U = select(swap, b, a)
+		small : U = select(swap, a, b)
+		big_sign : U = sign_of(big)
+		a_sign : U = sign_of(a)
+		b_sign : U = sign_of(b)
+		same_sign : std.u1 = std.is_equal(a_sign, b_sign)
+		big_sig : U = aligned_significand(big)
+		small_unaligned : U = aligned_significand(small)
+		big_scale : U = field_or_one(big)
+		small_scale : U = field_or_one(small)
+		distance : U = std.subtract(big_scale, small_scale)
+		small_sig : U = shift_right_sticky(small_unaligned, distance)
+		sum : U = std.add(big_sig, small_sig)
+		difference : U = std.subtract(big_sig, small_sig)
+		sig : U = select(same_sign, sum, difference)
+		cancelled : std.u1 = std.is_equal(sig, zero_runtime)
+		// An exact zero is +0 unless both operands were -0 (rule N-Float).
+		zero_result : block = {
+			zero_sign : U = select(same_sign, big_sign, zero_runtime)
+			signed_zero : U = std.shift_left(zero_sign, top_runtime)
+			_ : _ = std.block_result(signed_zero)
+		}
+		rounded : block = {
+			d : U = std.subtract(big_scale, one_runtime)
+			packed : U = normalize_round_pack(big_sign, d, sig)
+			_ : _ = std.block_result(packed)
+		}
+		out : U = std.if(cancelled, zero_result, rounded)
+		_ : _ = std.return(out)
+	}
+
+	add_bits : bits_binary_t = {
+		infinity : U = exponent_mask(U)
+		infinity_runtime : U = std.comptime_to_runtime(infinity)
+		nan : U = default_nan(U)
+		nan_runtime : U = std.comptime_to_runtime(nan)
+		a_size : U = magnitude(a)
+		b_size : U = magnitude(b)
+		a_nan : std.u1 = std.is_less(infinity_runtime, a_size)
+		b_nan : std.u1 = std.is_less(infinity_runtime, b_size)
+		either_nan : std.u1 = std.logical_or(a_nan, b_nan)
+		a_infinite : std.u1 = std.is_equal(a_size, infinity_runtime)
+		b_infinite : std.u1 = std.is_equal(b_size, infinity_runtime)
+		either_infinite : std.u1 = std.logical_or(a_infinite, b_infinite)
+		both_infinite : std.u1 = std.logical_and(a_infinite, b_infinite)
+		a_sign : U = sign_of(a)
+		b_sign : U = sign_of(b)
+		opposite : std.u1 = std.is_not_equal(a_sign, b_sign)
+		cancel : std.u1 = std.logical_and(both_infinite, opposite)
+		nan_result : U = propagate_nan(a, b)
+		infinite_result : U = select(a_infinite, a, b)
+		cancel_result : U = select(cancel, nan_runtime, infinite_result)
+		special_result : U = select(either_nan, nan_result, cancel_result)
+		special : std.u1 = std.logical_or(either_nan, either_infinite)
+		on_special : block = { _ : _ = std.block_result(special_result) ; }
+		on_finite : block = {
+			sum : U = add_finite(a, b)
+			_ : _ = std.block_result(sum)
+		}
+		out : U = std.if(special, on_special, on_finite)
+		_ : _ = std.return(out)
+	}
+
+	// The high half of the double-width product of `a` and `b`, from half-width pieces whose products fit, with 1 in its low bit when the low half is not 0.
+	multiply_high : bits_binary_t = {
+		zero : U = 0
+		zero_runtime : U = std.comptime_to_runtime(zero)
+		bits : std.pointer_sized = std.types.size_bits(U)
+		two : std.pointer_sized = 2
+		half_bits : std.pointer_sized = std.divide(bits, two)
+		half : U = resize(half_bits)
+		half_runtime : U = std.comptime_to_runtime(half)
+		unit : U = 1
+		reach : U = std.shift_left(unit, half)
+		low_mask : U = std.subtract(reach, unit)
+		low_mask_runtime : U = std.comptime_to_runtime(low_mask)
+		x_low : U = std.bitwise_and(a, low_mask_runtime)
+		x_high : U = std.shift_right(a, half_runtime)
+		y_low : U = std.bitwise_and(b, low_mask_runtime)
+		y_high : U = std.shift_right(b, half_runtime)
+		low_low : U = std.multiply(x_low, y_low)
+		low_high : U = std.multiply(x_low, y_high)
+		high_low : U = std.multiply(x_high, y_low)
+		high_high : U = std.multiply(x_high, y_high)
+		carry_in : U = std.shift_right(low_low, half_runtime)
+		low_high_low : U = std.bitwise_and(low_high, low_mask_runtime)
+		high_low_low : U = std.bitwise_and(high_low, low_mask_runtime)
+		carry_and_low_high : U = std.add(carry_in, low_high_low)
+		middle : U = std.add(carry_and_low_high, high_low_low)
+		middle_up : U = std.shift_left(middle, half_runtime)
+		low_low_low : U = std.bitwise_and(low_low, low_mask_runtime)
+		low : U = std.bitwise_or(middle_up, low_low_low)
+		low_high_high : U = std.shift_right(low_high, half_runtime)
+		high_low_high : U = std.shift_right(high_low, half_runtime)
+		middle_high : U = std.shift_right(middle, half_runtime)
+		high_partial : U = std.add(high_high, low_high_high)
+		high_partial_more : U = std.add(high_partial, high_low_high)
+		high : U = std.add(high_partial_more, middle_high)
+		inexact : std.u1 = std.is_not_equal(low, zero_runtime)
+		inexact_wide : U = std.numbers.widen(inexact)
+		out : U = std.bitwise_or(high, inexact_wide)
+		_ : _ = std.return(out)
+	}
+
+	signed_binary_t : type = (U: deduced type, a: U, b: U, sign: U) -> U
+
+	// The product of two finite nonzero floats, `sign` already chosen: significands normalized so the product loses nothing it needs to the low half.
+	multiply_finite : signed_binary_t = {
+		guard : U = guard_index(U)
+		guard_runtime : U = std.comptime_to_runtime(guard)
+		one : U = 1
+		one_runtime : U = std.comptime_to_runtime(one)
+		bias : U = bias_bits(U)
+		bias_runtime : U = std.comptime_to_runtime(bias)
+		a_normalized : U = significand(a)
+		b_normalized : U = significand(b)
+		a_sig : U = std.shift_left(a_normalized, guard_runtime)
+		b_up : U = std.shift_left(b_normalized, guard_runtime)
+		b_sig : U = std.shift_left(b_up, one_runtime)
+		a_exponent : U = exponent_of(a)
+		b_exponent : U = exponent_of(b)
+		total : U = std.add(a_exponent, b_exponent)
+		d : U = std.subtract(total, bias_runtime)
+		high : U = multiply_high(a_sig, b_sig)
+		out : U = normalize_round_pack(sign, d, high)
+		_ : _ = std.return(out)
+	}
+
+	multiply_bits : bits_binary_t = {
+		zero : U = 0
+		zero_runtime : U = std.comptime_to_runtime(zero)
+		infinity : U = exponent_mask(U)
+		infinity_runtime : U = std.comptime_to_runtime(infinity)
+		nan : U = default_nan(U)
+		nan_runtime : U = std.comptime_to_runtime(nan)
+		top : U = top_index(U)
+		top_runtime : U = std.comptime_to_runtime(top)
+		signs : U = std.bitwise_xor(a, b)
+		sign : U = sign_of(signs)
+		signed_zero : U = std.shift_left(sign, top_runtime)
+		signed_infinity : U = std.bitwise_or(signed_zero, infinity_runtime)
+		a_size : U = magnitude(a)
+		b_size : U = magnitude(b)
+		a_nan : std.u1 = std.is_less(infinity_runtime, a_size)
+		b_nan : std.u1 = std.is_less(infinity_runtime, b_size)
+		either_nan : std.u1 = std.logical_or(a_nan, b_nan)
+		a_infinite : std.u1 = std.is_equal(a_size, infinity_runtime)
+		b_infinite : std.u1 = std.is_equal(b_size, infinity_runtime)
+		either_infinite : std.u1 = std.logical_or(a_infinite, b_infinite)
+		a_zero : std.u1 = std.is_equal(a_size, zero_runtime)
+		b_zero : std.u1 = std.is_equal(b_size, zero_runtime)
+		either_zero : std.u1 = std.logical_or(a_zero, b_zero)
+		invalid : std.u1 = std.logical_and(either_infinite, either_zero)
+		nan_result : U = propagate_nan(a, b)
+		infinite_result : U = select(invalid, nan_runtime, signed_infinity)
+		extreme_result : U = select(either_infinite, infinite_result, signed_zero)
+		special_result : U = select(either_nan, nan_result, extreme_result)
+		extreme : std.u1 = std.logical_or(either_infinite, either_zero)
+		special : std.u1 = std.logical_or(either_nan, extreme)
+		on_special : block = { _ : _ = std.block_result(special_result) ; }
+		on_finite : block = {
+			product : U = multiply_finite(a, b, sign)
+			_ : _ = std.block_result(product)
+		}
+		out : U = std.if(special, on_special, on_finite)
+		_ : _ = std.return(out)
+	}
+
+	// `dividend / divisor` to `width - 1` bits by restoring division, with 1 in the low bit when inexact; `divisor <= dividend < 2 * divisor`.
+	quotient_bits : bits_binary_t = {
+		Cell : type = std.types.pointer(U)
+		zero : U = 0
+		zero_runtime : U = std.comptime_to_runtime(zero)
+		one : U = 1
+		one_runtime : U = std.comptime_to_runtime(one)
+		bits : std.pointer_sized = std.types.size_bits(U)
+		two : std.pointer_sized = 2
+		steps_bits : std.pointer_sized = std.subtract(bits, two)
+		steps : U = resize(steps_bits)
+		steps_runtime : U = std.comptime_to_runtime(steps)
+		rest_cell : Cell = std.stack.allocate(U)
+		quotient_cell : Cell = std.stack.allocate(U)
+		count_cell : Cell = std.stack.allocate(U)
+		first_rest : U = std.subtract(a, b)
+		_ : U = std.pointers.store(rest_cell, first_rest)
+		_ : U = std.pointers.store(quotient_cell, one_runtime)
+		_ : U = std.pointers.store(count_cell, steps_runtime)
+		more : block = {
+			count : U = std.pointers.load(count_cell)
+			going : std.u1 = std.is_not_equal(count, zero_runtime)
+			_ : _ = std.block_result(going)
+		}
+		step : block = {
+			rest : U = std.pointers.load(rest_cell)
+			doubled : U = std.add(rest, rest)
+			fits : std.u1 = std.is_less_equal(b, doubled)
+			fits_wide : U = std.numbers.widen(fits)
+			all_or_none : U = std.negate(fits_wide)
+			taken : U = std.bitwise_and(b, all_or_none)
+			reduced : U = std.subtract(doubled, taken)
+			_ : U = std.pointers.store(rest_cell, reduced)
+			quotient : U = std.pointers.load(quotient_cell)
+			quotient_doubled : U = std.add(quotient, quotient)
+			next_quotient : U = std.add(quotient_doubled, fits_wide)
+			_ : U = std.pointers.store(quotient_cell, next_quotient)
+			count : U = std.pointers.load(count_cell)
+			left : U = std.subtract(count, one_runtime)
+			_ : U = std.pointers.store(count_cell, left)
+			_ : _ = std.block_result(std.nothing)
+		}
+		_ : void = std.while(more, step)
+		final_rest : U = std.pointers.load(rest_cell)
+		final_quotient : U = std.pointers.load(quotient_cell)
+		inexact : std.u1 = std.is_not_equal(final_rest, zero_runtime)
+		inexact_wide : U = std.numbers.widen(inexact)
+		out : U = std.bitwise_or(final_quotient, inexact_wide)
+		_ : _ = std.return(out)
+	}
+
+	// The quotient of two finite nonzero floats, `sign` already chosen: a dividend significand below the divisor's is doubled first, so the quotient's top bit lands at `width - 2`.
+	divide_finite : signed_binary_t = {
+		one : U = 1
+		bias : U = bias_bits(U)
+		bias_below : U = std.subtract(bias, one)
+		bias_below_runtime : U = std.comptime_to_runtime(bias_below)
+		a_normalized : U = significand(a)
+		b_sig : U = significand(b)
+		smaller : std.u1 = std.is_less(a_normalized, b_sig)
+		smaller_wide : U = std.numbers.widen(smaller)
+		a_sig : U = std.shift_left(a_normalized, smaller_wide)
+		a_exponent : U = exponent_of(a)
+		b_exponent : U = exponent_of(b)
+		a_adjusted : U = std.subtract(a_exponent, smaller_wide)
+		difference : U = std.subtract(a_adjusted, b_exponent)
+		d : U = std.add(difference, bias_below_runtime)
+		quotient : U = quotient_bits(a_sig, b_sig)
+		out : U = normalize_round_pack(sign, d, quotient)
+		_ : _ = std.return(out)
+	}
+
+	divide_bits : bits_binary_t = {
+		zero : U = 0
+		zero_runtime : U = std.comptime_to_runtime(zero)
+		infinity : U = exponent_mask(U)
+		infinity_runtime : U = std.comptime_to_runtime(infinity)
+		nan : U = default_nan(U)
+		nan_runtime : U = std.comptime_to_runtime(nan)
+		top : U = top_index(U)
+		top_runtime : U = std.comptime_to_runtime(top)
+		signs : U = std.bitwise_xor(a, b)
+		sign : U = sign_of(signs)
+		signed_zero : U = std.shift_left(sign, top_runtime)
+		signed_infinity : U = std.bitwise_or(signed_zero, infinity_runtime)
+		a_size : U = magnitude(a)
+		b_size : U = magnitude(b)
+		a_nan : std.u1 = std.is_less(infinity_runtime, a_size)
+		b_nan : std.u1 = std.is_less(infinity_runtime, b_size)
+		either_nan : std.u1 = std.logical_or(a_nan, b_nan)
+		a_infinite : std.u1 = std.is_equal(a_size, infinity_runtime)
+		b_infinite : std.u1 = std.is_equal(b_size, infinity_runtime)
+		either_infinite : std.u1 = std.logical_or(a_infinite, b_infinite)
+		a_zero : std.u1 = std.is_equal(a_size, zero_runtime)
+		b_zero : std.u1 = std.is_equal(b_size, zero_runtime)
+		either_zero : std.u1 = std.logical_or(a_zero, b_zero)
+		// Later cases win: a zero dividend, then a zero divisor, an infinite divisor, an infinite dividend, and a NaN.
+		by_zero : U = select(a_zero, nan_runtime, signed_infinity)
+		zero_or_by_zero : U = select(b_zero, by_zero, signed_zero)
+		by_infinity : U = select(b_infinite, signed_zero, zero_or_by_zero)
+		infinite_dividend : U = select(b_infinite, nan_runtime, signed_infinity)
+		extreme_result : U = select(a_infinite, infinite_dividend, by_infinity)
+		nan_result : U = propagate_nan(a, b)
+		special_result : U = select(either_nan, nan_result, extreme_result)
+		extreme : std.u1 = std.logical_or(either_infinite, either_zero)
+		special : std.u1 = std.logical_or(either_nan, extreme)
+		on_special : block = { _ : _ = std.block_result(special_result) ; }
+		on_finite : block = {
+			quotient : U = divide_finite(a, b, sign)
+			_ : _ = std.block_result(quotient)
+		}
+		out : U = std.if(special, on_special, on_finite)
+		_ : _ = std.return(out)
+	}
+
+	// `a` less a whole number of `b`, truncated toward zero, which is always exact: one shift and subtraction per unit of exponent difference.
+	remainder_finite : bits_binary_t = {
+		Cell : type = std.types.pointer(U)
+		zero : U = 0
+		zero_runtime : U = std.comptime_to_runtime(zero)
+		one : U = 1
+		one_runtime : U = std.comptime_to_runtime(one)
+		guard : U = guard_index(U)
+		guard_runtime : U = std.comptime_to_runtime(guard)
+		top : U = top_index(U)
+		top_runtime : U = std.comptime_to_runtime(top)
+		a_sig : U = significand(a)
+		b_sig : U = significand(b)
+		a_exponent : U = exponent_of(a)
+		b_exponent : U = exponent_of(b)
+		steps : U = std.subtract(a_exponent, b_exponent)
+		rest_cell : Cell = std.stack.allocate(U)
+		count_cell : Cell = std.stack.allocate(U)
+		_ : U = std.pointers.store(rest_cell, a_sig)
+		_ : U = std.pointers.store(count_cell, steps)
+		more : block = {
+			count : U = std.pointers.load(count_cell)
+			going : std.u1 = std.is_not_equal(count, zero_runtime)
+			_ : _ = std.block_result(going)
+		}
+		step : block = {
+			rest : U = std.pointers.load(rest_cell)
+			fits : std.u1 = std.is_less_equal(b_sig, rest)
+			fits_wide : U = std.numbers.widen(fits)
+			all_or_none : U = std.negate(fits_wide)
+			taken : U = std.bitwise_and(b_sig, all_or_none)
+			reduced : U = std.subtract(rest, taken)
+			doubled : U = std.add(reduced, reduced)
+			_ : U = std.pointers.store(rest_cell, doubled)
+			count : U = std.pointers.load(count_cell)
+			left : U = std.subtract(count, one_runtime)
+			_ : U = std.pointers.store(count_cell, left)
+			_ : _ = std.block_result(std.nothing)
+		}
+		_ : void = std.while(more, step)
+		last_rest : U = std.pointers.load(rest_cell)
+		last_fits : std.u1 = std.is_less_equal(b_sig, last_rest)
+		last_fits_wide : U = std.numbers.widen(last_fits)
+		last_all_or_none : U = std.negate(last_fits_wide)
+		last_taken : U = std.bitwise_and(b_sig, last_all_or_none)
+		final : U = std.subtract(last_rest, last_taken)
+		sign : U = sign_of(a)
+		vanished : std.u1 = std.is_equal(final, zero_runtime)
+		zero_result : block = {
+			signed_zero : U = std.shift_left(sign, top_runtime)
+			_ : _ = std.block_result(signed_zero)
+		}
+		packed_result : block = {
+			d : U = std.subtract(b_exponent, one_runtime)
+			aligned : U = std.shift_left(final, guard_runtime)
+			packed : U = normalize_round_pack(sign, d, aligned)
+			_ : _ = std.block_result(packed)
+		}
+		out : U = std.if(vanished, zero_result, packed_result)
+		_ : _ = std.return(out)
+	}
+
+	remainder_bits : bits_binary_t = {
+		zero : U = 0
+		zero_runtime : U = std.comptime_to_runtime(zero)
+		infinity : U = exponent_mask(U)
+		infinity_runtime : U = std.comptime_to_runtime(infinity)
+		nan : U = default_nan(U)
+		nan_runtime : U = std.comptime_to_runtime(nan)
+		a_size : U = magnitude(a)
+		b_size : U = magnitude(b)
+		a_nan : std.u1 = std.is_less(infinity_runtime, a_size)
+		b_nan : std.u1 = std.is_less(infinity_runtime, b_size)
+		either_nan : std.u1 = std.logical_or(a_nan, b_nan)
+		a_infinite : std.u1 = std.is_equal(a_size, infinity_runtime)
+		b_zero : std.u1 = std.is_equal(b_size, zero_runtime)
+		invalid : std.u1 = std.logical_or(a_infinite, b_zero)
+		// A dividend smaller than the divisor is its own remainder, which covers a zero dividend and an infinite divisor.
+		kept : std.u1 = std.is_less(a_size, b_size)
+		nan_result : U = propagate_nan(a, b)
+		extreme_result : U = select(invalid, nan_runtime, a)
+		special_result : U = select(either_nan, nan_result, extreme_result)
+		extreme : std.u1 = std.logical_or(invalid, kept)
+		special : std.u1 = std.logical_or(either_nan, extreme)
+		on_special : block = { _ : _ = std.block_result(special_result) ; }
+		on_finite : block = {
+			rest : U = remainder_finite(a, b)
+			_ : _ = std.block_result(rest)
+		}
+		out : U = std.if(special, on_special, on_finite)
+		_ : _ = std.return(out)
+	}
+
+	// The square root of a finite positive float, one root bit per step from pairs of significand bits, with three bits below the result and a sticky bit, so it rounds correctly.
+	square_root_finite : bits_unary_t = {
+		Cell : type = std.types.pointer(U)
+		zero : U = 0
+		zero_runtime : U = std.comptime_to_runtime(zero)
+		one : U = 1
+		one_runtime : U = std.comptime_to_runtime(one)
+		two : U = 2
+		two_runtime : U = std.comptime_to_runtime(two)
+		width_bits : std.pointer_sized = std.types.size_bits(U)
+		fraction_bits : std.pointer_sized = fraction_width(U)
+		bias_word : std.pointer_sized = bias_of(U)
+		unit : std.pointer_sized = 1
+		three : std.pointer_sized = 3
+		// An odd fraction width can leave the top pair 0, so it takes one step more to keep three bits below the result.
+		odd_fraction : std.pointer_sized = std.bitwise_and(fraction_bits, unit)
+		above_fraction : std.pointer_sized = std.add(fraction_bits, three)
+		root_steps : std.pointer_sized = std.add(above_fraction, odd_fraction)
+		pairs : std.pointer_sized = std.shift_right(above_fraction, unit)
+		window_bits : std.pointer_sized = std.add(pairs, pairs)
+		window_reach : U = resize(window_bits)
+		unit_bits : U = 1
+		window_top : U = std.shift_left(unit_bits, window_reach)
+		window : U = std.subtract(window_top, unit_bits)
+		window_runtime : U = std.comptime_to_runtime(window)
+		two_word : std.pointer_sized = 2
+		pair_index_word : std.pointer_sized = std.subtract(window_bits, two_word)
+		pair_index : U = resize(pair_index_word)
+		pair_index_runtime : U = std.comptime_to_runtime(pair_index)
+		steps : U = resize(root_steps)
+		steps_runtime : U = std.comptime_to_runtime(steps)
+		scale_offset_word : std.pointer_sized = std.add(bias_word, fraction_bits)
+		scale_offset : U = resize(scale_offset_word)
+		scale_offset_runtime : U = std.comptime_to_runtime(scale_offset)
+		// `d` is half the even scale, plus `width - 3`, less `fraction + steps - pairs`, each part positive so it converts to any width.
+		raise_word : std.pointer_sized = std.subtract(width_bits, three)
+		raise : U = resize(raise_word)
+		raise_runtime : U = std.comptime_to_runtime(raise)
+		steps_and_fraction : std.pointer_sized = std.add(fraction_bits, root_steps)
+		lower_word : std.pointer_sized = std.subtract(steps_and_fraction, pairs)
+		lower : U = resize(lower_word)
+		lower_runtime : U = std.comptime_to_runtime(lower)
+		normalized : U = significand(x)
+		exponent : U = exponent_of(x)
+		scaled : U = std.add(exponent, scale_offset_runtime)
+		odd : U = std.bitwise_and(scaled, one_runtime)
+		sig : U = std.shift_left(normalized, odd)
+		even_scale : U = std.subtract(scaled, odd)
+		cursor_cell : Cell = std.stack.allocate(U)
+		root_cell : Cell = std.stack.allocate(U)
+		rest_cell : Cell = std.stack.allocate(U)
+		count_cell : Cell = std.stack.allocate(U)
+		_ : U = std.pointers.store(cursor_cell, sig)
+		_ : U = std.pointers.store(root_cell, zero_runtime)
+		_ : U = std.pointers.store(rest_cell, zero_runtime)
+		_ : U = std.pointers.store(count_cell, steps_runtime)
+		more : block = {
+			count : U = std.pointers.load(count_cell)
+			going : std.u1 = std.is_not_equal(count, zero_runtime)
+			_ : _ = std.block_result(going)
+		}
+		step : block = {
+			cursor : U = std.pointers.load(cursor_cell)
+			pair : U = std.shift_right(cursor, pair_index_runtime)
+			moved : U = std.shift_left(cursor, two_runtime)
+			next_cursor : U = std.bitwise_and(moved, window_runtime)
+			_ : U = std.pointers.store(cursor_cell, next_cursor)
+			rest : U = std.pointers.load(rest_cell)
+			rest_up : U = std.shift_left(rest, two_runtime)
+			with_pair : U = std.add(rest_up, pair)
+			root : U = std.pointers.load(root_cell)
+			root_up : U = std.shift_left(root, two_runtime)
+			trial : U = std.add(root_up, one_runtime)
+			fits : std.u1 = std.is_less_equal(trial, with_pair)
+			fits_wide : U = std.numbers.widen(fits)
+			all_or_none : U = std.negate(fits_wide)
+			taken : U = std.bitwise_and(trial, all_or_none)
+			next_rest : U = std.subtract(with_pair, taken)
+			_ : U = std.pointers.store(rest_cell, next_rest)
+			root_doubled : U = std.add(root, root)
+			next_root : U = std.add(root_doubled, fits_wide)
+			_ : U = std.pointers.store(root_cell, next_root)
+			count : U = std.pointers.load(count_cell)
+			left : U = std.subtract(count, one_runtime)
+			_ : U = std.pointers.store(count_cell, left)
+			_ : _ = std.block_result(std.nothing)
+		}
+		_ : void = std.while(more, step)
+		final_root : U = std.pointers.load(root_cell)
+		final_rest : U = std.pointers.load(rest_cell)
+		inexact : std.u1 = std.is_not_equal(final_rest, zero_runtime)
+		inexact_wide : U = std.numbers.widen(inexact)
+		jammed : U = std.bitwise_or(final_root, inexact_wide)
+		half_scale : U = std.shift_right(even_scale, one_runtime)
+		raised : U = std.add(half_scale, raise_runtime)
+		d : U = std.subtract(raised, lower_runtime)
+		out : U = normalize_round_pack(zero_runtime, d, jammed)
+		_ : _ = std.return(out)
+	}
+
+	square_root_bits : bits_unary_t = {
+		zero : U = 0
+		zero_runtime : U = std.comptime_to_runtime(zero)
+		infinity : U = exponent_mask(U)
+		infinity_runtime : U = std.comptime_to_runtime(infinity)
+		nan : U = default_nan(U)
+		nan_runtime : U = std.comptime_to_runtime(nan)
+		quiet : U = quiet_bit(U)
+		quiet_runtime : U = std.comptime_to_runtime(quiet)
+		top : U = top_bit(U)
+		top_runtime : U = std.comptime_to_runtime(top)
+		size : U = magnitude(x)
+		unordered : std.u1 = std.is_less(infinity_runtime, size)
+		vanishes : std.u1 = std.is_equal(size, zero_runtime)
+		positive_infinity : std.u1 = std.is_equal(x, infinity_runtime)
+		negative : std.u1 = std.is_less_equal(top_runtime, x)
+		// Later cases win: a negative operand, then a zero, which keeps its sign, and a NaN.
+		quieted : U = std.bitwise_or(x, quiet_runtime)
+		negative_result : U = select(negative, nan_runtime, x)
+		zero_result : U = select(vanishes, x, negative_result)
+		special_result : U = select(unordered, quieted, zero_result)
+		unordered_or_zero : std.u1 = std.logical_or(unordered, vanishes)
+		extreme : std.u1 = std.logical_or(positive_infinity, negative)
+		special : std.u1 = std.logical_or(unordered_or_zero, extreme)
+		on_special : block = { _ : _ = std.block_result(special_result) ; }
+		on_finite : block = {
+			root : U = square_root_finite(x)
+			_ : _ = std.block_result(root)
+		}
+		out : U = std.if(special, on_special, on_finite)
+		_ : _ = std.return(out)
+	}
+
+	bits_compare_t : type = (U: deduced type, a: U, b: U) -> std.u1
+
+	// Equal bits, or two zeros of either sign; a NaN is equal to nothing (rule N-Float).
+	is_equal_bits : bits_compare_t = {
+		zero : U = 0
+		zero_runtime : U = std.comptime_to_runtime(zero)
+		a_nan : std.u1 = is_nan_bits(a)
+		b_nan : std.u1 = is_nan_bits(b)
+		either_nan : std.u1 = std.logical_or(a_nan, b_nan)
+		ordered : std.u1 = std.logical_not(either_nan)
+		same : std.u1 = std.is_equal(a, b)
+		either : U = std.bitwise_or(a, b)
+		either_size : U = magnitude(either)
+		both_zero : std.u1 = std.is_equal(either_size, zero_runtime)
+		equal : std.u1 = std.logical_or(same, both_zero)
+		out : std.u1 = std.logical_and(ordered, equal)
+		_ : _ = std.return(out)
+	}
+
+	// Sign and magnitude order the bits: of opposite signs the negative is less unless both are zero; of one sign, the bits compare as integers, reversed when negative.
+	is_less_bits : bits_compare_t = {
+		zero : U = 0
+		zero_runtime : U = std.comptime_to_runtime(zero)
+		a_nan : std.u1 = is_nan_bits(a)
+		b_nan : std.u1 = is_nan_bits(b)
+		either_nan : std.u1 = std.logical_or(a_nan, b_nan)
+		ordered : std.u1 = std.logical_not(either_nan)
+		a_sign : U = sign_of(a)
+		b_sign : U = sign_of(b)
+		signs_differ : std.u1 = std.is_not_equal(a_sign, b_sign)
+		a_negative : std.u1 = std.is_not_equal(a_sign, zero_runtime)
+		either : U = std.bitwise_or(a, b)
+		either_size : U = magnitude(either)
+		not_both_zero : std.u1 = std.is_not_equal(either_size, zero_runtime)
+		across : std.u1 = std.logical_and(a_negative, not_both_zero)
+		distinct : std.u1 = std.is_not_equal(a, b)
+		below : std.u1 = std.is_less(a, b)
+		reversed : std.u1 = std.is_not_equal(a_negative, below)
+		within : std.u1 = std.logical_and(distinct, reversed)
+		answer : std.u1 = select(signs_differ, across, within)
+		out : std.u1 = std.logical_and(ordered, answer)
+		_ : _ = std.return(out)
+	}
+
+	// `std.float` (rule N-Kind): the six operations above in software, over the float's bits, and the rest over them.
+	float : namespace = {
+		add : binary_t = {
+			U : type = unsigned_twin(T)
+			a_bits : U = std.reinterpret_bits(a)
+			b_bits : U = std.reinterpret_bits(b)
+			sum : U = add_bits(a_bits, b_bits)
+			out : T = std.reinterpret_bits(sum)
+			_ : _ = std.return(out)
+		}
+		add_symbol : std.c_string = "std.float.add"
+		_ : _ = std.functions.set_symbol_name(add, add_symbol)
+
+		multiply : binary_t = {
+			U : type = unsigned_twin(T)
+			a_bits : U = std.reinterpret_bits(a)
+			b_bits : U = std.reinterpret_bits(b)
+			product : U = multiply_bits(a_bits, b_bits)
+			out : T = std.reinterpret_bits(product)
+			_ : _ = std.return(out)
+		}
+		multiply_symbol : std.c_string = "std.float.multiply"
+		_ : _ = std.functions.set_symbol_name(multiply, multiply_symbol)
+
+		divide : binary_t = {
+			U : type = unsigned_twin(T)
+			a_bits : U = std.reinterpret_bits(a)
+			b_bits : U = std.reinterpret_bits(b)
+			quotient : U = divide_bits(a_bits, b_bits)
+			out : T = std.reinterpret_bits(quotient)
+			_ : _ = std.return(out)
+		}
+		divide_symbol : std.c_string = "std.float.divide"
+		_ : _ = std.functions.set_symbol_name(divide, divide_symbol)
+
+		// Truncated toward zero, like C's `fmod` (rule N-Float).
+		remainder : binary_t = {
+			U : type = unsigned_twin(T)
+			a_bits : U = std.reinterpret_bits(a)
+			b_bits : U = std.reinterpret_bits(b)
+			rest : U = remainder_bits(a_bits, b_bits)
+			out : T = std.reinterpret_bits(rest)
+			_ : _ = std.return(out)
+		}
+		remainder_symbol : std.c_string = "std.float.remainder"
+		_ : _ = std.functions.set_symbol_name(remainder, remainder_symbol)
+
+		is_equal : compare_t = {
+			U : type = unsigned_twin(T)
+			a_bits : U = std.reinterpret_bits(a)
+			b_bits : U = std.reinterpret_bits(b)
+			out : std.u1 = is_equal_bits(a_bits, b_bits)
+			_ : _ = std.return(out)
+		}
+		is_equal_symbol : std.c_string = "std.float.is_equal"
+		_ : _ = std.functions.set_symbol_name(is_equal, is_equal_symbol)
+
+		is_less : compare_t = {
+			U : type = unsigned_twin(T)
+			a_bits : U = std.reinterpret_bits(a)
+			b_bits : U = std.reinterpret_bits(b)
+			out : std.u1 = is_less_bits(a_bits, b_bits)
+			_ : _ = std.return(out)
+		}
+		is_less_symbol : std.c_string = "std.float.is_less"
+		_ : _ = std.functions.set_symbol_name(is_less, is_less_symbol)
+
+		// A flip of the sign bit, which is exact for zeros and NaNs too.
+		negate : unary_t = {
+			U : type = unsigned_twin(T)
+			top : U = top_bit(U)
+			top_runtime : U = std.comptime_to_runtime(top)
+			pattern : U = std.reinterpret_bits(v)
+			flipped : U = std.bitwise_xor(pattern, top_runtime)
+			out : T = std.reinterpret_bits(flipped)
+			_ : _ = std.return(out)
+		}
+		negate_symbol : std.c_string = "std.float.negate"
+		_ : _ = std.functions.set_symbol_name(negate, negate_symbol)
+
+		// `a + -b`, which IEEE 754 defines subtraction to be.
+		subtract : binary_t = {
+			negated : T = std.negate(b)
+			out : T = std.add(a, negated)
+			_ : _ = std.return(out)
+		}
+		subtract_symbol : std.c_string = "std.float.subtract"
+		_ : _ = std.functions.set_symbol_name(subtract, subtract_symbol)
+
+		// A NaN operand makes it 1 (rule N-Float).
+		is_not_equal : compare_t = {
+			equal : std.u1 = std.is_equal(a, b)
+			out : std.u1 = std.logical_not(equal)
+			_ : _ = std.return(out)
+		}
+		is_not_equal_symbol : std.c_string = "std.float.is_not_equal"
+		_ : _ = std.functions.set_symbol_name(is_not_equal, is_not_equal_symbol)
+
+		is_greater : compare_t = {
+			out : std.u1 = std.is_less(b, a)
+			_ : _ = std.return(out)
+		}
+		is_greater_symbol : std.c_string = "std.float.is_greater"
+		_ : _ = std.functions.set_symbol_name(is_greater, is_greater_symbol)
+
+		// Less or equal, not "not greater": a NaN operand is neither (rule N-Float).
+		is_less_equal : compare_t = {
+			less : std.u1 = std.is_less(a, b)
+			equal : std.u1 = std.is_equal(a, b)
+			out : std.u1 = std.logical_or(less, equal)
+			_ : _ = std.return(out)
+		}
+		is_less_equal_symbol : std.c_string = "std.float.is_less_equal"
+		_ : _ = std.functions.set_symbol_name(is_less_equal, is_less_equal_symbol)
+
+		is_greater_equal : compare_t = {
+			out : std.u1 = std.is_less_equal(b, a)
+			_ : _ = std.return(out)
+		}
+		is_greater_equal_symbol : std.c_string = "std.float.is_greater_equal"
+		_ : _ = std.functions.set_symbol_name(is_greater_equal, is_greater_equal_symbol)
+
+		// The larger operand, or NaN when either is: "pick `b` when `a < b` or `b` is NaN" gives that for either position (rule N-Float).
+		max : binary_t = {
+			b_larger : std.u1 = std.is_less(a, b)
+			b_unordered : std.u1 = std.is_not_a_number(b)
+			pick_b : std.u1 = std.logical_or(b_larger, b_unordered)
+			take_b : block = { _ : _ = std.block_result(b) ; }
+			take_a : block = { _ : _ = std.block_result(a) ; }
+			out : T = std.if(pick_b, take_b, take_a)
+			_ : _ = std.return(out)
+		}
+		max_symbol : std.c_string = "std.float.max"
+		_ : _ = std.functions.set_symbol_name(max, max_symbol)
+
+		min : binary_t = {
+			b_smaller : std.u1 = std.is_less(b, a)
+			b_unordered : std.u1 = std.is_not_a_number(b)
+			pick_b : std.u1 = std.logical_or(b_smaller, b_unordered)
+			take_b : block = { _ : _ = std.block_result(b) ; }
+			take_a : block = { _ : _ = std.block_result(a) ; }
+			out : T = std.if(pick_b, take_b, take_a)
+			_ : _ = std.return(out)
+		}
+		min_symbol : std.c_string = "std.float.min"
+		_ : _ = std.functions.set_symbol_name(min, min_symbol)
+
+		// `-0.0` and NaN are not negative.
+		is_negative : test_t = {
+			zero : T = 0.0
+			zero_runtime : T = std.comptime_to_runtime(zero)
+			out : std.u1 = std.is_less(v, zero_runtime)
+			_ : _ = std.return(out)
+		}
+		is_negative_symbol : std.c_string = "std.float.is_negative"
+		_ : _ = std.functions.set_symbol_name(is_negative, is_negative_symbol)
+
+		is_positive : test_t = {
+			zero : T = 0.0
+			zero_runtime : T = std.comptime_to_runtime(zero)
+			out : std.u1 = std.is_less(zero_runtime, v)
+			_ : _ = std.return(out)
+		}
+		is_positive_symbol : std.c_string = "std.float.is_positive"
+		_ : _ = std.functions.set_symbol_name(is_positive, is_positive_symbol)
+	}
+
+	// Digit by digit, so correctly rounded (rule N-Float).
+	square_root : unary_t = {
+		U : type = unsigned_twin(T)
+		bits : U = std.reinterpret_bits(v)
+		root : U = square_root_bits(bits)
+		out : T = std.reinterpret_bits(root)
+		_ : _ = std.return(out)
+	}
+	square_root_symbol : std.c_string = "std.square_root"
+	_ : _ = std.functions.set_symbol_name(square_root, square_root_symbol)
+
+	convert_bits_t : type = (Uout: deduced type, Uin: deduced type, x: Uin) -> Uout
+
+	// Between float widths: the working significand moves to the other width, wider by a shift, narrower by a sticky shift, and the field is rebiased.
+	float_to_float_finite : convert_bits_t = {
+		in_bits : std.pointer_sized = std.types.size_bits(Uin)
+		out_bits : std.pointer_sized = std.types.size_bits(Uout)
+		in_bias_word : std.pointer_sized = bias_of(Uin)
+		out_bias_word : std.pointer_sized = bias_of(Uout)
+		unit : std.pointer_sized = 1
+		out_bias_below_word : std.pointer_sized = std.subtract(out_bias_word, unit)
+		in_sign : Uin = sign_of(x)
+		sign : Uout = resize(in_sign)
+		sig : Uin = aligned_significand(x)
+		scale : Uin = field_or_one(x)
+		widening : std.u1 = std.is_less(in_bits, out_bits)
+		wider : block = {
+			gap_word : std.pointer_sized = std.subtract(out_bits, in_bits)
+			gap : Uout = resize(gap_word)
+			gap_runtime : Uout = std.comptime_to_runtime(gap)
+			in_bias : Uout = resize(in_bias_word)
+			in_bias_runtime : Uout = std.comptime_to_runtime(in_bias)
+			out_bias_below : Uout = resize(out_bias_below_word)
+			out_bias_below_runtime : Uout = std.comptime_to_runtime(out_bias_below)
+			wide_sig : Uout = resize(sig)
+			out_sig : Uout = std.shift_left(wide_sig, gap_runtime)
+			wide_scale : Uout = resize(scale)
+			rebiased : Uout = std.add(wide_scale, out_bias_below_runtime)
+			d : Uout = std.subtract(rebiased, in_bias_runtime)
+			packed : Uout = normalize_round_pack(sign, d, out_sig)
+			_ : _ = std.block_result(packed)
+		}
+		narrower : block = {
+			gap_word : std.pointer_sized = std.subtract(in_bits, out_bits)
+			gap : Uin = resize(gap_word)
+			gap_runtime : Uin = std.comptime_to_runtime(gap)
+			in_bias : Uin = resize(in_bias_word)
+			in_bias_runtime : Uin = std.comptime_to_runtime(in_bias)
+			out_bias_below : Uin = resize(out_bias_below_word)
+			out_bias_below_runtime : Uin = std.comptime_to_runtime(out_bias_below)
+			narrowed : Uin = shift_right_sticky(sig, gap_runtime)
+			out_sig : Uout = resize(narrowed)
+			rebiased : Uin = std.add(scale, out_bias_below_runtime)
+			in_d : Uin = std.subtract(rebiased, in_bias_runtime)
+			d : Uout = resize(in_d)
+			packed : Uout = normalize_round_pack(sign, d, out_sig)
+			_ : _ = std.block_result(packed)
+		}
+		out : Uout = std.if(widening, wider, narrower)
+		_ : _ = std.return(out)
+	}
+
+	float_to_float_bits : convert_bits_t = {
+		zero : Uin = 0
+		zero_runtime : Uin = std.comptime_to_runtime(zero)
+		in_infinity : Uin = exponent_mask(Uin)
+		in_infinity_runtime : Uin = std.comptime_to_runtime(in_infinity)
+		out_infinity : Uout = exponent_mask(Uout)
+		out_infinity_runtime : Uout = std.comptime_to_runtime(out_infinity)
+		out_nan : Uout = default_nan(Uout)
+		out_nan_runtime : Uout = std.comptime_to_runtime(out_nan)
+		out_top : Uout = top_index(Uout)
+		out_top_runtime : Uout = std.comptime_to_runtime(out_top)
+		in_sign : Uin = sign_of(x)
+		sign : Uout = resize(in_sign)
+		signed_zero : Uout = std.shift_left(sign, out_top_runtime)
+		size : Uin = magnitude(x)
+		unordered : std.u1 = std.is_less(in_infinity_runtime, size)
+		infinite : std.u1 = std.is_equal(size, in_infinity_runtime)
+		vanishes : std.u1 = std.is_equal(size, zero_runtime)
+		signed_nan : Uout = std.bitwise_or(signed_zero, out_nan_runtime)
+		signed_infinity : Uout = std.bitwise_or(signed_zero, out_infinity_runtime)
+		extreme_result : Uout = select(infinite, signed_infinity, signed_zero)
+		special_result : Uout = select(unordered, signed_nan, extreme_result)
+		extreme : std.u1 = std.logical_or(infinite, vanishes)
+		special : std.u1 = std.logical_or(unordered, extreme)
+		on_special : block = { _ : _ = std.block_result(special_result) ; }
+		on_finite : block = {
+			converted : Uout = float_to_float_finite(x)
+			_ : _ = std.block_result(converted)
+		}
+		out : Uout = std.if(special, on_special, on_finite)
+		_ : _ = std.return(out)
+	}
+
+	from_integer_t : type = (Uout: deduced type, Uin: deduced type, x: Uin, negative: std.u1) -> Uout
+
+	// The float nearest the nonzero integer magnitude `x`, negated when `negative`: the magnitude's top bit is moved to the top, then the bits below the float's width are kept as sticky.
+	integer_to_float_bits : from_integer_t = {
+		in_bits : std.pointer_sized = std.types.size_bits(Uin)
+		out_bits : std.pointer_sized = std.types.size_bits(Uout)
+		unit : std.pointer_sized = 1
+		two : std.pointer_sized = 2
+		zeros : Uin = leading_zeros(x)
+		top : Uin = std.shift_left(x, zeros)
+		narrowing : std.u1 = std.is_less_equal(out_bits, in_bits)
+		narrowed : block = {
+			gap_word : std.pointer_sized = std.subtract(in_bits, out_bits)
+			gap_above : std.pointer_sized = std.add(gap_word, unit)
+			gap : Uin = resize(gap_above)
+			gap_runtime : Uin = std.comptime_to_runtime(gap)
+			shifted : Uin = shift_right_sticky(top, gap_runtime)
+			kept : Uout = resize(shifted)
+			_ : _ = std.block_result(kept)
+		}
+		widened : block = {
+			gap_word : std.pointer_sized = std.subtract(out_bits, in_bits)
+			gap_below : std.pointer_sized = std.subtract(gap_word, unit)
+			gap : Uout = resize(gap_below)
+			gap_runtime : Uout = std.comptime_to_runtime(gap)
+			wide : Uout = resize(top)
+			moved : Uout = std.shift_left(wide, gap_runtime)
+			_ : _ = std.block_result(moved)
+		}
+		sig : Uout = std.if(narrowing, narrowed, widened)
+		bias_word : std.pointer_sized = bias_of(Uout)
+		biased_width : std.pointer_sized = std.add(bias_word, in_bits)
+		base_word : std.pointer_sized = std.subtract(biased_width, two)
+		base : Uout = resize(base_word)
+		base_runtime : Uout = std.comptime_to_runtime(base)
+		out_zeros : Uout = resize(zeros)
+		d : Uout = std.subtract(base_runtime, out_zeros)
+		sign : Uout = std.numbers.widen(negative)
+		out : Uout = round_pack(sign, d, sig)
+		_ : _ = std.return(out)
+	}
+
+	// The magnitude of a float at least 1, truncated toward zero, at the integer's width; one that does not fit is undefined, so it is not checked (rule N-FloatConvert).
+	float_to_integer_bits : convert_bits_t = {
+		bias : Uin = bias_bits(Uin)
+		bias_runtime : Uin = std.comptime_to_runtime(bias)
+		fraction : Uin = fraction_index(Uin)
+		fraction_runtime : Uin = std.comptime_to_runtime(fraction)
+		implicit : Uin = implicit_bit(Uin)
+		implicit_runtime : Uin = std.comptime_to_runtime(implicit)
+		fraction_bits : Uin = fraction_mask(Uin)
+		fraction_bits_runtime : Uin = std.comptime_to_runtime(fraction_bits)
+		field : Uin = field_of(x)
+		unbiased : Uin = std.subtract(field, bias_runtime)
+		bare : Uin = std.bitwise_and(x, fraction_bits_runtime)
+		sig : Uin = std.bitwise_or(bare, implicit_runtime)
+		within_fraction : std.u1 = std.is_less_equal(unbiased, fraction_runtime)
+		lowered : block = {
+			distance : Uin = std.subtract(fraction_runtime, unbiased)
+			shifted : Uin = std.shift_right(sig, distance)
+			kept : Uout = resize(shifted)
+			_ : _ = std.block_result(kept)
+		}
+		raised : block = {
+			wide : Uout = resize(sig)
+			in_distance : Uin = std.subtract(unbiased, fraction_runtime)
+			distance : Uout = resize(in_distance)
+			moved : Uout = std.shift_left(wide, distance)
+			_ : _ = std.block_result(moved)
+		}
+		out : Uout = std.if(within_fraction, lowered, raised)
+		_ : _ = std.return(out)
+	}
+
+	numbers : namespace = {
+		// Integer to float, float to integer truncating toward zero, or between float widths, each over the unsigned twins (rule N-FloatConvert).
+		float_convert : (Tout: deduced type, Tin: deduced type, v: Tin) -> Tout = {
+			in_float : std.u1 = std.numbers.is_float(Tin)
+			out_float : std.u1 = std.numbers.is_float(Tout)
+			Uin : type = unsigned_twin(Tin)
+			Uout : type = unsigned_twin(Tout)
+			between_floats : std.u1 = std.logical_and(in_float, out_float)
+			floats : block = {
+				x : Uin = std.reinterpret_bits(v)
+				bits : Uout = float_to_float_bits(x)
+				converted : Tout = std.reinterpret_bits(bits)
+				_ : _ = std.block_result(converted)
+			}
+			from_integer : block = {
+				negative : std.u1 = std.is_negative(v)
+				size : Tin = apply_sign(v, negative)
+				x : Uin = std.reinterpret_bits(size)
+				zero : Uin = 0
+				zero_runtime : Uin = std.comptime_to_runtime(zero)
+				is_zero : std.u1 = std.is_equal(x, zero_runtime)
+				positive_zero : block = {
+					none : Uout = 0
+					none_runtime : Uout = std.comptime_to_runtime(none)
+					_ : _ = std.block_result(none_runtime)
+				}
+				nearest : block = {
+					rounded : Uout = integer_to_float_bits(x, negative)
+					_ : _ = std.block_result(rounded)
+				}
+				bits : Uout = std.if(is_zero, positive_zero, nearest)
+				converted : Tout = std.reinterpret_bits(bits)
+				_ : _ = std.block_result(converted)
+			}
+			to_integer : block = {
+				x : Uin = std.reinterpret_bits(v)
+				bias : Uin = bias_bits(Uin)
+				bias_runtime : Uin = std.comptime_to_runtime(bias)
+				field : Uin = field_of(x)
+				below_one : std.u1 = std.is_less(field, bias_runtime)
+				truncated_away : block = {
+					none : Uout = 0
+					none_runtime : Uout = std.comptime_to_runtime(none)
+					_ : _ = std.block_result(none_runtime)
+				}
+				whole : block = {
+					truncated : Uout = float_to_integer_bits(x)
+					_ : _ = std.block_result(truncated)
+				}
+				size_bits : Uout = std.if(below_one, truncated_away, whole)
+				size : Tout = std.reinterpret_bits(size_bits)
+				zero : Uin = 0
+				zero_runtime : Uin = std.comptime_to_runtime(zero)
+				sign : Uin = sign_of(x)
+				negative : std.u1 = std.is_not_equal(sign, zero_runtime)
+				converted : Tout = apply_sign(size, negative)
+				_ : _ = std.block_result(converted)
+			}
+			to_number : block = {
+				converted : Tout = std.if(out_float, from_integer, to_integer)
+				_ : _ = std.block_result(converted)
+			}
+			out : Tout = std.if(between_floats, floats, to_number)
+			_ : _ = std.return(out)
+		}
+		float_convert_symbol : std.c_string = "std.numbers.float_convert"
+		_ : _ = std.functions.set_symbol_name(float_convert, float_convert_symbol)
+	}
+
+	// Whether an operation would leave its type's range (rule N-Overflow), each answered from the wrapped result of the operation itself.
+	would_overflow : namespace = {
+		// Unsigned: the sum wrapped below `a`; signed: both operands share a sign the sum lacks.
+		add : compare_t = {
+			sum : T = std.add(a, b)
+			is_signed : std.u1 = std.numbers.is_signed(T)
+			signed : block = {
+				a_changed : T = std.bitwise_xor(a, sum)
+				b_changed : T = std.bitwise_xor(b, sum)
+				both_changed : T = std.bitwise_and(a_changed, b_changed)
+				flipped : std.u1 = std.is_negative(both_changed)
+				_ : _ = std.block_result(flipped)
+			}
+			unsigned : block = {
+				wrapped : std.u1 = std.is_less(sum, a)
+				_ : _ = std.block_result(wrapped)
+			}
+			out : std.u1 = std.if(is_signed, signed, unsigned)
+			_ : _ = std.return(out)
+		}
+		add_symbol : std.c_string = "std.would_overflow.add"
+		_ : _ = std.functions.set_symbol_name(add, add_symbol)
+
+		// Unsigned: `b` exceeds `a`; signed: the operands differ in sign and the difference lost `a`'s.
+		subtract : compare_t = {
+			difference : T = std.subtract(a, b)
+			is_signed : std.u1 = std.numbers.is_signed(T)
+			signed : block = {
+				operands_differ : T = std.bitwise_xor(a, b)
+				a_changed : T = std.bitwise_xor(a, difference)
+				both : T = std.bitwise_and(operands_differ, a_changed)
+				flipped : std.u1 = std.is_negative(both)
+				_ : _ = std.block_result(flipped)
+			}
+			unsigned : block = {
+				borrowed : std.u1 = std.is_less(a, b)
+				_ : _ = std.block_result(borrowed)
+			}
+			out : std.u1 = std.if(is_signed, signed, unsigned)
+			_ : _ = std.return(out)
+		}
+		subtract_symbol : std.c_string = "std.would_overflow.subtract"
+		_ : _ = std.functions.set_symbol_name(subtract, subtract_symbol)
+
+		// A nonzero `a` that does not divide the wrapped product back to `b`; on a signed type also -1 times the most negative value, whose quotient wraps back to `b`.
+		multiply : compare_t = {
+			zero : T = 0
+			zero_runtime : T = std.comptime_to_runtime(zero)
+			nonzero : std.u1 = std.is_not_equal(a, zero_runtime)
+			checked : block = {
+				product : T = std.multiply(a, b)
+				quotient : T = std.divide(product, a)
+				lost : std.u1 = std.is_not_equal(quotient, b)
+				is_signed : std.u1 = std.numbers.is_signed(T)
+				signed : block = {
+					one : T = 1
+					minus_one : T = std.negate(one)
+					minus_one_runtime : T = std.comptime_to_runtime(minus_one)
+					lowest : T = std.numbers.min_value(T)
+					lowest_runtime : T = std.comptime_to_runtime(lowest)
+					a_minus_one : std.u1 = std.is_equal(a, minus_one_runtime)
+					b_lowest : std.u1 = std.is_equal(b, lowest_runtime)
+					hidden : std.u1 = std.logical_and(a_minus_one, b_lowest)
+					overflows : std.u1 = std.logical_or(lost, hidden)
+					_ : _ = std.block_result(overflows)
+				}
+				unsigned : block = { _ : _ = std.block_result(lost) ; }
+				answer : std.u1 = std.if(is_signed, signed, unsigned)
+				_ : _ = std.block_result(answer)
+			}
+			fits : block = {
+				no : std.u1 = 0
+				no_runtime : std.u1 = std.comptime_to_runtime(no)
+				_ : _ = std.block_result(no_runtime)
+			}
+			out : std.u1 = std.if(nonzero, checked, fits)
+			_ : _ = std.return(out)
+		}
+		multiply_symbol : std.c_string = "std.would_overflow.multiply"
+		_ : _ = std.functions.set_symbol_name(multiply, multiply_symbol)
+
+		divide : compare_t = {
+			zero : T = 0
+			zero_runtime : T = std.comptime_to_runtime(zero)
+			by_zero : std.u1 = std.is_equal(b, zero_runtime)
+			is_signed : std.u1 = std.numbers.is_signed(T)
+			signed : block = {
+				one : T = 1
+				minus_one : T = std.negate(one)
+				minus_one_runtime : T = std.comptime_to_runtime(minus_one)
+				lowest : T = std.numbers.min_value(T)
+				lowest_runtime : T = std.comptime_to_runtime(lowest)
+				a_lowest : std.u1 = std.is_equal(a, lowest_runtime)
+				b_minus_one : std.u1 = std.is_equal(b, minus_one_runtime)
+				wraps : std.u1 = std.logical_and(a_lowest, b_minus_one)
+				overflows : std.u1 = std.logical_or(by_zero, wraps)
+				_ : _ = std.block_result(overflows)
+			}
+			unsigned : block = { _ : _ = std.block_result(by_zero) ; }
+			out : std.u1 = std.if(is_signed, signed, unsigned)
+			_ : _ = std.return(out)
+		}
+		divide_symbol : std.c_string = "std.would_overflow.divide"
+		_ : _ = std.functions.set_symbol_name(divide, divide_symbol)
+
+		// Only a zero divisor: the most negative value over -1 leaves remainder 0, which fits (rule N-Wrap).
+		remainder : compare_t = {
+			zero : T = 0
+			zero_runtime : T = std.comptime_to_runtime(zero)
+			out : std.u1 = std.is_equal(b, zero_runtime)
+			_ : _ = std.return(out)
+		}
+		remainder_symbol : std.c_string = "std.would_overflow.remainder"
+		_ : _ = std.functions.set_symbol_name(remainder, remainder_symbol)
+
+		// A shift by a negative amount or by at least the width, or one that does not shift back to `a`.
+		shift_left : compare_t = {
+			width_bits : std.pointer_sized = std.types.size_bits(T)
+			width : T = std.numbers.truncate(width_bits)
+			width_runtime : T = std.comptime_to_runtime(width)
+			within : std.u1 = std.is_less(b, width_runtime)
+			too_far : std.u1 = std.logical_not(within)
+			backwards : std.u1 = std.is_negative(b)
+			undefined : std.u1 = std.logical_or(too_far, backwards)
+			refuse : block = { _ : _ = std.block_result(undefined) ; }
+			shift : block = {
+				shifted : T = std.shift_left(a, b)
+				restored : T = std.shift_right(shifted, b)
+				lost : std.u1 = std.is_not_equal(restored, a)
+				_ : _ = std.block_result(lost)
+			}
+			out : std.u1 = std.if(undefined, refuse, shift)
+			_ : _ = std.return(out)
+		}
+		shift_left_symbol : std.c_string = "std.would_overflow.shift_left"
+		_ : _ = std.functions.set_symbol_name(shift_left, shift_left_symbol)
+
+		// Signed: `v` is the most negative value; unsigned: `v` is not zero.
+		negate : test_t = {
+			is_signed : std.u1 = std.numbers.is_signed(T)
+			signed : block = {
+				lowest : T = std.numbers.min_value(T)
+				lowest_runtime : T = std.comptime_to_runtime(lowest)
+				is_lowest : std.u1 = std.is_equal(v, lowest_runtime)
+				_ : _ = std.block_result(is_lowest)
+			}
+			unsigned : block = {
+				zero : T = 0
+				zero_runtime : T = std.comptime_to_runtime(zero)
+				nonzero : std.u1 = std.is_not_equal(v, zero_runtime)
+				_ : _ = std.block_result(nonzero)
+			}
+			out : std.u1 = std.if(is_signed, signed, unsigned)
+			_ : _ = std.return(out)
+		}
+		negate_symbol : std.c_string = "std.would_overflow.negate"
+		_ : _ = std.functions.set_symbol_name(negate, negate_symbol)
+
+		// The kept bits do not widen back to `v`, or they changed its sign, as truncating to a type of the other signedness can (rule N-Convert).
+		truncate : (Tout: deduced type, Tin: deduced type, v: Tin) -> std.u1 = {
+			narrowed : Tout = std.numbers.truncate(v)
+			restored : Tin = std.numbers.widen(narrowed)
+			changed : std.u1 = std.is_not_equal(restored, v)
+			v_negative : std.u1 = std.is_negative(v)
+			narrowed_negative : std.u1 = std.is_negative(narrowed)
+			sign_flipped : std.u1 = std.is_not_equal(v_negative, narrowed_negative)
+			out : std.u1 = std.logical_or(changed, sign_flipped)
+			_ : _ = std.return(out)
+		}
+		truncate_symbol : std.c_string = "std.would_overflow.truncate"
+		_ : _ = std.functions.set_symbol_name(truncate, truncate_symbol)
+	}
+
+	// Selection over a conditional jump (rules B-If, B-Label).
+	// A value meets at the join through a stack cell, since a binding read after a label must be bound on every path (rule WF-Order).
+	// The call passes blocks, so it is spliced into the caller (rule B-Inline); the cell is pushed and popped rather than allocated, so a splice inside a loop does not grow the frame (rule MEM-Stack).
+	if : (Tret: deduced type, condition: std.u1, then: block, else: block) -> Tret = {
+		yields_nothing : std.u1 = std.types.is_same_type(Tret, void)
+		effects : block = {
+			_ : std.byte_pointer = std.jump_to_if(condition, take_then)
+			_ : void = std.run_block(else)
+			_ : std.byte_pointer = std.jump_to(done)
+			take_then : std.label = std.place_label()
+			_ : void = std.run_block(then)
+			done : std.label = std.place_label()
+			_ : _ = std.block_result(std.nothing)
+		}
+		value : block = {
+			Cell : type = std.types.pointer(Tret)
+			size_bits : std.pointer_sized = std.types.stride_bits(Tret)
+			size : std.pointer_sized = bytes_for_bits(size_bits)
+			size_runtime : std.pointer_sized = std.comptime_to_runtime(size)
+			alignment_bits : std.pointer_sized = std.types.align_bits(Tret)
+			alignment : std.pointer_sized = bytes_for_bits(alignment_bits)
+			alignment_runtime : std.pointer_sized = std.comptime_to_runtime(alignment)
+			raw : std.byte_pointer = std.stack.push(size_runtime, alignment_runtime)
+			release : block = {
+				_ : std.byte_pointer = std.stack.pop(size_runtime)
+				_ : _ = std.block_result(std.nothing)
+			}
+			_ : void = std.defer(release)
+			cell : Cell = std.reinterpret_bits(raw)
+			_ : std.byte_pointer = std.jump_to_if(condition, take_then)
+			otherwise : Tret = std.run_block(else)
+			_ : Tret = std.pointers.store(cell, otherwise)
+			_ : std.byte_pointer = std.jump_to(done)
+			take_then : std.label = std.place_label()
+			chosen : Tret = std.run_block(then)
+			_ : Tret = std.pointers.store(cell, chosen)
+			done : std.label = std.place_label()
+			joined : Tret = std.pointers.load(cell)
+			_ : _ = std.block_result(joined)
+		}
+		out : Tret = std.if(yields_nothing, effects, value)
+		_ : _ = std.return(out)
+	}
+	if_symbol : std.c_string = "std.if"
+	_ : _ = std.functions.set_symbol_name(if, if_symbol)
+
+	// Iteration over a backward jump (rules B-Loop, B-Label).
+	// A body yielding values runs as a loop yielding nothing whose body also stores each value: into a pushed array for an `array(τ, n)` destination, or into a growing heap block for a `pointer(τ)` one.
+	// A refused heap allocation leaves the block null, after which the loop runs on, storing nothing, and yields null (rules B-Loop, MEM-Heap).
+	while : (Tret: deduced type, condition: block, body: block) -> Tret = {
+		yields_nothing : std.u1 = std.types.is_same_type(Tret, void)
+		effects : block = {
+			again : std.label = std.place_label()
+			going : std.u1 = std.run_block(condition)
+			stopping : std.u1 = std.logical_not(going)
+			_ : std.byte_pointer = std.jump_to_if(stopping, done)
+			_ : void = std.run_block(body)
+			_ : std.byte_pointer = std.jump_to(again)
+			done : std.label = std.place_label()
+			_ : _ = std.block_result(std.nothing)
+		}
+		into_array : block = {
+			Element : type = std.types.element(Tret)
+			Elements : type = std.types.pointer(Element)
+			Storage : type = std.types.pointer(Tret)
+			array_bits : std.pointer_sized = std.types.stride_bits(Tret)
+			array_bytes : std.pointer_sized = bytes_for_bits(array_bits)
+			array_bytes_runtime : std.pointer_sized = std.comptime_to_runtime(array_bytes)
+			array_alignment_bits : std.pointer_sized = std.types.align_bits(Tret)
+			array_alignment : std.pointer_sized = bytes_for_bits(array_alignment_bits)
+			array_alignment_runtime : std.pointer_sized = std.comptime_to_runtime(array_alignment)
+			index_bits : std.pointer_sized = std.types.stride_bits(std.pointer_sized)
+			index_bytes : std.pointer_sized = bytes_for_bits(index_bits)
+			index_bytes_runtime : std.pointer_sized = std.comptime_to_runtime(index_bytes)
+			index_alignment_bits : std.pointer_sized = std.types.align_bits(std.pointer_sized)
+			index_alignment : std.pointer_sized = bytes_for_bits(index_alignment_bits)
+			index_alignment_runtime : std.pointer_sized = std.comptime_to_runtime(index_alignment)
+			zero : std.pointer_sized = 0
+			zero_runtime : std.pointer_sized = std.comptime_to_runtime(zero)
+			one : std.pointer_sized = 1
+			one_runtime : std.pointer_sized = std.comptime_to_runtime(one)
+			array_raw : std.byte_pointer = std.stack.push(array_bytes_runtime, array_alignment_runtime)
+			release_array : block = {
+				_ : std.byte_pointer = std.stack.pop(array_bytes_runtime)
+				_ : _ = std.block_result(std.nothing)
+			}
+			_ : void = std.defer(release_array)
+			index_raw : std.byte_pointer = std.stack.push(index_bytes_runtime, index_alignment_runtime)
+			release_index : block = {
+				_ : std.byte_pointer = std.stack.pop(index_bytes_runtime)
+				_ : _ = std.block_result(std.nothing)
+			}
+			_ : void = std.defer(release_index)
+			elements : Elements = std.reinterpret_bits(array_raw)
+			index_cell : std.pointer_sized_pointer = std.reinterpret_bits(index_raw)
+			_ : std.pointer_sized = std.pointers.store(index_cell, zero_runtime)
+			store_each : block = {
+				value : Element = std.run_block(body)
+				index : std.pointer_sized = std.pointers.load(index_cell)
+				slot : Elements = std.pointers.element_pointer(elements, index)
+				_ : Element = std.pointers.store(slot, value)
+				next : std.pointer_sized = std.add(index, one_runtime)
+				_ : std.pointer_sized = std.pointers.store(index_cell, next)
+				_ : _ = std.block_result(std.nothing)
+			}
+			_ : void = std.while(condition, store_each)
+			storage : Storage = std.reinterpret_bits(array_raw)
+			values : Tret = std.pointers.load(storage)
+			_ : _ = std.block_result(values)
+		}
+		// One pushed cell of three words, length, capacity and block address, so the deferred release pops it on every exit.
+		into_heap : block = {
+			Element : type = std.types.element(Tret)
+			element_bits : std.pointer_sized = std.types.stride_bits(Element)
+			element_bytes : std.pointer_sized = bytes_for_bits(element_bits)
+			element_bytes_runtime : std.pointer_sized = std.comptime_to_runtime(element_bytes)
+			element_alignment_bits : std.pointer_sized = std.types.align_bits(Element)
+			element_alignment : std.pointer_sized = bytes_for_bits(element_alignment_bits)
+			word_bits : std.pointer_sized = std.types.stride_bits(std.pointer_sized)
+			word_bytes : std.pointer_sized = bytes_for_bits(word_bits)
+			word_alignment_bits : std.pointer_sized = std.types.align_bits(std.pointer_sized)
+			word_alignment : std.pointer_sized = bytes_for_bits(word_alignment_bits)
+			word_alignment_runtime : std.pointer_sized = std.comptime_to_runtime(word_alignment)
+			alignment : std.pointer_sized = std.max(element_alignment, word_alignment)
+			alignment_runtime : std.pointer_sized = std.comptime_to_runtime(alignment)
+			header : std.pointer_sized = header_bytes(Element)
+			header_runtime : std.pointer_sized = std.comptime_to_runtime(header)
+			header_offset : std.pointer_difference = std.reinterpret_bits(header)
+			header_offset_runtime : std.pointer_difference = std.comptime_to_runtime(header_offset)
+			first_capacity : std.pointer_sized = 4
+			first_capacity_runtime : std.pointer_sized = std.comptime_to_runtime(first_capacity)
+			first_elements : std.pointer_sized = std.multiply(first_capacity, element_bytes)
+			first_bytes : std.pointer_sized = std.add(header, first_elements)
+			first_bytes_runtime : std.pointer_sized = std.comptime_to_runtime(first_bytes)
+			three : std.pointer_sized = 3
+			state_bytes : std.pointer_sized = std.multiply(three, word_bytes)
+			state_bytes_runtime : std.pointer_sized = std.comptime_to_runtime(state_bytes)
+			zero : std.pointer_sized = 0
+			zero_runtime : std.pointer_sized = std.comptime_to_runtime(zero)
+			one : std.pointer_sized = 1
+			one_runtime : std.pointer_sized = std.comptime_to_runtime(one)
+			two : std.pointer_sized = 2
+			two_runtime : std.pointer_sized = std.comptime_to_runtime(two)
+			null_block : std.byte_pointer = std.pointers.null()
+			null_runtime : std.byte_pointer = std.comptime_to_runtime(null_block)
+			null_bits : std.pointer_sized = std.reinterpret_bits(null_runtime)
+			state_raw : std.byte_pointer = std.stack.push(state_bytes_runtime, word_alignment_runtime)
+			length_slot : std.pointer_sized_pointer = std.reinterpret_bits(state_raw)
+			capacity_slot : std.pointer_sized_pointer = std.pointers.element_pointer(length_slot, one_runtime)
+			block_slot : std.pointer_sized_pointer = std.pointers.element_pointer(length_slot, two_runtime)
+			first_block : std.byte_pointer = std.heap.allocate(first_bytes_runtime, alignment_runtime)
+			first_block_bits : std.pointer_sized = std.reinterpret_bits(first_block)
+			_ : std.pointer_sized = std.pointers.store(length_slot, zero_runtime)
+			_ : std.pointer_sized = std.pointers.store(capacity_slot, first_capacity_runtime)
+			_ : std.pointer_sized = std.pointers.store(block_slot, first_block_bits)
+			// Frees the block unless the loop finished and handed it on, which clears the slot (rule B-Return).
+			release : block = {
+				held_bits : std.pointer_sized = std.pointers.load(block_slot)
+				held : std.byte_pointer = std.reinterpret_bits(held_bits)
+				_ : void = std.heap.free(held)
+				_ : std.byte_pointer = std.stack.pop(state_bytes_runtime)
+				_ : _ = std.block_result(std.nothing)
+			}
+			_ : void = std.defer(release)
+			store_each : block = {
+				value : Element = std.run_block(body)
+				length : std.pointer_sized = std.pointers.load(length_slot)
+				capacity : std.pointer_sized = std.pointers.load(capacity_slot)
+				held_bits : std.pointer_sized = std.pointers.load(block_slot)
+				held : std.byte_pointer = std.reinterpret_bits(held_bits)
+				refused_before : std.u1 = std.pointers.is_null(held)
+				present : std.u1 = std.logical_not(refused_before)
+				full : std.u1 = std.is_equal(length, capacity)
+				must_grow : std.u1 = std.logical_and(present, full)
+				grow : block = {
+					doubled : std.pointer_sized = std.add(capacity, capacity)
+					element_total : std.pointer_sized = std.multiply(doubled, element_bytes_runtime)
+					total : std.pointer_sized = std.add(header_runtime, element_total)
+					moved : std.byte_pointer = std.heap.reallocate(held, total, alignment_runtime)
+					refused : std.u1 = std.pointers.is_null(moved)
+					give_up : block = {
+						_ : void = std.heap.free(held)
+						_ : std.pointer_sized = std.pointers.store(block_slot, null_bits)
+						_ : _ = std.block_result(std.nothing)
+					}
+					adopt : block = {
+						moved_bits : std.pointer_sized = std.reinterpret_bits(moved)
+						_ : std.pointer_sized = std.pointers.store(block_slot, moved_bits)
+						_ : std.pointer_sized = std.pointers.store(capacity_slot, doubled)
+						_ : _ = std.block_result(std.nothing)
+					}
+					_ : void = std.if(refused, give_up, adopt)
+					_ : _ = std.block_result(std.nothing)
+				}
+				room : block = { _ : _ = std.block_result(std.nothing) ; }
+				_ : void = std.if(must_grow, grow, room)
+				current_bits : std.pointer_sized = std.pointers.load(block_slot)
+				current : std.byte_pointer = std.reinterpret_bits(current_bits)
+				refused_now : std.u1 = std.pointers.is_null(current)
+				place : block = {
+					first : std.byte_pointer = std.pointers.offset(current, header_offset_runtime)
+					elements : Tret = std.reinterpret_bits(first)
+					slot : Tret = std.pointers.element_pointer(elements, length)
+					_ : Element = std.pointers.store(slot, value)
+					_ : _ = std.block_result(std.nothing)
+				}
+				drop : block = { _ : _ = std.block_result(std.nothing) ; }
+				_ : void = std.if(refused_now, drop, place)
+				next : std.pointer_sized = std.add(length, one_runtime)
+				_ : std.pointer_sized = std.pointers.store(length_slot, next)
+				_ : _ = std.block_result(std.nothing)
+			}
+			_ : void = std.while(condition, store_each)
+			final_bits : std.pointer_sized = std.pointers.load(block_slot)
+			final : std.byte_pointer = std.reinterpret_bits(final_bits)
+			refused_at_end : std.u1 = std.pointers.is_null(final)
+			nothing_kept : block = {
+				null_result : Tret = std.pointers.null()
+				null_result_runtime : Tret = std.comptime_to_runtime(null_result)
+				_ : _ = std.block_result(null_result_runtime)
+			}
+			hand_on : block = {
+				length : std.pointer_sized = std.pointers.load(length_slot)
+				length_cell : std.pointer_sized_pointer = std.reinterpret_bits(final)
+				_ : std.pointer_sized = std.pointers.store(length_cell, length)
+				_ : std.pointer_sized = std.pointers.store(block_slot, null_bits)
+				first : std.byte_pointer = std.pointers.offset(final, header_offset_runtime)
+				elements : Tret = std.reinterpret_bits(first)
+				_ : _ = std.block_result(elements)
+			}
+			values : Tret = std.if(refused_at_end, nothing_kept, hand_on)
+			_ : _ = std.block_result(values)
+		}
+		yields_array : std.u1 = std.types.is_array(Tret)
+		collect : block = {
+			values : Tret = std.if(yields_array, into_array, into_heap)
+			_ : _ = std.block_result(values)
+		}
+		out : Tret = std.if(yields_nothing, effects, collect)
+		_ : _ = std.return(out)
+	}
+	while_symbol : std.c_string = "std.while"
+	_ : _ = std.functions.set_symbol_name(while, while_symbol)
+
+	// `init`, then a `while` whose body runs `body` and then `step`, yielding what `body` yields (rule B-Loop).
+	for : (Tret: deduced type, init: block, condition: block, step: block, body: block) -> Tret = {
+		_ : void = std.run_block(init)
+		yields_nothing : std.u1 = std.types.is_same_type(Tret, void)
+		effects : block = {
+			each : block = {
+				_ : void = std.run_block(body)
+				_ : void = std.run_block(step)
+				_ : _ = std.block_result(std.nothing)
+			}
+			_ : void = std.while(condition, each)
+			_ : _ = std.block_result(std.nothing)
+		}
+		collect : block = {
+			Element : type = std.types.element(Tret)
+			each : block = {
+				value : Element = std.run_block(body)
+				_ : void = std.run_block(step)
+				_ : _ = std.block_result(value)
+			}
+			values : Tret = std.while(condition, each)
+			_ : _ = std.block_result(values)
+		}
+		out : Tret = std.if(yields_nothing, effects, collect)
+		_ : _ = std.return(out)
+	}
+	for_symbol : std.c_string = "std.for"
+	_ : _ = std.functions.set_symbol_name(for, for_symbol)
+
+	// How far back from element 0 of a heap loop result its allocation starts (rule B-Loop).
+	header_offset_t : type = (Element: type) -> std.pointer_difference
+	_ : type = std.types.always_comptime(header_offset_t)
+	back_to_header : header_offset_t = {
+		header : std.pointer_sized = header_bytes(Element)
+		forward : std.pointer_difference = std.reinterpret_bits(header)
+		out : std.pointer_difference = std.negate(forward)
+		_ : _ = std.return(out)
+	}
+
+	loop_length : (Tptr: deduced type, result: Tptr) -> std.pointer_sized = {
+		Element : type = std.types.pointed_to_type(Tptr)
+		back : std.pointer_difference = back_to_header(Element)
+		back_runtime : std.pointer_difference = std.comptime_to_runtime(back)
+		first : std.byte_pointer = std.reinterpret_bits(result)
+		start : std.byte_pointer = std.pointers.offset(first, back_runtime)
+		length_cell : std.pointer_sized_pointer = std.reinterpret_bits(start)
+		out : std.pointer_sized = std.pointers.load(length_cell)
+		_ : _ = std.return(out)
+	}
+	loop_length_symbol : std.c_string = "std.loop_length"
+	_ : _ = std.functions.set_symbol_name(loop_length, loop_length_symbol)
+
+	// A null result, from a refused allocation, has nothing to free, as `std.heap.free` of null does nothing (rule MEM-Heap).
+	free_loop_result : (Tptr: deduced type, result: Tptr) -> void = {
+		refused : std.u1 = std.pointers.is_null(result)
+		nothing_held : block = { _ : _ = std.block_result(std.nothing) ; }
+		release : block = {
+			Element : type = std.types.pointed_to_type(Tptr)
+			back : std.pointer_difference = back_to_header(Element)
+			back_runtime : std.pointer_difference = std.comptime_to_runtime(back)
+			first : std.byte_pointer = std.reinterpret_bits(result)
+			start : std.byte_pointer = std.pointers.offset(first, back_runtime)
+			_ : void = std.heap.free(start)
+			_ : _ = std.block_result(std.nothing)
+		}
+		_ : void = std.if(refused, nothing_held, release)
+		_ : _ = std.return(std.nothing)
+	}
+	free_loop_result_symbol : std.c_string = "std.free_loop_result"
+	_ : _ = std.functions.set_symbol_name(free_loop_result, free_loop_result_symbol)
+
+	pointers : namespace = {
+		is_null : (Tptr: deduced type, pointer: Tptr) -> std.u1 = {
+			null_pointer : Tptr = std.pointers.null()
+			null_runtime : Tptr = std.comptime_to_runtime(null_pointer)
+			out : std.u1 = std.is_equal(pointer, null_runtime)
+			_ : _ = std.return(out)
+		}
+		is_null_symbol : std.c_string = "std.pointers.is_null"
+		_ : _ = std.functions.set_symbol_name(is_null, is_null_symbol)
+
+		// A byte offset of `index` strides of the pointee (rule RF-Fields).
+		element_pointer : (Tptr: deduced type, pointer: Tptr, index: std.pointer_sized) -> Tptr = {
+			Element : type = std.types.pointed_to_type(Tptr)
+			stride_bits : std.pointer_sized = std.types.stride_bits(Element)
+			stride : std.pointer_sized = bytes_for_bits(stride_bits)
+			stride_runtime : std.pointer_sized = std.comptime_to_runtime(stride)
+			bytes : std.pointer_sized = std.multiply(index, stride_runtime)
+			byte_offset : std.pointer_difference = std.reinterpret_bits(bytes)
+			out : Tptr = std.pointers.offset(pointer, byte_offset)
+			_ : _ = std.return(out)
+		}
+		element_pointer_symbol : std.c_string = "std.pointers.element_pointer"
+		_ : _ = std.functions.set_symbol_name(element_pointer, element_pointer_symbol)
+
+		// The addresses read as signed integers, which every pointer's layout is as wide as (rule M-Ctor).
+		difference : (Tptr: deduced type, a: Tptr, b: Tptr) -> std.pointer_difference = {
+			a_address : std.pointer_difference = std.reinterpret_bits(a)
+			b_address : std.pointer_difference = std.reinterpret_bits(b)
+			out : std.pointer_difference = std.subtract(a_address, b_address)
+			_ : _ = std.return(out)
+		}
+		difference_symbol : std.c_string = "std.pointers.difference"
+		_ : _ = std.functions.set_symbol_name(difference, difference_symbol)
+	}
+}

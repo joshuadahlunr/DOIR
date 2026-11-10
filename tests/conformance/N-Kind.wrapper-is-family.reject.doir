@@ -1,0 +1,8 @@
+// N-Kind: `std.add` on a float is `std.float.add`, so the two sums are equal and the assertion that they differ fails.
+a : std.numbers.f64 = 1.5
+b : std.numbers.f64 = 2.25
+through_wrapper : std.numbers.f64 = std.add(a, b)
+through_family : std.numbers.f64 = std.float.add(a, b)
+differ : std.u1 = std.is_not_equal(through_wrapper, through_family)
+message : std.c_string = "N-Kind: std.add hands a float to std.float.add, so the sums are equal and this assertion fails"
+_ : void = std.diagnostics.assert(differ, message)

@@ -1,4 +1,12 @@
-// Standard interface specification for DOIR. Requires the target's backend to provide machine.u1, machine.u8, the pointer-wide machine.u32 or machine.u64, machine.pointer_sized, machine.pointer_difference, machine.byte_order, and the compiler_impl hooks (rule T-Sig, spec Part II §17), and optionally the wider integers and the floats (rule T-Optional); the whole contract, optional shapes included, is spelled out in `reference/machine.doir`. A function with a type but no body is a prototype. If its type is marked `comptime` it is a host hook the compiler supplies (rule H-Hook, listed in `reference/host.doir`); otherwise a lower level or the linker supplies it (rule I-Extern). `std.meta.*` is entirely hooks, and `std.types.*` and `std.functions.*` are inline wrappers over it (rule RF-Wrapper). Implements in-place modification (M-Flag) and bidirectional deduction (D-Deduce).
+// Standard interface specification for DOIR.
+// Requires the target's backend to provide machine.u1, machine.u8, the pointer-wide machine.u32 or machine.u64, machine.pointer_sized, machine.pointer_difference, machine.byte_order, and the compiler_impl hooks (rule T-Sig, spec Part II §17), and optionally the wider integers and the floats (rule T-Optional); the whole contract, optional shapes included, is spelled out in `reference/machine.doir`.
+// A function with a type but no body is a prototype.
+// If its type is marked `comptime` it is a host hook the compiler supplies (rule H-Hook, listed in `reference/host.doir`); otherwise a lower level or the linker supplies it (rule I-Extern).
+// Most of those a lower level would supply have a software body in `standard.emulated.doir`, pasted at the end of `std`, which a backend's own definition replaces (rule I-Extern); `reference/machine.doir` lists what a backend must still supply.
+// Each emulated prototype's comment names the prototypes its software body calls; each of those is a backend primitive or emulated in turn (rule I-Extern).
+// The arithmetic and comparisons that take both integers and floats have a prototype per kind, in `std.integer` and `std.float`, behind one wrapper each, so a backend can supply one kind and leave the other to software (rule N-Kind).
+// `std.meta.*` is entirely hooks, and `std.types.*` and `std.functions.*` are inline wrappers over it (rule RF-Wrapper).
+// Implements in-place modification (M-Flag) and bidirectional deduction (D-Deduce).
 
 std : namespace = {
 	// Reflection handles are entities (`meta.entity`), never plain integers, so E-Remap can rewrite every holder of one when the store is renumbered. A field declaration is an entity, and a dotted path `T.f` names one.
@@ -687,23 +695,24 @@ std : namespace = {
 		export truncate : (Tout: deduced type, Tin: deduced type, v: Tin) -> Tout
 
 		// Integer to float, float to integer (truncating toward zero), or between float widths; the destination type is the binding's (rules N-FloatConvert, D-Deduce).
+		// Emulated over `bitwise_and`, `bitwise_not`, `bitwise_or`, `bitwise_xor`, `if`, `integer.add`, `integer.is_equal`, `integer.is_less`, `integer.is_less_equal`, `integer.is_negative`, `integer.is_not_equal`, `integer.negate`, `integer.subtract`, `logical_and`, `logical_or`, `numbers.truncate`, `numbers.widen`, `pointers.load`, `pointers.store`, `reinterpret_bits`, `shift_left`, `shift_right`, `stack.allocate` and `while` (rule I-Extern).
 		export float_convert : (Tout: deduced type, Tin: deduced type, v: Tin) -> Tout
 	}
 
 	// Whether an operation would leave its type's range (rule N-Overflow). Each pairs with the unchecked primitive of the same name and reads the operand type's signedness.
 	would_overflow : namespace = {
 		binary_t : type = (T: deduced type, a: T, b: T) -> u1
-		export add : binary_t
-		export subtract : binary_t
-		export multiply : binary_t
+		export add : binary_t // Emulated over `bitwise_and`, `bitwise_xor`, `integer.add`, `integer.is_less` and `integer.is_negative` (rule I-Extern).
+		export subtract : binary_t // Emulated over `bitwise_and`, `bitwise_xor`, `integer.is_less`, `integer.is_negative` and `integer.subtract` (rule I-Extern).
+		export multiply : binary_t // Emulated over `if`, `integer.divide`, `integer.is_equal`, `integer.is_not_equal`, `integer.multiply`, `logical_and` and `logical_or` (rule I-Extern).
 		// A zero divisor, or the most negative value divided by -1.
-		export divide : binary_t
-		export remainder : binary_t
+		export divide : binary_t // Emulated over `integer.is_equal`, `logical_and` and `logical_or` (rule I-Extern).
+		export remainder : binary_t // Emulated over `integer.is_equal` (rule I-Extern).
 		// Bits shifted out, or a shift at least the width.
-		export shift_left : binary_t
-		export negate : (T: deduced type, v: T) -> u1
+		export shift_left : binary_t // Emulated over `if`, `integer.is_less`, `integer.is_negative`, `integer.is_not_equal`, `logical_not`, `logical_or`, `shift_left` and `shift_right` (rule I-Extern).
+		export negate : (T: deduced type, v: T) -> u1 // Emulated over `integer.is_equal` and `integer.is_not_equal` (rule I-Extern).
 		// Whether `v` does not fit the destination type (rule N-Convert).
-		export truncate : (Tout: deduced type, Tin: deduced type, v: Tin) -> u1
+		export truncate : (Tout: deduced type, Tin: deduced type, v: Tin) -> u1 // Emulated over `integer.is_negative`, `integer.is_not_equal`, `logical_or`, `numbers.truncate` and `numbers.widen` (rule I-Extern).
 	}
 
 	// Reading a variadic parameter (rules F-Pack, F-Access). The index must be comptime.
@@ -805,14 +814,16 @@ std : namespace = {
 	// Runs `body` when the enclosing function returns (rule B-Defer).
 	export defer : (body: block) -> void
 
-	// `condition` yields a u1 and `init` and `step` yield `nothing`. A body yielding `nothing` returns void; otherwise the destination names `array(T, n)` for a comptime count or `pointer(T)` for a heap result with a length header (rule B-Loop).
+	// `condition` yields a u1 and `init` and `step` yield `nothing`.
+	// A body yielding `nothing` returns void; otherwise the destination names `array(T, n)` for a comptime count or `pointer(T)` for a heap result with a length header (rule B-Loop).
+	// Emulated over `heap.allocate`, `heap.free`, `heap.reallocate`, `if`, `integer.add`, `integer.is_equal`, `integer.multiply`, `jump_to`, `jump_to_if`, `logical_and`, `logical_not`, `place_label`, `pointers.element_pointer`, `pointers.is_null`, `pointers.load`, `pointers.null`, `pointers.offset`, `pointers.store`, `reinterpret_bits`, `stack.pop` and `stack.push` (rule I-Extern).
 	export while : (condition: block, body: block) -> _
-	export for : (init: block, condition: block, step: block, body: block) -> _
+	export for : (init: block, condition: block, step: block, body: block) -> _ // Emulated over `while` (rule I-Extern).
 	// The count stored before element 0 of a heap loop result, and the call that frees it (rule B-Loop).
-	export loop_length : (Tptr: deduced type, result: Tptr) -> pointer_sized
-	export free_loop_result : (Tptr: deduced type, result: Tptr) -> void
+	export loop_length : (Tptr: deduced type, result: Tptr) -> pointer_sized // Emulated over `pointers.load`, `pointers.offset` and `reinterpret_bits` (rule I-Extern).
+	export free_loop_result : (Tptr: deduced type, result: Tptr) -> void // Emulated over `heap.free`, `if`, `pointers.is_null`, `pointers.offset` and `reinterpret_bits` (rule I-Extern).
 	// Both blocks yield the type the destination names (rules B-If, D-Return).
-	export if : (condition: u1, then: block, else: block) -> _
+	export if : (condition: u1, then: block, else: block) -> _ // Emulated over `jump_to`, `jump_to_if`, `place_label`, `pointers.load`, `pointers.store`, `reinterpret_bits`, `stack.pop` and `stack.push` (rule I-Extern).
 
 	export return : (T: deduced type, value: T) -> T
 	export block_result : (T: deduced type, value: T) -> T
@@ -854,9 +865,9 @@ std : namespace = {
 		export load : load_t
 		export store : store_t
 		export offset : offset_t
-		export element_pointer : element_pointer_t
-		export difference : difference_t
-		export is_null : is_null_t
+		export element_pointer : element_pointer_t // Emulated over `integer.multiply`, `pointers.offset` and `reinterpret_bits` (rule I-Extern).
+		export difference : difference_t // Emulated over `integer.subtract` and `reinterpret_bits` (rule I-Extern).
+		export is_null : is_null_t // Emulated over `integer.is_equal` and `pointers.null` (rule I-Extern).
 		export load_field : load_field_t
 		export store_field : store_field_t
 		export null : (Tptr: deduced type) -> Tptr
@@ -924,37 +935,294 @@ std : namespace = {
 	export jump_relative_if : jump_relative_if_t
 	export jump_to_if : jump_to_if_t
 
-	export is_equal : (T: deduced type, a: T, b: T) -> u1
-	export is_not_equal : (T: deduced type, a: T, b: T) -> u1
-	export is_less : (T: deduced type, a: T, b: T) -> u1
-	export is_less_equal : (T: deduced type, a: T, b: T) -> u1
-	export is_greater : (T: deduced type, a: T, b: T) -> u1
-	export is_greater_equal : (T: deduced type, a: T, b: T) -> u1
+	// The operations that take both integers and floats have a prototype per kind, so a backend supplies each kind on its own: one with integer instructions and no float unit defines `integer.add` and leaves every `float` prototype to its software body (rules N-Kind, I-Extern).
+	// `integer` takes the integer types, and pointers for the comparisons; `float` takes the `Float` types.
+	integer : namespace = {
+		export is_equal : (T: deduced type, a: T, b: T) -> u1 // Emulated over `integer.is_less`, `logical_not` and `logical_or` (rule I-Extern).
+		export is_not_equal : (T: deduced type, a: T, b: T) -> u1 // Emulated over `integer.is_equal` and `logical_not` (rule I-Extern).
+		export is_less : (T: deduced type, a: T, b: T) -> u1
+		export is_less_equal : (T: deduced type, a: T, b: T) -> u1 // Emulated over `integer.is_less` and `logical_not` (rule I-Extern).
+		export is_greater : (T: deduced type, a: T, b: T) -> u1 // Emulated over `integer.is_less` (rule I-Extern).
+		export is_greater_equal : (T: deduced type, a: T, b: T) -> u1 // Emulated over `integer.is_less_equal` (rule I-Extern).
+		export add : (T: deduced type, a: T, b: T) -> T
+		export subtract : (T: deduced type, a: T, b: T) -> T // Emulated over `integer.add` and `integer.negate` (rule I-Extern).
+		export multiply : (T: deduced type, a: T, b: T) -> T // Emulated over `bitwise_and`, `integer.add`, `integer.is_not_equal`, `integer.negate`, `numbers.widen`, `pointers.load`, `pointers.store`, `stack.allocate` and `while` (rule I-Extern).
+		// Emulated over `bitwise_and`, `bitwise_xor`, `if`, `integer.add`, `integer.is_less`, `integer.is_less_equal`, `integer.is_negative`, `integer.is_not_equal`, `integer.negate`, `integer.subtract`, `logical_or`, `numbers.widen`, `pointers.load`, `pointers.store`, `reinterpret_bits`, `stack.allocate` and `while` (rule I-Extern).
+		export divide : (T: deduced type, a: T, b: T) -> T
+		// Emulated over `bitwise_and`, `bitwise_xor`, `if`, `integer.add`, `integer.is_less`, `integer.is_less_equal`, `integer.is_negative`, `integer.is_not_equal`, `integer.negate`, `integer.subtract`, `logical_or`, `numbers.widen`, `pointers.load`, `pointers.store`, `reinterpret_bits`, `stack.allocate` and `while` (rule I-Extern).
+		export remainder : (T: deduced type, a: T, b: T) -> T
+		export negate : (T: deduced type, v: T) -> T // Emulated over `bitwise_not` and `integer.add` (rule I-Extern).
+		export max : (T: deduced type, a: T, b: T) -> T // Emulated over `bitwise_and`, `bitwise_xor`, `integer.is_less`, `integer.negate` and `numbers.widen` (rule I-Extern).
+		export min : (T: deduced type, a: T, b: T) -> T // Emulated over `bitwise_and`, `bitwise_xor`, `integer.is_less`, `integer.negate` and `numbers.widen` (rule I-Extern).
+		export is_negative : (T: deduced type, v: T) -> u1 // Emulated over `integer.is_less` (rule I-Extern).
+		export is_positive : (T: deduced type, v: T) -> u1 // Emulated over `integer.is_less` (rule I-Extern).
+	}
 
-	export add : (T: deduced type, a: T, b: T) -> T
-	export subtract : (T: deduced type, a: T, b: T) -> T
-	export divide : (T: deduced type, a: T, b: T) -> T
-	export multiply : (T: deduced type, a: T, b: T) -> T
-	export remainder : (T: deduced type, a: T, b: T) -> T
-	export negate : (T: deduced type, v: T) -> T
+	float : namespace = {
+		export is_equal : (T: deduced type, a: T, b: T) -> u1 // Emulated over `bitwise_and`, `bitwise_not`, `bitwise_or`, `integer.is_equal`, `integer.is_less`, `logical_and`, `logical_not`, `logical_or` and `reinterpret_bits` (rule I-Extern).
+		export is_not_equal : (T: deduced type, a: T, b: T) -> u1 // Emulated over `float.is_equal` and `logical_not` (rule I-Extern).
+		// Emulated over `bitwise_and`, `bitwise_not`, `bitwise_or`, `bitwise_xor`, `integer.is_less`, `integer.is_not_equal`, `integer.negate`, `logical_and`, `logical_not`, `logical_or`, `numbers.widen`, `reinterpret_bits` and `shift_right` (rule I-Extern).
+		export is_less : (T: deduced type, a: T, b: T) -> u1
+		export is_less_equal : (T: deduced type, a: T, b: T) -> u1 // Emulated over `float.is_equal`, `float.is_less` and `logical_or` (rule I-Extern).
+		export is_greater : (T: deduced type, a: T, b: T) -> u1 // Emulated over `float.is_less` (rule I-Extern).
+		export is_greater_equal : (T: deduced type, a: T, b: T) -> u1 // Emulated over `float.is_less_equal` (rule I-Extern).
+		// Emulated over `bitwise_and`, `bitwise_not`, `bitwise_or`, `bitwise_xor`, `if`, `integer.add`, `integer.is_equal`, `integer.is_less`, `integer.is_less_equal`, `integer.is_not_equal`, `integer.negate`, `integer.subtract`, `logical_and`, `logical_or`, `numbers.truncate`, `numbers.widen`, `pointers.load`, `pointers.store`, `reinterpret_bits`, `shift_left`, `shift_right`, `stack.allocate` and `while` (rule I-Extern).
+		export add : (T: deduced type, a: T, b: T) -> T
+		export subtract : (T: deduced type, a: T, b: T) -> T // Emulated over `float.add` and `float.negate` (rule I-Extern).
+		// Emulated over `bitwise_and`, `bitwise_not`, `bitwise_or`, `bitwise_xor`, `if`, `integer.add`, `integer.is_equal`, `integer.is_less`, `integer.is_less_equal`, `integer.is_not_equal`, `integer.multiply`, `integer.negate`, `integer.subtract`, `logical_and`, `logical_or`, `numbers.truncate`, `numbers.widen`, `pointers.load`, `pointers.store`, `reinterpret_bits`, `shift_left`, `shift_right`, `stack.allocate` and `while` (rule I-Extern).
+		export multiply : (T: deduced type, a: T, b: T) -> T
+		// Emulated over `bitwise_and`, `bitwise_not`, `bitwise_or`, `bitwise_xor`, `if`, `integer.add`, `integer.is_equal`, `integer.is_less`, `integer.is_less_equal`, `integer.is_not_equal`, `integer.negate`, `integer.subtract`, `logical_and`, `logical_or`, `numbers.truncate`, `numbers.widen`, `pointers.load`, `pointers.store`, `reinterpret_bits`, `shift_left`, `shift_right`, `stack.allocate` and `while` (rule I-Extern).
+		export divide : (T: deduced type, a: T, b: T) -> T
+		// Emulated over `bitwise_and`, `bitwise_not`, `bitwise_or`, `bitwise_xor`, `if`, `integer.add`, `integer.is_equal`, `integer.is_less`, `integer.is_less_equal`, `integer.is_not_equal`, `integer.negate`, `integer.subtract`, `logical_and`, `logical_or`, `numbers.truncate`, `numbers.widen`, `pointers.load`, `pointers.store`, `reinterpret_bits`, `shift_left`, `shift_right`, `stack.allocate` and `while` (rule I-Extern).
+		export remainder : (T: deduced type, a: T, b: T) -> T
+		export negate : (T: deduced type, v: T) -> T // Emulated over `bitwise_xor` and `reinterpret_bits` (rule I-Extern).
+		export max : (T: deduced type, a: T, b: T) -> T // Emulated over `float.is_less`, `if`, `is_not_a_number` and `logical_or` (rule I-Extern).
+		export min : (T: deduced type, a: T, b: T) -> T // Emulated over `float.is_less`, `if`, `is_not_a_number` and `logical_or` (rule I-Extern).
+		export is_negative : (T: deduced type, v: T) -> u1 // Emulated over `float.is_less` (rule I-Extern).
+		export is_positive : (T: deduced type, v: T) -> u1 // Emulated over `float.is_less` (rule I-Extern).
+	}
 
-	export max : (T: deduced type, a: T, b: T) -> T
-	export min : (T: deduced type, a: T, b: T) -> T
+	// The names callers use: each hands its operands to the family of their kind, and inlines to that call (rule N-Kind).
+	kind_compare_t : type = (T: deduced type, a: T, b: T) -> u1
+	kind_binary_t : type = (T: deduced type, a: T, b: T) -> T
+	kind_unary_t : type = (T: deduced type, v: T) -> T
+	kind_test_t : type = (T: deduced type, v: T) -> u1
+	_ : type = functions.always_inline(kind_compare_t)
+	_ : type = functions.always_inline(kind_binary_t)
+	_ : type = functions.always_inline(kind_unary_t)
+	_ : type = functions.always_inline(kind_test_t)
+
+	export is_equal : kind_compare_t = {
+		is_float : u1 = numbers.is_float(T)
+		on_float : block = {
+			result : u1 = float.is_equal(a, b)
+			_ : _ = std.block_result(result)
+		}
+		on_integer : block = {
+			result : u1 = integer.is_equal(a, b)
+			_ : _ = std.block_result(result)
+		}
+		out : u1 = std.if(is_float, on_float, on_integer)
+		_ : _ = std.return(out)
+	}
+	export is_not_equal : kind_compare_t = {
+		is_float : u1 = numbers.is_float(T)
+		on_float : block = {
+			result : u1 = float.is_not_equal(a, b)
+			_ : _ = std.block_result(result)
+		}
+		on_integer : block = {
+			result : u1 = integer.is_not_equal(a, b)
+			_ : _ = std.block_result(result)
+		}
+		out : u1 = std.if(is_float, on_float, on_integer)
+		_ : _ = std.return(out)
+	}
+	export is_less : kind_compare_t = {
+		is_float : u1 = numbers.is_float(T)
+		on_float : block = {
+			result : u1 = float.is_less(a, b)
+			_ : _ = std.block_result(result)
+		}
+		on_integer : block = {
+			result : u1 = integer.is_less(a, b)
+			_ : _ = std.block_result(result)
+		}
+		out : u1 = std.if(is_float, on_float, on_integer)
+		_ : _ = std.return(out)
+	}
+	export is_less_equal : kind_compare_t = {
+		is_float : u1 = numbers.is_float(T)
+		on_float : block = {
+			result : u1 = float.is_less_equal(a, b)
+			_ : _ = std.block_result(result)
+		}
+		on_integer : block = {
+			result : u1 = integer.is_less_equal(a, b)
+			_ : _ = std.block_result(result)
+		}
+		out : u1 = std.if(is_float, on_float, on_integer)
+		_ : _ = std.return(out)
+	}
+	export is_greater : kind_compare_t = {
+		is_float : u1 = numbers.is_float(T)
+		on_float : block = {
+			result : u1 = float.is_greater(a, b)
+			_ : _ = std.block_result(result)
+		}
+		on_integer : block = {
+			result : u1 = integer.is_greater(a, b)
+			_ : _ = std.block_result(result)
+		}
+		out : u1 = std.if(is_float, on_float, on_integer)
+		_ : _ = std.return(out)
+	}
+	export is_greater_equal : kind_compare_t = {
+		is_float : u1 = numbers.is_float(T)
+		on_float : block = {
+			result : u1 = float.is_greater_equal(a, b)
+			_ : _ = std.block_result(result)
+		}
+		on_integer : block = {
+			result : u1 = integer.is_greater_equal(a, b)
+			_ : _ = std.block_result(result)
+		}
+		out : u1 = std.if(is_float, on_float, on_integer)
+		_ : _ = std.return(out)
+	}
+
+	export add : kind_binary_t = {
+		is_float : u1 = numbers.is_float(T)
+		on_float : block = {
+			result : T = float.add(a, b)
+			_ : _ = std.block_result(result)
+		}
+		on_integer : block = {
+			result : T = integer.add(a, b)
+			_ : _ = std.block_result(result)
+		}
+		out : T = std.if(is_float, on_float, on_integer)
+		_ : _ = std.return(out)
+	}
+	export subtract : kind_binary_t = {
+		is_float : u1 = numbers.is_float(T)
+		on_float : block = {
+			result : T = float.subtract(a, b)
+			_ : _ = std.block_result(result)
+		}
+		on_integer : block = {
+			result : T = integer.subtract(a, b)
+			_ : _ = std.block_result(result)
+		}
+		out : T = std.if(is_float, on_float, on_integer)
+		_ : _ = std.return(out)
+	}
+	export multiply : kind_binary_t = {
+		is_float : u1 = numbers.is_float(T)
+		on_float : block = {
+			result : T = float.multiply(a, b)
+			_ : _ = std.block_result(result)
+		}
+		on_integer : block = {
+			result : T = integer.multiply(a, b)
+			_ : _ = std.block_result(result)
+		}
+		out : T = std.if(is_float, on_float, on_integer)
+		_ : _ = std.return(out)
+	}
+	export divide : kind_binary_t = {
+		is_float : u1 = numbers.is_float(T)
+		on_float : block = {
+			result : T = float.divide(a, b)
+			_ : _ = std.block_result(result)
+		}
+		on_integer : block = {
+			result : T = integer.divide(a, b)
+			_ : _ = std.block_result(result)
+		}
+		out : T = std.if(is_float, on_float, on_integer)
+		_ : _ = std.return(out)
+	}
+	export remainder : kind_binary_t = {
+		is_float : u1 = numbers.is_float(T)
+		on_float : block = {
+			result : T = float.remainder(a, b)
+			_ : _ = std.block_result(result)
+		}
+		on_integer : block = {
+			result : T = integer.remainder(a, b)
+			_ : _ = std.block_result(result)
+		}
+		out : T = std.if(is_float, on_float, on_integer)
+		_ : _ = std.return(out)
+	}
+	export negate : kind_unary_t = {
+		is_float : u1 = numbers.is_float(T)
+		on_float : block = {
+			result : T = float.negate(v)
+			_ : _ = std.block_result(result)
+		}
+		on_integer : block = {
+			result : T = integer.negate(v)
+			_ : _ = std.block_result(result)
+		}
+		out : T = std.if(is_float, on_float, on_integer)
+		_ : _ = std.return(out)
+	}
+
+	export max : kind_binary_t = {
+		is_float : u1 = numbers.is_float(T)
+		on_float : block = {
+			result : T = float.max(a, b)
+			_ : _ = std.block_result(result)
+		}
+		on_integer : block = {
+			result : T = integer.max(a, b)
+			_ : _ = std.block_result(result)
+		}
+		out : T = std.if(is_float, on_float, on_integer)
+		_ : _ = std.return(out)
+	}
+	export min : kind_binary_t = {
+		is_float : u1 = numbers.is_float(T)
+		on_float : block = {
+			result : T = float.min(a, b)
+			_ : _ = std.block_result(result)
+		}
+		on_integer : block = {
+			result : T = integer.min(a, b)
+			_ : _ = std.block_result(result)
+		}
+		out : T = std.if(is_float, on_float, on_integer)
+		_ : _ = std.return(out)
+	}
+	export is_negative : kind_test_t = {
+		is_float : u1 = numbers.is_float(T)
+		on_float : block = {
+			result : u1 = float.is_negative(v)
+			_ : _ = std.block_result(result)
+		}
+		on_integer : block = {
+			result : u1 = integer.is_negative(v)
+			_ : _ = std.block_result(result)
+		}
+		out : u1 = std.if(is_float, on_float, on_integer)
+		_ : _ = std.return(out)
+	}
+	export is_positive : kind_test_t = {
+		is_float : u1 = numbers.is_float(T)
+		on_float : block = {
+			result : u1 = float.is_positive(v)
+			_ : _ = std.block_result(result)
+		}
+		on_integer : block = {
+			result : u1 = integer.is_positive(v)
+			_ : _ = std.block_result(result)
+		}
+		out : u1 = std.if(is_float, on_float, on_integer)
+		_ : _ = std.return(out)
+	}
+
+	// Emulated over `bitwise_and`, `bitwise_not`, `bitwise_or`, `bitwise_xor`, `if`, `integer.add`, `integer.is_equal`, `integer.is_less`, `integer.is_less_equal`, `integer.is_not_equal`, `integer.negate`, `integer.subtract`, `logical_and`, `logical_or`, `numbers.truncate`, `numbers.widen`, `pointers.load`, `pointers.store`, `reinterpret_bits`, `shift_left`, `shift_right`, `stack.allocate` and `while` (rule I-Extern).
 	export square_root : (T: deduced type, v: T) -> T
 
-	export shift_left : (T: deduced type, a: T, b: T) -> T
+	export shift_left : (T: deduced type, a: T, b: T) -> T // Emulated over `integer.add`, `integer.is_less`, `integer.subtract`, `pointers.load`, `pointers.store`, `stack.allocate` and `while` (rule I-Extern).
+	// Emulated over `bitwise_and`, `bitwise_not`, `bitwise_or`, `if`, `integer.add`, `integer.is_less`, `integer.is_negative`, `integer.is_not_equal`, `integer.negate`, `integer.subtract`, `logical_and`, `numbers.widen`, `pointers.load`, `pointers.store`, `shift_left`, `stack.allocate` and `while` (rule I-Extern).
 	export shift_right : (T: deduced type, a: T, b: T) -> T
-	export bitwise_xor : (T: deduced type, a: T, b: T) -> T
-	export bitwise_or : (T: deduced type, a: T, b: T) -> T
+	export bitwise_xor : (T: deduced type, a: T, b: T) -> T // Emulated over `bitwise_and`, `bitwise_not` and `bitwise_or` (rule I-Extern).
+	export bitwise_or : (T: deduced type, a: T, b: T) -> T // Emulated over `bitwise_and` and `bitwise_not` (rule I-Extern).
 	export bitwise_and : (T: deduced type, a: T, b: T) -> T
 	export bitwise_not : (T: deduced type, v: T) -> T
 
-	export logical_not : (v: u1) -> u1
-	export logical_and : (a: u1, b: u1) -> u1
-	export logical_or : (a: u1, b: u1) -> u1
+	export logical_not : (v: u1) -> u1 // Emulated over `bitwise_not` (rule I-Extern).
+	export logical_and : (a: u1, b: u1) -> u1 // Emulated over `bitwise_and` (rule I-Extern).
+	export logical_or : (a: u1, b: u1) -> u1 // Emulated over `bitwise_or` (rule I-Extern).
 
-	export is_negative : (T: deduced type, v: T) -> u1
-	export is_positive : (T: deduced type, v: T) -> u1
-	export is_infinite : (T: deduced type, v: T) -> u1
-	export is_not_a_number : (T: deduced type, v: T) -> u1
+	export is_infinite : (T: deduced type, v: T) -> u1 // Emulated over `float.is_equal` and `logical_or` (rule I-Extern).
+	export is_not_a_number : (T: deduced type, v: T) -> u1 // Emulated over `float.is_not_equal` (rule I-Extern).
+
+	// Software bodies for the prototypes above that can be written over a few primitives, as the private namespace `std.emulated` (rule I-Extern).
+	// Pasted rather than imported, since those bodies call `std` and an imported file cannot see its importer (rules I-Paste, I-Import).
+	emulated_path : c_string = "standard.emulated.doir"
+	_ : pointer_sized = compiler.paste_file(emulated_path)
 }
