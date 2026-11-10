@@ -500,7 +500,7 @@ where $\pi^{*}$ applies $\pi$ to every entity id inside a component value (`Pare
   \frac{f : \text{FunctionType} \quad \text{val}(f) = \{\text{FunctionReturn}, \text{Valueless}\}}{f \text{ is callable; a call to it calls the definition bound to it}}
   $$
   $$
-  \text{bound to: the host (H-Hook); else, for target } \tau\text{, the definition with the same } \text{SymbolName} \text{ in } \text{LevelOf}(f) \text{ or a level of } \text{View}_\tau(\text{LevelOf}(f)) \text{ (R-Unqual), lowest rank first; else the linker}
+  \text{bound to: the host (H-Hook); else the library it was loaded from (FP-Load); else, for target } \tau\text{, the definition with the same } \text{SymbolName} \text{ in } \text{LevelOf}(f) \text{ or a level of } \text{View}_\tau(\text{LevelOf}(f)) \text{ (R-Unqual), lowest rank first; else the linker}
   $$
   > **In Plain English:** Naming a function with a type but no body is how DOIR refers to something it does not define.
   > A host hook is supplied by the compiler.
@@ -575,7 +575,8 @@ where $\pi^{*}$ applies $\pi$ to every entity id inside a component value (`Pare
   | `std.functions.never_inline`    | `NeverInline`       |
   | `std.functions.always_inline_recursively`  | `Flatten`           |
 
-  A type carrying both `AlwaysComptime` and `NeverComptime`, both `AlwaysComptime` and `SharedBody`, or both `Inline` and `NeverInline`, is ill-formed. Not flag modifiers: the constructors `std.types.pointer`, `std.types.array`, `std.types.function_pointer` (`M-Ctor`) and `std.types.distinct_copy` (`M-Distinct`), `std.types.set_attribute_id` (`AT-Id`), and `std.functions.set_symbol_name` (`M-SymbolName`).
+  A type carrying both `AlwaysComptime` and `NeverComptime`, both `AlwaysComptime` and `SharedBody`, or both `Inline` and `NeverInline`, is ill-formed.
+  Not flag modifiers: the constructors `std.types.pointer`, `std.types.array`, `std.types.function_pointer` (`M-Ctor`) and `std.types.distinct_copy` (`M-Distinct`), `std.types.set_attribute_id` (`AT-Id`), `std.functions.set_symbol_name` (`M-SymbolName`) and `std.functions.load_from_library` (`FP-Load`).
 - **[M-SymbolName] Renaming Is an In-Place Mutation:**  
   $$
   \frac{e \vdash a \Downarrow f \quad e \vdash n \Downarrow s}{\langle c : \_ = \mathrm{std.functions.set\_symbol\_name}(a, n) \rangle \rightsquigarrow \text{SymbolName}(f) := s; \quad \text{Alias}(c) := f}
@@ -816,7 +817,42 @@ where $\pi^{*}$ applies $\pi$ to every entity id inside a component value (`Pare
   $$
   \frac{f : (p_1 : \tau_1, \dots, p_k : \tau_k, q_1 : \sigma_1, \dots) \to \rho \quad a_i : \tau_i \text{ comptime}}{\mathrm{std.functions.bind\_arguments}(f, a_1, \dots, a_k) \rightsquigarrow f' : (q_1 : \sigma_1[p := a], \dots) \to \rho[p := a]}
   $$
-  > **In Plain English:** `bind_arguments` binds the leading parameters of a function to comptime arguments — usually types, deduced ones included, since there is no call site to deduce them from, but values of any type may be bound — and gives back the specialization as an ordinary function entity: callable by name, and addressable by `std.functions.address`, which is how a type-erased container stores "end the lifetime of a `T`" as a hook. The bound parameters disappear from its type. Results are memoized like a former (`TF-Memo`), so specializing twice with the same arguments names one function, and the function `C-Specialize` would generate for a call with those arguments is that same entity. The destination becomes an alias of it (`A-Bind`). The arguments are a pack (`F-Pack`); `std.meta.functions.bind_arguments` is the entity form.
+  > **In Plain English:** `bind_arguments` binds the leading parameters of a function to comptime arguments — usually types, deduced ones included, since there is no call site to deduce them from, but values of any type may be bound — and gives back the specialization as an ordinary function entity: callable by name, and addressable by `std.functions.address`, which is how a type-erased container stores "end the lifetime of a `T`" as a hook.
+  > The bound parameters disappear from its type.
+  > Results are memoized like a former (`TF-Memo`), so specializing twice with the same arguments names one function, and the function `C-Specialize` would generate for a call with those arguments is that same entity.
+  > The destination becomes an alias of it (`A-Bind`).
+  > The arguments are a pack (`F-Pack`); `std.meta.functions.bind_arguments` is the entity form.
+- **[FP-Library] Loading a Dynamic Library:**  
+  $$
+  \frac{e \vdash p_1 \Downarrow s_1 \quad \dots \quad e \vdash p_m \Downarrow s_m \quad m \ge 1}{\langle c : \mathtt{std.library} = \mathrm{std.load\_library}(p_1, \dots, p_m) \rangle \rightsquigarrow \text{Alias}(c) := L_{\langle s_1, \dots, s_m \rangle} \text{ (memoized per list)}; \quad \text{the host loads the first } s_i \text{ it can}; \quad \text{every } \tau \in \text{Live}(c) \text{ records } \langle s_1, \dots, s_m \rangle \text{ as a dynamic dependency}}
+  $$
+  > **In Plain English:** `std.load_library("libsqlite3.so.0", "libsqlite3.so")` names a dynamic library (a `.so`, `.dll` or `.dylib`) by one or more candidate paths, tried in the order they are listed, and has two effects, one for each side of the build.
+  > The paths are a pack (`F-Pack`) of comptime `std.c_string`s; an empty pack, or an element of another type, is ill-formed.
+  > At comptime the host tries each path in turn and loads the first one it can into the compiler's own process, so code the interpreter runs can call the prototypes bound to it (`FP-Load`).
+  > For the program, the call tells the linker that every target the call is live for (`T-Live`) loads the library dynamically, trying the same paths in the same order when it starts and keeping the first that loads; nothing is copied into the program.
+  > With one path that is an ordinary dependency, a `DT_NEEDED` entry or a DLL import; with several, the program's startup code tries them through the target's dynamic loader and fills the library's import slots (`FP-Load`) before `main` runs, and a program for which none loads reports the paths it tried and stops there.
+  > Which path the compiler loaded says nothing about which one the program will: each side runs its own search, so a program built on one system finds its library on another.
+  > Each path is handed as written to the host's loader and to the linker, so a bare name is found through each one's search path, and a program that targets several systems may list each system's name or pick them per target (`std.targets.compile_for`).
+  > The result is a `std.library`, an always-comptime handle naming the library's entity, so it cannot be stored or converted to runtime (`MEM-Escape`).
+  > Results are memoized by the list of paths, like a former (`TF-Memo`): loading the same list twice names one library and records one dependency.
+  > The library stays loaded until the compiler exits; there is no unloading.
+  > When the host can load none of the paths it is a compile error at the call, annotating each path with the loader's reason for refusing it, whose hint is to install the library or add the path it lives at.
+  > A program's comptime answers now depend on a native library, so `H-Det` holds only as far as that library gives the same answers on every host.
+- **[FP-Load] Binding a Prototype to a Library:**  
+  $$
+  \frac{e \vdash l \Downarrow L \quad e \vdash a \Downarrow f \quad \text{val}(f) = \{\text{FunctionReturn}, \text{Valueless}\}}{\langle c : \_ = \mathrm{std.functions.load\_from\_library}(l, a) \rangle \rightsquigarrow \text{Library}(f) := L; \quad \text{Alias}(c) := f}
+  $$
+  > **In Plain English:** `load_from_library` takes a library and a prototype, a function declared with a type but no body (`I-Extern`), and binds the prototype to the function of the same symbol in that library.
+  > Like every modifier it mutates the function it is given (`M-Alias`) rather than making a copy, and its result is only another name for that function; it takes effect at its lexical position (`C-Order`), is never removed as dead code (`M-Impure`), and cannot touch a frozen declaration (`M-Freeze`).
+  > The symbol looked up is the prototype's symbol name, its `R-Mangle` name unless `std.functions.set_symbol_name` renamed it (`M-SymbolName`), which is how a prototype inside a namespace binds to a C function such as `sqlite3_open`; the name is read when the program is linked, so a rename before or after the load is the same.
+  > From then on a call of the prototype by name calls the library's function, ahead of any definition a lower level or the linker would otherwise bind (`I-Extern`).
+  > At comptime the host looks the symbol up in the copy it loaded (`FP-Library`), and a call the interpreter runs calls that address in the compiler's process (`C-Interpret`).
+  > Such a call crosses into native code: each argument is passed in the host's C calling convention, a pointer pointing into comptime memory (`MEM-Comptime`), and a call whose parameter or result type has a different layout on the host than on the target (`H-Target`) is a compile error at the call, whose hint names the type.
+  > For the program, the linker imports the symbol from the library for every target the prototype is live for (`T-Live`), through a slot filled when the program loads the library (a GOT or IAT entry, or one the startup code fills when `FP-Library` lists several paths), and a call of the prototype goes through that slot; `std.functions.address` of it gives the imported address.
+  > So the prototype's type may not take a pack, a block or an always-comptime argument, since a native function has one fixed shape (`FP-Call`).
+  > Binding the same prototype to the same library again changes nothing (`M-Idempotent`); binding it to a second library, or binding a function with a body, is ill-formed, a compile error at the call whose hint names the earlier library or the body.
+  > A symbol the library does not define is a compile error at the call whose hint names the symbol and the library.
+  > `std.meta.functions.load_from_library` is the entity form, and `std.functions.load_from_library` wraps it (`RF-Wrapper`).
 
 ---
 
@@ -936,7 +972,10 @@ where $\pi^{*}$ applies $\pi$ to every entity id inside a component value (`Pare
   $$
   \frac{f \text{ a bodyless prototype} \quad \text{Rank}(f) \ge 1 \quad \text{AlwaysComptime} \in \text{Flags}(\alpha(\text{TypeOf}(f)))}{f \text{ is supplied by the comptime host, at every level, for every target}}
   $$
-  > **In Plain English:** A prototype whose type is marked `std.types.always_comptime` only ever runs inside the compiler, so the compiler's host supplies it: `std.meta.*`, `std.import`, `std.attributes.*`, `std.packs.*`, `std.diagnostics.*`, `std.functions.address` and `bind_arguments`, `std.static.allocate`, `std.pointers.read_only`, and the rest listed in [`reference/host.doir`](reference/host.doir). Every other prototype is supplied by a lower level or the linker (`I-Extern`). The bodyless builtins of level 0 are not hooks: they are the bootstrap, which the compiler implements itself (`H-Boot`). A hook is neither DOIR source nor machine code: it is one entry in the `HostServices` table (`H-Services`), which a mizu backend reaches through an instruction of the comptime machine and a native JIT through a direct call.
+  > **In Plain English:** A prototype whose type is marked `std.types.always_comptime` only ever runs inside the compiler, so the compiler's host supplies it: `std.meta.*`, `std.import`, `std.attributes.*`, `std.packs.*`, `std.diagnostics.*`, `std.functions.address` and `bind_arguments`, `std.load_library`, `std.static.allocate`, `std.pointers.read_only`, and the rest listed in [`reference/host.doir`](reference/host.doir).
+  > Every other prototype is supplied by a lower level or the linker (`I-Extern`).
+  > The bodyless builtins of level 0 are not hooks: they are the bootstrap, which the compiler implements itself (`H-Boot`).
+  > A hook is neither DOIR source nor machine code: it is one entry in the `HostServices` table (`H-Services`), which a mizu backend reaches through an instruction of the comptime machine and a native JIT through a direct call.
 - **[H-Services] The HostServices Table:**  
   $$
   \text{HostServices} = \langle h_1, \dots, h_n \rangle \quad \text{one C-ABI function pointer per host hook listed in } \texttt{reference/host.doir}\text{, looked up by name (H-ABI)}
@@ -985,6 +1024,7 @@ where $\pi^{*}$ applies $\pi$ to every entity id inside a component value (`Pare
   \text{answer}(c, h_1) = \text{answer}(c, h_2) \quad \text{for any valid hosts } h_1, h_2
   $$
   > **In Plain English:** Compiling the exact same DOIR code on Windows, Linux, or macOS will always produce the identical compile-time results.
+  > The one exception is a call into a native library loaded with `std.load_library`, whose answers are the library's (`FP-Library`).
 
 ---
 
@@ -1041,7 +1081,11 @@ where $\pi^{*}$ applies $\pi$ to every entity id inside a component value (`Pare
   $$
   \mathrm{std.functions}.\mu(f) = \mathrm{std.meta.from\_entity}(\mathrm{std.meta.functions}.\mu(\mathrm{std.meta.entity\_of}(f))) \quad \text{for every } \mu \in \mathtt{std.functions}
   $$
-  > **In Plain English:** Every `std.types` and `std.functions` entry is an always-inline wrapper written in DOIR over its `std.meta` twin, so each primitive exists twice: once taking source values, once taking stored entities. A metaprogram holding an entity from `std.meta.entity_of`, `std.meta.member`, or `std.types.field` can only continue through the `std.meta` versions, because the wrappers need a binding to take the entity of. Results that are types are turned back into names with `std.meta.from_entity`; `std.types.field` returns the field's entity as is, since a field is named by its entity (`RF-Fields`). `std.numbers` wraps `std.meta.numbers` the same way. Exceptions: `std.numbers.integer_available` and `std.numbers.float_available` take no type, so they are hooks with no entity form (`T-Optional`); `std.types.self` has no entity form (`TF-Self`); `std.functions.address` and `bind_arguments` are hooks in both namespaces, because their results are values or functions rather than types (`FP-Address`, `FP-Bind`); `std.pointers.read_only` is a hook with no entity form; `std.functions.create_overload_set` takes nothing, so its wrapper only calls `from_entity` on the new set (`TF-Overload`).
+  > **In Plain English:** Every `std.types` and `std.functions` entry is an always-inline wrapper written in DOIR over its `std.meta` twin, so each primitive exists twice: once taking source values, once taking stored entities.
+  > A metaprogram holding an entity from `std.meta.entity_of`, `std.meta.member`, or `std.types.field` can only continue through the `std.meta` versions, because the wrappers need a binding to take the entity of.
+  > Results that are types are turned back into names with `std.meta.from_entity`; `std.types.field` returns the field's entity as is, since a field is named by its entity (`RF-Fields`).
+  > `std.numbers` wraps `std.meta.numbers` the same way.
+  > Exceptions: `std.numbers.integer_available` and `std.numbers.float_available` take no type, so they are hooks with no entity form (`T-Optional`); `std.types.self` has no entity form (`TF-Self`); `std.functions.address` and `bind_arguments` are hooks in both namespaces, because their results are values or functions rather than types (`FP-Address`, `FP-Bind`); `std.load_library` takes no type or function, so it is a hook with no entity form (`FP-Library`); `std.pointers.read_only` is a hook with no entity form; `std.functions.create_overload_set` takes nothing, so its wrapper only calls `from_entity` on the new set (`TF-Overload`).
 - **[RF-Fields] Field Enumeration:**  
   $$
   \frac{T : \text{TypeDefinition} \quad \text{Block}(T) = \langle f_1, \dots, f_n \rangle}{\mathrm{std.types.field\_count}(T) = n \quad \mathrm{std.types.field}(T, i) = \mathrm{std.meta.entity\_of}(f_i) \quad \mathrm{std.types.field\_type}(T, i) = \text{TypeOf}(f_i)}

@@ -4,9 +4,10 @@
 //
 // How an argument crosses: one of an always-comptime type (`type`, `std.meta.entity`, `pack`, `compiler.level`) as the `compiler.entity` naming it; one of a fixed type as its value in the target's layout (`H-Target`), written here as its `std` type. A hook's value of a deduced type crosses as the entity naming its binding, and so does a `_` result, which the destination aliases (`A-Bind`). A primitive's value of a deduced type crosses as a `compiler.byte_pointer` to its bytes in comptime memory, its type's entity giving the layout, and a result of a deduced type is written through `result`.
 host_services : namespace = {
-	revision : compiler.pointer_sized = 2
+	revision : compiler.pointer_sized = 3
 
 	import : (path: std.c_string) -> std.pointer_sized
+	load_library : (paths: compiler.entity) -> compiler.entity
 
 	// Store and reflection.
 	meta : namespace = {
@@ -74,6 +75,7 @@ host_services : namespace = {
 			address : (function: compiler.entity) -> compiler.entity
 			set_symbol_name : (function: compiler.entity, new_name: std.c_string) -> compiler.entity
 			bind_arguments : (function: compiler.entity, arguments: compiler.entity) -> compiler.entity
+			load_from_library : (source: compiler.entity, function: compiler.entity) -> compiler.entity
 			create_overload_set : () -> compiler.entity
 			add_overload : (overloads: compiler.entity, function: compiler.entity) -> compiler.entity
 		}

@@ -280,6 +280,19 @@ std : namespace = {
 	_ : type = types.always_comptime(import_t)
 	export import : import_t
 
+	// Rule FP-Library: a loaded dynamic library, named by its entity.
+	// Always comptime and unique, like an overload set, so it is equivalent to no other type (rule S-Struct) and never reaches memory (rule MEM-Escape).
+	library_shape : type = {}
+	export library : type = types.distinct_copy(library_shape)
+	_ : type = types.always_comptime(library)
+
+	// Loads a library into the compiler for comptime calls, and records it as a dynamic dependency of every target the call is live for (rule FP-Library).
+	// `paths` holds one or more `c_string`s, tried in order at comptime and again when the program starts; the first that loads is the library.
+	// Each is passed as written to the host's loader and to the linker; loading none is a compile error at comptime and stops the program before `main` at runtime.
+	load_library_t : type = (paths: pack) -> library
+	_ : type = types.always_comptime(load_library_t)
+	export load_library : load_library_t
+
 	meta : namespace = {
 		// Entity ids are compiler-host values, always comptime, and of their own type so E-Remap can find every holder. Defined at level 0 because the `compiler_impl` hooks need it below `std` (rule L-Mono).
 		export entity : alias = compiler.entity
@@ -465,6 +478,11 @@ std : namespace = {
 			_ : type = std.types.always_comptime(bind_arguments_t)
 			export bind_arguments : bind_arguments_t
 
+			// The entity form of `std.functions.load_from_library` (rule FP-Load): binds the prototype `function` to `source`, a library's entity, in place, and returns `function`.
+			load_from_library_t : type = (source: entity, function: entity) -> entity
+			_ : type = std.types.always_comptime(load_from_library_t)
+			export load_from_library : load_from_library_t
+
 			// The entity forms of `std.functions.create_overload_set` and `add_overload` (rule TF-Overload).
 			create_overload_set_t : type = () -> entity
 			_ : type = std.types.always_comptime(create_overload_set_t)
@@ -575,6 +593,20 @@ std : namespace = {
 		bind_arguments_t : type = (T: deduced type, function: T, arguments: pack) -> _
 		_ : type = types.always_comptime(bind_arguments_t)
 		export bind_arguments : bind_arguments_t
+
+		// Binds the bodyless prototype `function` to its symbol in `source` in place, like every modifier (rule FP-Load); the result names the same function.
+		// Calls then reach the compiler's copy at comptime and the program's import of the symbol at runtime.
+		// A function with a body, one already bound to another library, or a symbol `source` does not define, is a compile error.
+		load_from_library_t : type = (T: deduced type, source: library, function: T) -> T
+		_ : type = types.always_comptime(load_from_library_t)
+		_ : type = functions.always_inline(load_from_library_t)
+		export load_from_library : load_from_library_t = {
+			source_entity : meta.entity = meta.entity_of(source)
+			function_entity : meta.entity = meta.entity_of(function)
+			out_entity : meta.entity = meta.functions.load_from_library(source_entity, function_entity)
+			out : T = meta.from_entity(out_entity)
+			_ : _ = std.return(out)
+		}
 
 		// Calling-convention hooks live in compiler_impl (rule T-Sig).
 	}
