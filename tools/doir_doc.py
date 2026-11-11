@@ -9,7 +9,7 @@ A `//` or `#` comment directly above a declaration outside every function body a
 Namespaces and type bodies with declarations become sections, each listing its declarations in source order before its subsections; a declaration is shown with its signature, and a `_` declaration only when it is documented.
 A declaration's trailing comment is appended to its documentation.
 
-With `--check`, nothing is written; instead each comment that breaks AGENTS.md is reported: a sentence hard-wrapped over several lines, a documentation line holding more than one sentence, a free-standing comment over 25 words (rule tags not counted), or a file without a comment at its top.
+With `--check`, nothing is written; instead each comment that breaks AGENTS.md is reported: a sentence hard-wrapped over several lines, a comment line holding more than one sentence, a free-standing comment over 25 words (rule tags not counted), or a file without a comment at its top.
 
     uv run tools/doir_doc.py [-o DIR] [file.doir...]    # write DIR/<name>.md for each file (default: bin/docs)
     uv run tools/doir_doc.py --check [file.doir...]
@@ -225,12 +225,10 @@ def problems(source: Source) -> list[str]:
 		out.append(f"{source.path}:1: no comment at the top of the file; add one saying what the file is")
 	for comment in source.comments:
 		prose = [line for p in comment.paragraphs() for line in p if not is_continuation(line)]
-		if comment.documents and any(sentence_breaks(line) for line in prose):
-			out.append(f"{source.path}:{comment.first}: documentation over lines {comment.first}-{comment.last} has a line holding more than one sentence; put each sentence on its own line")
+		if any(sentence_breaks(line) for line in prose):
+			out.append(f"{source.path}:{comment.first}: comment over lines {comment.first}-{comment.last} has a line holding more than one sentence; put each sentence on its own line")
 		if any(len(p) > 1 and not all(is_continuation(l) or SENTENCE_END.search(l.rstrip()) for l in p[:-1]) for p in comment.paragraphs()):
 			out.append(f"{source.path}:{comment.first}: comment hard-wrapped over lines {comment.first}-{comment.last}; end each line with its sentence, since editors here soft-wrap")
-		elif not comment.documents and len(prose) > 1:
-			out.append(f"{source.path}:{comment.first}: free-standing comment over lines {comment.first}-{comment.last}; write it on a single line")
 		words = len(TAG.sub("", " ".join(comment.lines)).split())
 		if not comment.documents and words > WORD_CAP:
 			out.append(f"{source.path}:{comment.first}: free-standing comment of {words} words, over the cap of {WORD_CAP}; shorten it, or move it directly above the declaration it documents")

@@ -58,14 +58,14 @@ def code_of(line):
 	return literal.sub('""', line).split('//')[0]
 
 
-def is_function(decl):
-	"""Whether the declaration line `decl` declares a function or template, which needs an example."""
-	if decl.startswith(('struct', 'enum', 'alias', 'module', 'package struct', 'package enum')):
-		return decl.startswith('struct') and '(' in decl.split('{')[0]
-	if '=' in decl.split('(')[0]:
+def is_function(declaration):
+	"""Whether the declaration line `declaration` declares a function or template, which needs an example."""
+	if declaration.startswith(('struct', 'enum', 'alias', 'module', 'package struct', 'package enum')):
+		return declaration.startswith('struct') and '(' in declaration.split('{')[0]
+	if '=' in declaration.split('(')[0]:
 		return False
-	return decl.startswith(('mixin template', 'pragma(inline')) or bool(
-		re.match(r'(package\s+|extern\s*\(C\)\s*)?[\w!().\[\]* ]+?\s+\w+(\([^)]*\))?\(', decl))
+	return declaration.startswith(('mixin template', 'pragma(inline')) or bool(
+		re.match(r'(package\s+|extern\s*\(C\)\s*)?[\w!().\[\]* ]+?\s+\w+(\([^)]*\))?\(', declaration))
 
 
 def check(path, lines, problems, examples):
@@ -76,7 +76,7 @@ def check(path, lines, problems, examples):
 		while j < len(lines) and not lines[j].strip():
 			j += 1
 		documented.add(j)
-		decl = lines[j].strip() if j < len(lines) else ''
+		declaration = lines[j].strip() if j < len(lines) else ''
 		k = j
 		while k < len(lines) and lines[k].strip().startswith('pragma('):
 			k += 1
@@ -93,8 +93,8 @@ def check(path, lines, problems, examples):
 			elif code is not None:
 				code[1].append(text)
 		ditto = any(t.strip().lower().startswith('ditto') for _, t in body)
-		if is_function(decl) and not found and not ditto and not entry.match(decl):
-			problems.append(f'{path}:{j + 1}: documented without an example: {decl}; add an `Examples:` section with a `---` block')
+		if is_function(declaration) and not found and not ditto and not entry.match(declaration):
+			problems.append(f'{path}:{j + 1}: documented without an example: {declaration}; add an `Examples:` section with a `---` block')
 		examples += found
 
 	# A top-level declaration with no DDoc directly above it (past any pragma).

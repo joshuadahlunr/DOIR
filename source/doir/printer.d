@@ -1,7 +1,8 @@
 /// The pretty printer: a parsed block written back out as DOIR source, one declaration per line, laid out by `doir.format` as the language server formats a file.
 /// It inverts `doir.syntax.parser`'s build, so the text parses back into an equivalent store: the same declarations, names, types, values, flags and source annotations (`AT-Source`).
 /// Comments, `language` blocks (`I-Language`) and literal spellings are not kept: a character or hexadecimal literal prints as its decimal value, a raw string as an escaped one, and a float as the shortest decimal that reads back to the same `double`.
-/// No literal is a NaN or reads back as positive infinity's own spelling, so a declaration's NaN or positive infinity prints as the `N-Limits` call on its written type, `std.numbers.not_a_number(T)` or `std.numbers.infinity(T)`, which reads back as that call rather than as a constant. A parameter default cannot be a call, so an infinite one prints as the literal `1e999` and a NaN one as the call, which does not parse.
+/// No literal is a NaN or reads back as positive infinity's own spelling, so a declaration's NaN or positive infinity prints as the `N-Limits` call on its written type, `std.numbers.not_a_number(T)` or `std.numbers.infinity(T)`, which reads back as that call rather than as a constant.
+/// A parameter default cannot be a call, so an infinite one prints as the literal `1e999` and a NaN one as the call, which does not parse.
 ///
 /// It reads the components the parser writes, the `Lookup*` names among them, so it prints a store before name resolution.
 ///
@@ -46,6 +47,7 @@ static import doir.format;
 static import doir.strings;
 static import doir.engine.locations;
 static import doir.syntax.lexer;
+static import doir.syntax.parser;
 static import doir.syntax.tables;
 
 public import ecrs.registry : EntityId, invalidEntity;
@@ -54,6 +56,22 @@ public import ecrs.registry : EntityId, invalidEntity;
 
 
 // --- spelling ----------------------------------------------------------------
+
+// Whether all of `text` lexes as one token of `kind`: what the printer's spellings promise the parser.
+private bool lexesAs(const(char)[] text, doir.syntax.lexer.TokenKind kind) {
+	if (text.length == 0) return false;
+	auto cursor = doir.syntax.lexer.Cursor(text);
+	immutable t = doir.syntax.lexer.next(cursor);
+	return t.kind == kind && t.length == text.length;
+}
+
+// Whether `escaped` decodes back to exactly `text`, or the check itself could not allocate.
+private bool decodesTo(const(char)[] escaped, const(char)[] text) {
+	char* decoded = null;
+	scope(exit) fp.string.free(decoded);
+	bool refused;
+	return doir.syntax.parser.decodeString(escaped, &decoded, refused) is null && (refused || fp.string.slice(decoded) == text);
+}
 
 // Whether `name` lexes as a plain `Identifier` that `doir.syntax.parser.nameOf` reads back as itself, so it needs no `%"..."`.
 private bool isPlain(const(char)[] name) {
@@ -74,6 +92,7 @@ private bool isPlain(const(char)[] name) {
 		immutable c = fp.string.utf.decode(name, i, valid);
 		if (!valid || (c != '.' && !doir.syntax.lexer.isIdentifierContinue(c))) return false;
 	}
+	assert(lexesAs(name, doir.syntax.lexer.TokenKind.identifier), "doir.printer.isPlain: a plain name the lexer does not read as one identifier");
 	return true;
 }
 
@@ -81,11 +100,13 @@ private bool isPlain(const(char)[] name) {
 private bool appendEscaped(ref char* out_, const(char)[] text) {
 	static immutable hex = "0123456789abcdef";
 	bool afterByte = false; // a `\x` escape is greedy, so a hex digit after one is escaped too
+	immutable begin = fp.string.length(out_);
 	size_t i = 0;
 	while (i < text.length) {
 		immutable start = i;
 		bool valid;
 		immutable c = fp.string.utf.decode(text, i, valid);
+		assert(i > start && i <= text.length, "doir.printer.appendEscaped: decoding did not advance within the text");
 		if (!valid) { // `decode` consumed the one byte, which is escaped
 			immutable b = cast(ubyte) text[start];
 			if (!fp.string.append(out_, "\\x", hex[b >> 4 .. (b >> 4) + 1], hex[b & 15 .. (b & 15) + 1])) return false;
@@ -113,6 +134,7 @@ private bool appendEscaped(ref char* out_, const(char)[] text) {
 		if (!ok) return false;
 		afterByte = false;
 	}
+	assert(decodesTo(fp.string.slice(out_)[begin .. $], text), "doir.printer.appendEscaped: the escaped text decodes to other bytes");
 	return true;
 }
 
@@ -125,8 +147,11 @@ private bool appendFloat(ref char* out_, double value) {
 	if (value == double.infinity || value == -double.infinity) return fp.string.append(out_, value < 0 ? "-" : "", infinityLiteral);
 	immutable start = fp.string.length(out_);
 	if (!fp.string.numbers.appendFloat(out_, value)) return false;
-	foreach (c; fp.string.slice(out_)[start .. $]) if (c == '.' || c == 'e') return true;
-	return fp.string.concatenate(out_, ".0");
+	bool point = false;
+	foreach (c; fp.string.slice(out_)[start .. $]) point = point || c == '.' || c == 'e';
+	if (!point && !fp.string.concatenate(out_, ".0")) return false;
+	assert(lexesAs(fp.string.slice(out_)[start .. $], doir.syntax.lexer.TokenKind.float_), "doir.printer.appendFloat: the spelling does not lex as a float");
+	return true;
 }
 
 
@@ -197,6 +222,7 @@ private bool appendType(ref Printer printer, EntityId e, bool parameter, bool qu
 	return appendFunctionType(printer, typeOf.type);
 }
 
+// bounded: doir.syntax.parser.maxNesting, the deepest function types a commit builds
 // `(a: T, b: U = 5) -> V`, from function type `functionType`'s parameters and return type (`R-Param`, `F-Default`).
 private bool appendFunctionType(ref Printer printer, EntityId functionType) {
 	if (!tokens(printer, "(")) return false;

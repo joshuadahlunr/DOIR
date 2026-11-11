@@ -51,7 +51,8 @@ private struct Named {
 	EntityId e;
 }
 
-// The name of `e`, or `unnamed` for `_`. Reparse matches a named entry by name, so its name never changes in place.
+// The name of `e`, or `unnamed` for `_`.
+// Reparse matches a named entry by name, so its name never changes in place.
 private doir.strings.StringId nameOf(ref doir.query.QueryEngine engine, EntityId e) {
 	auto n = ecrs.context.findComponent!(doir.components.ast.Name)(*engine.store, e);
 	return n is null ? doir.strings.unnamed : n.value;

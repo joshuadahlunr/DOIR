@@ -1,4 +1,5 @@
-/// Character tables generated from `doir.peg` by `tools/gen_tables.py`; do not edit. Each table is sorted, non-overlapping inclusive code point ranges, searched by `doir.syntax.lexer`.
+/// Character tables generated from `doir.peg` by `tools/gen_tables.py`; do not edit.
+/// Each table is sorted, non-overlapping inclusive code point ranges, searched by `doir.syntax.lexer`.
 module doir.syntax.tables;
 
 /// `UnicodeIdentifierStart`.

@@ -70,6 +70,7 @@ private void callHints(ref doir.lsp.session.Session s, bc.json.Value hints, cons
 	}
 }
 
+// bounded: doir.syntax.parser.maxNesting, the deepest blocks a commit builds
 // Appends to `hints` the hints of every call declaration below `block`, which starts at `base`, that overlaps bytes `low` to `high`.
 private void hintsIn(ref doir.lsp.session.Session s, bc.json.Value hints, const fp.rope.Rope text, EntityId file, EntityId block, size_t base, size_t low, size_t high) {
 	auto children = doir.lsp.store.childrenOf(s, block);

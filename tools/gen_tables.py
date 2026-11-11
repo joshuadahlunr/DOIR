@@ -79,7 +79,8 @@ Raises `pe.Error` if the grammar does not compile."""
 	assert all(c not in (0x0A, 0x0D) for r in space for c in r)
 	keywords = "".join(f'\t"{w}",\n' for w in words)
 	return (
-		"/// Character tables generated from `doir.peg` by `tools/gen_tables.py`; do not edit. Each table is sorted, non-overlapping inclusive code point ranges, searched by `doir.syntax.lexer`.\n"
+		"/// Character tables generated from `doir.peg` by `tools/gen_tables.py`; do not edit.\n"
+		"/// Each table is sorted, non-overlapping inclusive code point ranges, searched by `doir.syntax.lexer`.\n"
 		"module doir.syntax.tables;\n\n"
 		+ table("identifierStart", "`UnicodeIdentifierStart`.", merged(start)) + "\n"
 		+ table("identifierContinue", "`UnicodeIdentifierContinue`.", merged(cont)) + "\n"

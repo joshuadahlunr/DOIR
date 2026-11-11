@@ -85,7 +85,9 @@ StringId find(ref Strings strings, const(char)[] s) {
 /// assert(intern(strings, "a") == a && intern(strings, "b") != a);
 /// ---
 StringId intern(ref Strings strings, const(char)[] s) {
-	return StringId(bc.interner.intern(strings.table, s));
+	immutable id = StringId(bc.interner.intern(strings.table, s));
+	assert(id == refused || text(strings, id) == s, "doir.strings: an id that does not spell what was interned");
+	return id;
 }
 
 /// The number of strings interned.

@@ -26,7 +26,8 @@ private struct Comment {
 	const(char)[] text;
 }
 
-// The text, after its marker and one space, of the `//` or `#` comment that bytes `start` to `end` of `text` hold with only whitespace; null if they hold anything else, or on refusal. `buffer` holds the copied bytes the text is in; the caller frees it.
+// The text, after its marker and one space, of the `//` or `#` comment that bytes `start` to `end` of `text` hold with only whitespace; null if they hold anything else, or on refusal.
+// `buffer` holds the copied bytes the text is in; the caller frees it.
 private std.typecons.Nullable!Comment lineCommentIn(const fp.rope.Rope text, size_t start, size_t end, ref char* buffer) {
 	fp.string.free(buffer);
 	buffer = fp.rope.text(text, start, end).get(null);
@@ -45,7 +46,8 @@ private std.typecons.Nullable!Comment lineCommentIn(const fp.rope.Rope text, siz
 	return comment;
 }
 
-// Appends the documentation of the declaration at `found` to `out_`, as `doir_doc` reads it: the comment lines directly above it, each a paragraph, then its trailing comment. False on refusal.
+// Appends the documentation of the declaration at `found` to `out_`, as `doir_doc` reads it: the comment lines directly above it, each a paragraph, then its trailing comment.
+// False on refusal.
 private bool appendDocumentation(const fp.rope.Rope text, doir.lsp.store.Found found, ref char* out_) {
 	char* buffer = null;
 	scope(exit) fp.dynarray.free(buffer);
@@ -69,7 +71,8 @@ private bool appendDocumentation(const fp.rope.Rope text, doir.lsp.store.Found f
 	return trailing.isNull || fp.string.append(out_, written ? "\n\n" : "", trailing.get.text);
 }
 
-// Appends the declaration at `found` as hover shows it to `out_`: its text up to the brace opening its block, if it has one, or all of it. False on refusal.
+// Appends the declaration at `found` as hover shows it to `out_`: its text up to the brace opening its block, if it has one, or all of it.
+// False on refusal.
 private bool appendHeader(ref doir.lsp.session.Session s, const fp.rope.Rope text, doir.lsp.store.Found found, ref char* out_) {
 	char* bytes = fp.rope.text(text, found.start, found.end).get(null);
 	scope(exit) fp.dynarray.free(bytes);

@@ -3,6 +3,7 @@ module doir.lsp.features.folding;
 
 static import fp.rope;
 static import fp.string;
+static import fp.tree;
 
 static import bc.json;
 static import ecrs.context;
@@ -19,12 +20,17 @@ public import ecrs.registry : EntityId;
 
 @nogc nothrow:
 
-// Appends to `ranges` the folding ranges of `block`'s blocks over several lines, and theirs.
-private void foldings(ref doir.lsp.session.Session s, bc.json.Value ranges, const fp.rope.Rope text, EntityId block, size_t base) {
-	foreach (child; doir.lsp.store.childrenOf(s, block)) {
-		immutable span = ecrs.context.getComponent!(doir.components.source.SourceSpan)(*s.engine.store, child);
-		immutable start = base + span.offset;
-		if (!ecrs.context.hasComponent!(doir.components.ast.Block)(*s.engine.store, child)) continue;
+// Appends to `ranges` the folding ranges of the blocks under `root` that span several lines.
+private void foldings(ref doir.lsp.session.Session s, bc.json.Value ranges, const fp.rope.Rope text, EntityId root) {
+	// Each open declaration's first byte; a span's offset is from its block's.
+	size_t[doir.source.BlockTree.maxDepth + 1] starts = void;
+	starts[0] = 0;
+	auto w = fp.tree.walk(doir.source.BlockTree(s.engine.store), root);
+	foreach (step; w) {
+		if (step.event != fp.tree.Event.enter || step.depth == 0) continue;
+		immutable span = ecrs.context.getComponent!(doir.components.source.SourceSpan)(*s.engine.store, step.index);
+		immutable start = starts[step.depth] = starts[step.depth - 1] + span.offset;
+		if (!ecrs.context.hasComponent!(doir.components.ast.Block)(*s.engine.store, step.index)) continue;
 		size_t first, last, character;
 		doir.lsp.positions.positionOf(text, s.encoding, start, first, character);
 		doir.lsp.positions.positionOf(text, s.encoding, start + span.length, last, character);
@@ -33,8 +39,8 @@ private void foldings(ref doir.lsp.session.Session s, bc.json.Value ranges, cons
 			bc.json.set(range, "startLine", first);
 			bc.json.set(range, "endLine", last);
 		}
-		foldings(s, ranges, text, child, start);
 	}
+	assert(w.status == fp.tree.Status.ok, "doir.lsp.features.folding: blocks nested deeper than a commit builds (IL-Nest)");
 }
 
 // Appends to `ranges` a folding range of kind `comment` from line `first` to `last`, if they differ.
@@ -46,7 +52,8 @@ private void commentFolding(bc.json.Value ranges, size_t first, size_t last) {
 	bc.json.set(range, "kind", "comment");
 }
 
-// Appends to `ranges` folds for `text`'s comments, which the store lacks: runs of line-comment lines and multi-line block comments. False on refusal.
+// Appends to `ranges` folds for `text`'s comments, which the store lacks: runs of line-comment lines and multi-line block comments.
+// False on refusal.
 private bool commentFoldings(bc.json.Value ranges, const fp.rope.Rope text) {
 	immutable length = fp.rope.length(text);
 	char* bytes = fp.rope.text(text, 0, length).get(null);
@@ -103,7 +110,7 @@ package(doir) void foldingRange(ref doir.lsp.session.Session s, bc.json.Value pa
 	const text = doir.source.textOf(*s.engine, o.file);
 	bc.json.Document d;
 	auto ranges = bc.json.setArray(doir.lsp.session.response(d, id), "result");
-	foldings(s, ranges, text, doir.source.rootOf(*s.engine, o.file), 0);
+	foldings(s, ranges, text, doir.source.rootOf(*s.engine, o.file));
 	if (!commentFoldings(ranges, text)) {
 		bc.json.free(d);
 		doir.lsp.session.respondError(s, id, -32_603, "out of memory finding the comments to fold");

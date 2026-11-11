@@ -27,6 +27,7 @@ private alias modules = imported!"std.meta".AliasSeq!(
 	"doir.schedules",
 	"doir.printer",
 	"doir.bench",
+	"doir.simulation",
 	"doir.lsp.positions",
 	"doir.lsp.tokens",
 	"doir.lsp.server",

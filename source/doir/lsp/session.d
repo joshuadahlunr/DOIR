@@ -42,12 +42,16 @@ package(doir) struct Session {
 	Opened* opened; /// An fp dynarray.
 	bool shutdown; ///
 	doir.format.Options format; /// From the client's `doir.format` settings.
-	bool refused; /// A lookup for the current message met a refused allocation, so its result may be incomplete; `send` answers an internal error instead. Cleared before each message with the engine's `refused`.
+	/// A lookup for the current message met a refused allocation, so its result may be incomplete; `send` answers an internal error instead.
+	/// Cleared before each message with the engine's `refused`.
+	bool refused;
 }
 
 // --- messages ----------------------------------------------------------------
 
-/// Sends message `d` to the client and frees it; a message an edit could not finish, or the client cannot take, is logged and dropped. A result built while a lookup was refused (`s.refused`, or the engine's `refused`) may be incomplete, so the request is answered with an internal error instead.
+// bounded: one call, since the error it sends instead has no `"result"`
+/// Sends message `d` to the client and frees it; a message an edit could not finish, or the client cannot take, is logged and dropped.
+/// A result built while a lookup was refused (`s.refused`, or the engine's `refused`) may be incomplete, so the request is answered with an internal error instead.
 ///
 /// Examples:
 /// ---
@@ -228,7 +232,8 @@ package(doir) void range(ref Session s, bc.json.Value into, const fp.rope.Rope t
 version (unittest) {
 	static import fp.pointer;
 
-	/// A session with one open document, `file:///t.doir`, for examples and tests: a request's params are parsed into `request` by `parse` and given by `params`, its id is `id`, and what the session sends is read back by `responds`. Set it up in place with `open`, since the session points into it.
+	/// A session with one open document, `file:///t.doir`, for examples and tests: a request's params are parsed into `request` by `parse` and given by `params`, its id is `id`, and what the session sends is read back by `responds`.
+	/// Set it up in place with `open`, since the session points into it.
 	package(doir) struct Fixture {
 		ecrs.context.Context store; ///
 		doir.query.QueryEngine engine; ///
@@ -241,7 +246,8 @@ version (unittest) {
 		private bc.jsonrpc.Reader reader;
 	}
 
-	/// Sets up `f` with `text` committed as its open document. False if a pipe or an allocation is refused; `f` must still be freed.
+	/// Sets up `f` with `text` committed as its open document.
+	/// False if a pipe or an allocation is refused; `f` must still be freed.
 	///
 	/// Examples:
 	/// ---
@@ -271,7 +277,8 @@ version (unittest) {
 		return doir.source.commit(f.engine, f.strings, file, text) != fp.pointer.allocationRefused;
 	}
 
-	/// Parses `json` into `f.request`, whose root a handler then takes as its params from `params`. False, leaving `f.request` empty, if it is not JSON or on refusal.
+	/// Parses `json` into `f.request`, whose root a handler then takes as its params from `params`.
+	/// False, leaving `f.request` empty, if it is not JSON or on refusal.
 	///
 	/// Examples:
 	/// ---

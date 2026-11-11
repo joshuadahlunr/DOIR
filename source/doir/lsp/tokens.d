@@ -1,4 +1,5 @@
-/// Semantic tokens for the language server (`roadmap.md` Phase 3): highlighting from the lexer's tokens, not the store, since trivia never becomes entities. Text is lexed as it is encoded, one token at a time, so highlighting a range costs that range and keeps no token array.
+/// Semantic tokens for the language server (`roadmap.md` Phase 3): highlighting from the lexer's tokens, not the store, since trivia never becomes entities.
+/// Text is lexed as it is encoded, one token at a time, so highlighting a range costs that range and keeps no token array.
 ///
 /// An identifier's type comes from its neighbours: a declaration's name is followed by `:`, a type follows `:` or `->`, and a call's callee is followed by `(`.
 ///
@@ -102,7 +103,8 @@ private uint typeOf(doir.syntax.lexer.TokenKind kind) {
 	}
 }
 
-/// Appends to `data` the semantic tokens of `text` that reach into bytes `start` to `end`, as LSP's five integers each, relative to the token before. `text` must begin where a token of the whole file begins, at `line` and `character` of the file, so it lexes as the file does; a token cut off at its end is shown as what it would have been.
+/// Appends to `data` the semantic tokens of `text` that reach into bytes `start` to `end`, as LSP's five integers each, relative to the token before.
+/// `text` must begin where a token of the whole file begins, at `line` and `character` of the file, so it lexes as the file does; a token cut off at its end is shown as what it would have been.
 ///
 /// Returns false if allocation is refused, having appended some of the tokens.
 ///

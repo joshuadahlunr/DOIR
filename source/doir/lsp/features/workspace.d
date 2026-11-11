@@ -6,6 +6,7 @@ static import fp.pointer;
 static import fp.rope;
 static import fp.string;
 static import fp.string.ascii;
+static import fp.tree;
 
 static import bc.json;
 static import ecrs.context;
@@ -24,14 +25,23 @@ public import ecrs.registry : EntityId;
 // How many workspace symbols one answer lists at most; an editor asks again as more of the query is typed.
 private enum size_t symbolLimit = 1000;
 
-// Appends to `symbols` the declarations of `block`, which starts at `base` in document `o`, whose names contain `query`, below `container`, counting them in `written`.
-private void workspaceSymbols(ref doir.lsp.session.Session s, bc.json.Value symbols, ref doir.lsp.session.Opened o, const fp.rope.Rope text, EntityId block, size_t base, const(char)[] query, const(char)[] container, ref size_t written) {
-	foreach (child; doir.lsp.store.childrenOf(s, block)) {
+// Appends to `symbols` the declarations under `root` in document `o` whose names contain `query`, each with the name of the one it is nested in, counting them in `written`.
+private void workspaceSymbols(ref doir.lsp.session.Session s, bc.json.Value symbols, ref doir.lsp.session.Opened o, const fp.rope.Rope text, EntityId root, const(char)[] query, ref size_t written) {
+	// Each open declaration's first byte and name.
+	size_t[doir.source.BlockTree.maxDepth + 1] starts = void;
+	const(char)[][doir.source.BlockTree.maxDepth + 1] names = void;
+	starts[0] = 0;
+	names[0] = null;
+	auto w = fp.tree.walk(doir.source.BlockTree(s.engine.store), root);
+	foreach (step; w) {
+		if (step.event != fp.tree.Event.enter || step.depth == 0) continue;
 		if (written == symbolLimit) return;
+		immutable child = step.index;
+		const container = names[step.depth - 1];
 		immutable span = ecrs.context.getComponent!(doir.components.source.SourceSpan)(*s.engine.store, child);
-		immutable start = base + span.offset;
+		immutable start = starts[step.depth] = starts[step.depth - 1] + span.offset;
 		auto n = ecrs.context.findComponent!(doir.components.ast.Name)(*s.engine.store, child);
-		const name = n is null ? "" : doir.strings.text(*s.strings, n.value);
+		const name = names[step.depth] = n is null ? "" : doir.strings.text(*s.strings, n.value);
 		if (name.length && fp.string.ascii.findIgnoringCase(name, query) != fp.pointer.notFound) {
 			++written;
 			auto symbol = bc.json.appendObject(symbols);
@@ -42,8 +52,8 @@ private void workspaceSymbols(ref doir.lsp.session.Session s, bc.json.Value symb
 			bc.json.set(location, "uri", fp.string.slice(o.uri));
 			doir.lsp.session.range(s, bc.json.setObject(location, "range"), text, start, start + span.length);
 		}
-		if (doir.lsp.store.childrenOf(s, child).length) workspaceSymbols(s, symbols, o, text, child, start, query, name, written);
 	}
+	assert(w.status == fp.tree.Status.ok, "doir.lsp.features.workspace: blocks nested deeper than a commit builds (IL-Nest)");
 }
 
 /// Answers a `workspace/symbol` request with the declarations of the open documents whose names contain `params.query`, ignoring the case of ASCII letters.
@@ -66,6 +76,6 @@ package(doir) void workspaceSymbol(ref doir.lsp.session.Session s, bc.json.Value
 	auto symbols = bc.json.setArray(doir.lsp.session.response(d, id), "result");
 	size_t written = 0;
 	foreach (ref o; fp.dynarray.slice(s.opened))
-		if (o.open) workspaceSymbols(s, symbols, o, doir.source.textOf(*s.engine, o.file), doir.source.rootOf(*s.engine, o.file), 0, query is null ? "" : fp.string.slice(query), "", written);
+		if (o.open) workspaceSymbols(s, symbols, o, doir.source.textOf(*s.engine, o.file), doir.source.rootOf(*s.engine, o.file), query is null ? "" : fp.string.slice(query), written);
 	doir.lsp.session.send(s, d);
 }

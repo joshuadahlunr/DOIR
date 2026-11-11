@@ -60,7 +60,7 @@ enum uint noBlock = noToken;
 /// `SyntaxError.declaration` for an error outside every declaration.
 enum uint outsideDeclaration = noToken;
 
-/// How deeply blocks and function types may nest before the parser reports it rather than recurse further.
+/// How deeply blocks and function types may nest before the parser reports it rather than recurse further: the minimum `IL-Nest` sets.
 enum uint maxNesting = 256;
 
 /// One parsed declaration: where its tokens are, the records of the declarations nested in its block, and its hash.
@@ -179,7 +179,7 @@ char* describe(ref const Syntax syntax, const(char)[] source, SyntaxError error)
 			if (spelled.length > 32) spelled = spelled[0 .. 32];
 			return fp.string.joined("syntax error, unexpected '", spelled, "' ", where).get(null);
 		case SyntaxError.Kind.nesting:
-			return fp.string.clone("blocks and function types nest too deeply").get(null);
+			return fp.string.clone("IL-Nest: blocks and function types nest too deeply").get(null);
 		case SyntaxError.Kind.language:
 			return fp.string.joined("I-Language: no frontend is registered for language ", doir.syntax.lexer.text(syntax.tokens[error.token], source)).get(null);
 		case SyntaxError.Kind.literal:
@@ -242,23 +242,25 @@ private ContextHint contextHint(ref const Syntax syntax, SyntaxError error) {
 /// ---
 size_t opening(ref const Syntax syntax, SyntaxError error) {
 	if (error.kind != SyntaxError.Kind.syntax || contextHint(syntax, error).text !is null) return fp.pointer.notFound;
-	size_t depth = 0;
+	// A closed brace pair counts whole, its parentheses ignored: they need not balance inside a block, and an edit there must not move this answer.
+	size_t braces = 0, parens = 0;
 	for (size_t i = error.token; i-- > 0;) {
 		immutable t = syntax.tokens[i];
-		if (t.kind == TokenKind.rightBrace || t.kind == TokenKind.rightParen) ++depth;
-		else if (t.kind == TokenKind.leftBrace || t.kind == TokenKind.leftParen) {
-			if (depth) {
-				--depth;
-				continue;
-			}
-			immutable closer = t.kind == TokenKind.leftBrace ? TokenKind.rightBrace : TokenKind.rightParen;
-			return error.expected & (1u << closer) ? t.start : fp.pointer.notFound;
+		if (t.kind == TokenKind.rightBrace) ++braces;
+		else if (t.kind == TokenKind.rightParen) parens += braces == 0;
+		else if (t.kind == TokenKind.leftBrace) {
+			if (braces == 0) return error.expected & (1u << TokenKind.rightBrace) ? t.start : fp.pointer.notFound;
+			--braces;
+		} else if (t.kind == TokenKind.leftParen && braces == 0) {
+			if (parens == 0) return error.expected & (1u << TokenKind.rightParen) ? t.start : fp.pointer.notFound;
+			--parens;
 		}
 	}
 	return fp.pointer.notFound;
 }
 
-// What a hint calls each token kind, or null if no rule expects it. Tables, not switches: the lexer and `note` never produce some kinds.
+// What a hint calls each token kind, or null if no rule expects it.
+// Tables, not switches: the lexer and `note` never produce some kinds.
 private immutable string[TokenKind.max + 1] spelling = [
 	TokenKind.newline: "a line break",
 	TokenKind.identifier: "a name",
@@ -400,7 +402,8 @@ private doir.components.source.SyntaxFix insertion(const(char)[] source, size_t 
 	return doir.components.source.SyntaxFix(offset, offset, text, !fp.string.ascii.isWhitespace(before) && !bracket && !separator, !fp.string.ascii.isWhitespace(after) && !bracket);
 }
 
-/// The edits that `hint` states exactly for `error` in `syntax`, parsed from `source`: each token in backquotes it offers to insert, and a split arrow written together. A hint that needs the author to choose, such as "insert a type here", offers none.
+/// The edits that `hint` states exactly for `error` in `syntax`, parsed from `source`: each token in backquotes it offers to insert, and a split arrow written together.
+/// A hint that needs the author to choose, such as "insert a type here", offers none.
 ///
 /// Examples:
 /// ---
@@ -533,6 +536,7 @@ private uint stringChar(const(char)[] s, ref size_t i, out bool isByte, out bool
 		bool valid;
 		return fp.string.utf.decode(s, i, valid);
 	}
+	assert(i + 1 < s.length, "doir.parser.stringChar: a lone backslash ends the content, which the lexer never matches");
 	immutable e = s[i + 1];
 	i += 2;
 	switch (e) {
@@ -564,8 +568,22 @@ private uint stringChar(const(char)[] s, ref size_t i, out bool isByte, out bool
 	}
 }
 
-// Decodes `content`'s `StringChar`s, appending UTF-8 to `out_` unless null. Returns the error or null; on a refused append sets `refused` and stops.
-private string decodeString(const(char)[] content, char** out_, ref bool refused) {
+/// Decodes `content`, the `StringChar`s between a string literal's quotes, appending the UTF-8 it spells to `*out_` unless `out_` is null; `doir.printer` asserts its escaping against it.
+///
+/// Returns the `V-Literal` error, or null; on a refused append sets `refused` and returns null, `*out_` holding what was decoded so far.
+///
+/// Examples:
+/// ---
+/// static import fp.string;
+/// char* decoded = null;
+/// scope(exit) fp.string.free(decoded);
+/// bool refused;
+/// assert(decodeString(`a\x41\n`, &decoded, refused) is null && !refused);
+/// assert(fp.string.slice(decoded) == "aA\n");
+/// assert(decodeString(`\xFF`, null, refused) is null && decodeString(`\xFFFF`, null, refused) !is null);
+/// assert(decodeString(`\U00110000`, null, refused) !is null);
+/// ---
+package(doir) string decodeString(const(char)[] content, char** out_, ref bool refused) {
 	size_t i = 0;
 	while (i < content.length) {
 		immutable start = i;
@@ -728,6 +746,7 @@ private bool refuse(ref Parser parser) {
 
 private void note(ref Parser parser, TokenKind expected) {
 	static assert(TokenKind.max < SyntaxError.expected.sizeof * 8, "SyntaxError.expected holds a bit per TokenKind");
+	assert(parser.pos < parser.tokens.length, "doir.syntax.parser: a failure noted past the end token");
 	immutable t = parser.tokens[parser.pos];
 	// `_` and `wsc` try a comment between any two tokens, so an unclosed one fails at its end wherever it is.
 	immutable reached = t.attempted == expected || t.attempted == TokenKind.longComment;
@@ -741,15 +760,18 @@ private void note(ref Parser parser, TokenKind expected) {
 		parser.furthestDeclaration = parser.declaration;
 		parser.failed = true;
 	}
+	assert(parser.failed && (parser.expected & (1u << expected)) != 0 || at < parser.furthest, "doir.syntax.parser: a failure at the furthest point that forgot what was expected");
 }
 
 private bool currentIs(ref Parser parser, TokenKind kind) {
+	assert(parser.pos < parser.tokens.length, "doir.syntax.parser: reading past the end token");
 	if (parser.tokens[parser.pos].kind == kind) return true;
 	note(parser, kind);
 	return false;
 }
 
 private bool atWord(ref Parser parser, TokenKind kind, const(char)[] word) {
+	assert(parser.pos < parser.tokens.length && word.length > 0, "doir.syntax.parser: reading past the end token, or for no word");
 	immutable t = parser.tokens[parser.pos];
 	if (t.kind == kind && doir.syntax.lexer.text(t, parser.source) == word) return true;
 	note(parser, kind);
@@ -758,19 +780,26 @@ private bool atWord(ref Parser parser, TokenKind kind, const(char)[] word) {
 
 // `wsc`
 private void skipTrivia(ref Parser parser) {
+	assert(parser.pos < parser.tokens.length, "doir.syntax.parser: skipping trivia past the end token");
 	while (doir.syntax.lexer.isTrivia(parser.tokens[parser.pos].kind)) ++parser.pos;
+	// The end token is no trivia, so the skip stops on it at the latest.
+	assert(parser.pos < parser.tokens.length, "doir.syntax.parser: skipped past the end token");
 }
 
 // `_`
 private void skipBlank(ref Parser parser) {
+	assert(parser.pos < parser.tokens.length, "doir.syntax.parser: skipping blanks past the end token");
 	while (doir.syntax.lexer.isTrivia(parser.tokens[parser.pos].kind) || parser.tokens[parser.pos].kind == TokenKind.newline) ++parser.pos;
+	assert(parser.pos < parser.tokens.length, "doir.syntax.parser: skipped past the end token");
 }
 
 // The byte offset after the last non-trivia token before `parser.pos`.
 private uint lastEnd(ref Parser parser, size_t from) {
 	size_t i = parser.pos;
 	while (i > from && (doir.syntax.lexer.isTrivia(parser.tokens[i - 1].kind) || parser.tokens[i - 1].kind == TokenKind.newline)) --i;
+	assert(i > 0 && i <= parser.tokens.length, "doir.syntax.parser: the end of a statement before the first token");
 	immutable t = parser.tokens[i - 1];
+	assert(t.start + t.length <= parser.source.length, "doir.syntax.parser: a token past the source");
 	return t.start + t.length;
 }
 
@@ -780,11 +809,13 @@ private bool enter(ref Parser parser) {
 		return false;
 	}
 	++parser.depth;
+	assert(parser.depth <= maxNesting, "doir.syntax.parser: nested past maxNesting (IL-Nest)");
 	return true;
 }
 
 private void error(ref Parser parser, SyntaxError.Kind kind, uint at, uint token, string message = null, string fix = null, uint expected = 0) {
 	if (parser.syntax is null) return;
+	assert(at <= parser.source.length && token < parser.tokens.length, "doir.syntax.parser: an error past the source or its tokens");
 	auto e = SyntaxError(kind, at, token, message, fix, expected);
 	if (kind == SyntaxError.Kind.syntax) {
 		e.where = parser.furthestWhere;
@@ -795,6 +826,7 @@ private void error(ref Parser parser, SyntaxError.Kind kind, uint at, uint token
 
 // The intern functions return `refused` and set `parser.refused` if allocation fails.
 private doir.strings.StringId intern(ref Parser parser, size_t token) {
+	assert(token < parser.tokens.length && parser.strings !is null, "doir.syntax.parser: interning a token past the end, or with no strings");
 	immutable id = internSpelling(doir.syntax.lexer.text(parser.tokens[token], parser.source), *parser.strings);
 	if (id == doir.strings.refused) parser.refused = true;
 	return id;
@@ -807,10 +839,12 @@ private doir.strings.StringId intern(ref Parser parser, const(char)[] spelled) {
 }
 
 private bool record(ref Parser parser, Write write) {
+	assert(parser.description !is null, "doir.syntax.parser: recording a write while not describing");
 	return fp.dynarray.pushBack(parser.description.writes, write) || refuse(parser);
 }
 
 private bool setSpan(ref Parser parser, EntityId e, uint parentStart, uint start, uint end) {
+	assert(parentStart <= start && start <= end && end <= parser.source.length, "doir.syntax.parser: a span before its parent, ending before it starts, or past the source");
 	auto write = Write(kind: Write.Kind.span, target: e);
 	write.from = start - parentStart;
 	write.count = end - start;
@@ -824,10 +858,12 @@ private struct ParsedType {
 }
 
 private bool isName(ref Parser parser, ParsedType type, const(char)[] word) {
+	assert(type.name == unnamed || type.name < parser.tokens.length, "doir.syntax.parser: a type named by a token past the end");
 	return type.name != unnamed && doir.syntax.lexer.text(parser.tokens[type.name], parser.source) == word;
 }
 
-// Calls `f` with the type as a `Write` holds it: the interned name or function type part. False on refused interning.
+// Calls `f` with the type as a `Write` holds it: the interned name or function type part.
+// False on refused interning.
 private bool withType(alias f)(ref Parser parser, ParsedType type) {
 	if (type.entity != invalidEntity) return f(TypeRef(doir.strings.unnamed, type.entity));
 	immutable name = intern(parser, type.name);
@@ -839,7 +875,7 @@ private struct ParsedConstant {
 	doir.components.ast.ConstantVal value;
 }
 
-// Constant <- '-'? FloatConstant / '-'? IntegerConstant / RawString / '"' StringChar* '"' / '\'' StringChar '\''
+// `Constant <- '-'? FloatConstant / '-'? IntegerConstant / RawString / '"' StringChar* '"' / '\'' StringChar '\''`
 private std.typecons.Nullable!ParsedConstant constant(ref Parser parser) {
 	immutable t = parser.tokens[parser.pos];
 	const spelled = doir.syntax.lexer.text(t, parser.source);
@@ -912,7 +948,7 @@ private bool validates(alias rule)(ref Parser parser) {
 	return ok;
 }
 
-// Type <- FunctionType / Identifier; a function type is built as a part owned by `owner`, whose span starts at `ownerStart`.
+// `Type <- FunctionType / Identifier`; a function type is built as a part owned by `owner`, whose span starts at `ownerStart`.
 private std.typecons.Nullable!ParsedType type(ref Parser parser, EntityId owner, uint ownerStart) {
 	if (parser.tokens[parser.pos].kind == TokenKind.leftParen) {
 		if (parser.description is null) {
@@ -937,7 +973,22 @@ private std.typecons.Nullable!ParsedType type(ref Parser parser, EntityId owner,
 	return typeof(return)(ParsedType(cast(uint) parser.pos++));
 }
 
-// parameter <- Identifier _ ':'_ deducible_type; deducible_type <- ('deduced' _ 'type' _) / (Type _ ('='_ (Constant / Identifier) _)?)
+// 'deduced' _ 'type' _, a parameter type deduced from its argument: whether it was there, consumed.
+private bool consumeDeducedType(ref Parser parser) {
+	if (!atWord(parser, TokenKind.keyword, "deduced")) return false;
+	immutable save = parser.pos;
+	++parser.pos;
+	skipBlank(parser);
+	if (!atWord(parser, TokenKind.identifier, "type")) {
+		parser.pos = save;
+		return false;
+	}
+	++parser.pos;
+	skipBlank(parser);
+	return true;
+}
+
+// `parameter <- Identifier _ ':'_ deducible_type`; `deducible_type <- ('deduced' _ 'type' _) / (Type _ ('='_ (Constant / Identifier) _)?)`
 private bool parameter(ref Parser parser, EntityId functionType, uint ftStart) {
 	immutable start = parser.pos;
 	parser.where = Reading.parameter;
@@ -950,17 +1001,7 @@ private bool parameter(ref Parser parser, EntityId functionType, uint ftStart) {
 	skipBlank(parser);
 	parser.where = Reading.parameterType;
 
-	bool deduced = false;
-	if (atWord(parser, TokenKind.keyword, "deduced")) {
-		immutable save = parser.pos;
-		++parser.pos;
-		skipBlank(parser);
-		if (atWord(parser, TokenKind.identifier, "type")) {
-			++parser.pos;
-			skipBlank(parser);
-			deduced = true;
-		} else parser.pos = save;
-	}
+	immutable deduced = consumeDeducedType(parser);
 
 	ParsedType paramType;
 	ParsedConstant defaultConstant;
@@ -1016,7 +1057,7 @@ private bool parameter(ref Parser parser, EntityId functionType, uint ftStart) {
 	return setSpan(parser, e, ftStart, parser.tokens[start].start, lastEnd(parser, start));
 }
 
-// FunctionType <- '('_ (parameter (','_ parameter)*)? ')' (_ '->'_ Type)?; while building, its parameters and return type go on `functionType`.
+// `FunctionType <- '('_ (parameter (','_ parameter)*)? ')' (_ '->'_ Type)?`; while building, its parameters and return type go on `functionType`.
 private bool functionType(ref Parser parser, EntityId functionType, uint ftStart) {
 	if (!currentIs(parser, TokenKind.leftParen)) return false;
 	if (!enter(parser)) return false;
@@ -1069,7 +1110,7 @@ private struct ParsedCall {
 	uint* arguments; // token indices, an fp dynarray
 }
 
-// function_call <- (('flatten' / 'inline' / 'tail') _)? Identifier _ '('_ (Identifier _ (','_ Identifier _)*)? ')' wsc
+// `function_call <- (('flatten' / 'inline' / 'tail') _)? Identifier _ '('_ (Identifier _ (','_ Identifier _)*)? ')' wsc`
 private bool functionCall(ref Parser parser, ref ParsedCall out_) {
 	immutable start = parser.pos;
 	if (parser.tokens[parser.pos].kind == TokenKind.keyword) {
@@ -1111,11 +1152,13 @@ private bool functionCall(ref Parser parser, ref ParsedCall out_) {
 	return true;
 }
 
-// Block <- '{'_ assignment* '}'; while skimming, each failed assignment is reported and skipped.
+// `Block <- '{'_ assignment* '}'`; while skimming, each failed assignment is reported and skipped.
 private bool block(ref Parser parser) {
 	if (!currentIs(parser, TokenKind.leftBrace)) return false;
 	if (parser.description !is null) {
-		assert(parser.pos == parser.record.blockOpen);
+		// A block the skim found unclosed, as in `n : e` followed by `= {`, fails here as it did there.
+		if (parser.record.blockOpen == noBlock) return false;
+		assert(parser.pos == parser.record.blockOpen, "doir.parser: describing a block the skim did not record");
 		parser.pos = parser.record.blockClose + 1;
 		return true;
 	}
@@ -1146,7 +1189,7 @@ private bool block(ref Parser parser) {
 /// Which `assignment_value` alternative matched.
 private enum Value : ubyte { none, constant, block, call, reference, functionType }
 
-// change_language <- 'language' _ '"' StringChar* '"'_ matching_braces _
+// `change_language <- 'language' _ '"' StringChar* '"'_ matching_braces _`
 private bool changeLanguage(ref Parser parser) {
 	immutable start = parser.pos;
 	++parser.pos;
@@ -1190,7 +1233,7 @@ ulong hashTokens(ulong h, ref const Syntax syntax, const(char)[] source, size_t 
 		immutable token = syntax.tokens[t++];
 		if (doir.syntax.lexer.isTrivia(token.kind) || token.kind == TokenKind.newline || token.kind == TokenKind.semicolon) continue;
 		h = fp.algorithms.combine(h, token.kind);
-		h = fp.algorithms.combine(h, fp.algorithms.hashBytes(cast(const(ubyte)[]) doir.syntax.lexer.text(token, source)));
+		h = fp.algorithms.combine(h, fp.algorithms.hashShortBytes(doir.syntax.lexer.text(token, source)));
 	}
 	return h;
 }
@@ -1236,7 +1279,8 @@ private AnnotationText readAnnotation(const(char)[] s) {
 	return read;
 }
 
-// SourceInfo's location, its file name interned. Null if interning is refused.
+// SourceInfo's location, its file name interned.
+// Null if interning is refused.
 private std.typecons.Nullable!(diagnose.LineColumnRange) annotation(ref Parser parser, size_t token) {
 	const read = readAnnotation(doir.syntax.lexer.text(parser.tokens[token], parser.source));
 	immutable name = intern(parser, read.file);
@@ -1245,8 +1289,137 @@ private std.typecons.Nullable!(diagnose.LineColumnRange) annotation(ref Parser p
 		diagnose.LineColumn(cast(size_t) read.values[0], cast(size_t) read.values[2]), diagnose.LineColumn(cast(size_t) read.values[1], cast(size_t) read.values[3])));
 }
 
-// assignment <- change_language / ('export' _)? Identifier _ ':'_ Type wsc (_ '='_ assignment_value)? (SourceInfo wsc)? Terminator _
-// assignment_value <- Constant wsc / Block wsc / function_call / Identifier wsc / Type wsc
+// What an assignment's value parsed into, for `assignment` to describe.
+private struct ParsedValue {
+	ParsedConstant constant;
+	ParsedCall call;
+	uint reference = noToken;
+}
+
+// assignment_value after the declared type: `=` and a constant, block, call, reference or function type, into `out_`, or `Value.none` with the position back where it was.
+// Refusal sets `parser.refused`.
+private Value assignmentValue(ref Parser parser, EntityId e, ParsedType declared, uint declStart, ref ParsedValue out_) {
+	immutable beforeValue = parser.pos;
+	skipBlank(parser);
+	parser.where = Reading.afterType;
+	if (!currentIs(parser, TokenKind.equals)) {
+		parser.pos = beforeValue;
+		return Value.none;
+	}
+	Value value = Value.none;
+	++parser.pos;
+	skipBlank(parser);
+	parser.where = Reading.value;
+	auto parsedConstant = constant(parser);
+	if (!parsedConstant.isNull) {
+		out_.constant = parsedConstant.get;
+		value = Value.constant;
+	} else if (block(parser)) value = Value.block;
+	else if (functionCall(parser, out_.call)) value = Value.call;
+	else if (currentIs(parser, TokenKind.identifier)) {
+		out_.reference = cast(uint) parser.pos++;
+		value = Value.reference;
+	} else if (parser.tokens[parser.pos].kind == TokenKind.leftParen) {
+		if (parser.description is null) {
+			if (functionType(parser, invalidEntity, 0)) value = Value.functionType;
+		} else if (validates!(q => functionType(q, invalidEntity, 0))(parser)) {
+			if (!withType!(t => record(parser, Write(kind: Write.Kind.functionType, target: e, type: t)))(parser, declared)) {
+				cast(void) refuse(parser);
+				return Value.none;
+			}
+			if (!functionType(parser, e, declStart)) {
+				assert(parser.refused, "doir.parser: a validated function type did not build");
+				return Value.none;
+			}
+			value = Value.functionType;
+		}
+	}
+	if (parser.refused) return Value.none;
+	if (value == Value.none) parser.pos = beforeValue;
+	else if (value != Value.call) skipTrivia(parser);
+	return value;
+}
+
+// Fills skimmed record `r`, the assignment from token `first` to `terminator`, named by token `name`, its source annotation token `info` checked (`AT-Source`).
+private void fillRecord(ref Parser parser, uint r, uint first, uint terminator, uint name, uint info, size_t spanStart, size_t spanEnd) {
+	if (info != noToken && readAnnotation(doir.syntax.lexer.text(parser.tokens[info], parser.source)).overflow)
+		error(parser, SyntaxError.Kind.literal, parser.tokens[info].start, info, "AT-Source: a source annotation's lines and columns must fit in 64 bits", "write the line and column where the declaration is in its file");
+	auto record = &parser.syntax.records[r];
+	record.first = first;
+	record.terminator = terminator;
+	record.end = cast(uint) fp.dynarray.length(parser.syntax.records);
+	record.name = doir.syntax.lexer.text(parser.tokens[name], parser.source) == "_" ? unnamed : name;
+	record.spanStart = cast(uint) spanStart;
+	record.spanEnd = cast(uint) spanEnd;
+	record.hash = hashTokens(hashStart, *parser.syntax, parser.source, record.first, record.terminator, r + 1 < record.end ? r + 1 : noToken);
+}
+
+// Records what building the assignment `e` writes: its value as `value` parsed into `parsed`, its `export` flag and its source annotation `info`.
+// False on refusal.
+private bool describeAssignment(ref Parser parser, EntityId e, Value value, ParsedType declared, ref ParsedValue parsed, bool exported, uint info) {
+	bool ok = true;
+	final switch (value) {
+		case Value.none:
+			ok = withType!(t => record(parser, Write(kind: Write.Kind.valueless, target: e, type: t)))(parser, declared);
+			break;
+		case Value.constant:
+			ok = withType!((t) {
+				auto write = Write(kind: Write.Kind.constant, target: e, type: t);
+				write.value = parsed.constant.value;
+				return record(parser, write);
+			})(parser, declared);
+			break;
+		case Value.block:
+			if (isName(parser, declared, "namespace")) ok = record(parser, Write(kind: Write.Kind.namespace, target: e));
+			else if (isName(parser, declared, "type")) ok = withType!(t => record(parser, Write(kind: Write.Kind.aggregate, target: e, type: t)))(parser, declared);
+			else ok = withType!(t => record(parser, Write(kind: Write.Kind.block, target: e, type: t)))(parser, declared);
+			break;
+		case Value.call:
+			immutable from = cast(uint) fp.dynarray.length(parser.description.arguments);
+			foreach (a; fp.dynarray.slice(parsed.call.arguments)) {
+				immutable argument = intern(parser, a);
+				if (argument == doir.strings.refused || !fp.dynarray.pushBack(parser.description.arguments, argument)) return refuse(parser);
+			}
+			immutable callee = intern(parser, parsed.call.callee);
+			if (callee == doir.strings.refused) return false;
+			ok = withType!((t) {
+				auto write = Write(kind: Write.Kind.call, target: e, type: t, name: callee);
+				write.from = from;
+				write.count = cast(uint) (fp.dynarray.length(parser.description.arguments) - from);
+				return record(parser, write);
+			})(parser, declared);
+			if (ok && parsed.call.flags) {
+				auto write = Write(kind: Write.Kind.flags, target: e);
+				write.flags = parsed.call.flags;
+				ok = record(parser, write);
+			}
+			break;
+		case Value.reference:
+			immutable target = intern(parser, parsed.reference);
+			if (target == doir.strings.refused) return false;
+			if (isName(parser, declared, "alias")) ok = record(parser, Write(kind: Write.Kind.alias_, target: e, name: target));
+			else ok = withType!(t => record(parser, Write(kind: Write.Kind.reference, target: e, type: t, name: target)))(parser, declared);
+			break;
+		case Value.functionType:
+			break;
+	}
+	if (ok && exported) {
+		auto write = Write(kind: Write.Kind.flags, target: e);
+		write.flags = doir.components.ast.Flags.Export;
+		ok = record(parser, write);
+	}
+	if (!ok) return refuse(parser);
+	if (info != noToken) {
+		auto location = annotation(parser, info);
+		if (location.isNull) return false;
+		parser.description.annotation = location.get;
+		parser.description.annotated = true;
+	}
+	return true;
+}
+
+// `assignment <- change_language / ('export' _)? Identifier _ ':'_ Type wsc (_ '='_ assignment_value)? (SourceInfo wsc)? Terminator _`
+// `assignment_value <- Constant wsc / Block wsc / function_call / Identifier wsc / Type wsc`
 private bool assignment(ref Parser parser) {
 	immutable start = parser.pos;
 	parser.where = Reading.declaration;
@@ -1290,43 +1463,10 @@ private bool assignment(ref Parser parser) {
 	immutable declared = parsedType.get;
 	skipTrivia(parser);
 
-	Value value = Value.none;
-	ParsedConstant constantValue;
-	ParsedCall call;
-	scope(exit) fp.dynarray.free(call.arguments);
-	uint reference = noToken;
-	immutable beforeValue = parser.pos;
-	skipBlank(parser);
-	parser.where = Reading.afterType;
-	if (currentIs(parser, TokenKind.equals)) {
-		++parser.pos;
-		skipBlank(parser);
-		parser.where = Reading.value;
-		auto parsedConstant = constant(parser);
-		if (!parsedConstant.isNull) {
-			constantValue = parsedConstant.get;
-			value = Value.constant;
-		} else if (block(parser)) value = Value.block;
-		else if (functionCall(parser, call)) value = Value.call;
-		else if (currentIs(parser, TokenKind.identifier)) {
-			reference = cast(uint) parser.pos++;
-			value = Value.reference;
-		} else if (parser.tokens[parser.pos].kind == TokenKind.leftParen) {
-			if (parser.description is null) {
-				if (functionType(parser, invalidEntity, 0)) value = Value.functionType;
-			} else if (validates!(q => functionType(q, invalidEntity, 0))(parser)) {
-				if (!withType!(t => record(parser, Write(kind: Write.Kind.functionType, target: e, type: t)))(parser, declared)) return refuse(parser);
-				if (!functionType(parser, e, declStart)) {
-					assert(parser.refused, "doir.parser: a validated function type did not build");
-					return false;
-				}
-				value = Value.functionType;
-			}
-		}
-		if (parser.refused) return false;
-		if (value == Value.none) parser.pos = beforeValue;
-		else if (value != Value.call) skipTrivia(parser);
-	} else parser.pos = beforeValue;
+	ParsedValue parsed;
+	scope(exit) fp.dynarray.free(parsed.call.arguments);
+	immutable value = assignmentValue(parser, e, declared, declStart, parsed);
+	if (parser.refused) return false;
 	parser.where = value == Value.none ? Reading.afterType : Reading.afterValue;
 
 	uint info = noToken;
@@ -1344,79 +1484,9 @@ private bool assignment(ref Parser parser) {
 	if (terminatorKind != TokenKind.end) ++parser.pos;
 	skipBlank(parser);
 
-	if (parser.syntax !is null) {
-		if (info != noToken && readAnnotation(doir.syntax.lexer.text(parser.tokens[info], parser.source)).overflow)
-			error(parser, SyntaxError.Kind.literal, parser.tokens[info].start, info, "AT-Source: a source annotation's lines and columns must fit in 64 bits", "write the line and column where the declaration is in its file");
-		auto record = &parser.syntax.records[r];
-		record.first = cast(uint) start;
-		record.terminator = terminator;
-		record.end = cast(uint) fp.dynarray.length(parser.syntax.records);
-		record.name = doir.syntax.lexer.text(parser.tokens[name], parser.source) == "_" ? unnamed : name;
-		record.spanStart = declStart;
-		record.spanEnd = spanEnd;
-		record.hash = hashTokens(hashStart, *parser.syntax, parser.source, record.first, record.terminator, r + 1 < record.end ? r + 1 : noToken);
-	}
+	if (parser.syntax !is null) fillRecord(parser, r, cast(uint) start, terminator, name, info, declStart, spanEnd);
 	if (parser.description is null) return true;
-
-	bool ok = true;
-	final switch (value) {
-		case Value.none:
-			ok = withType!(t => record(parser, Write(kind: Write.Kind.valueless, target: e, type: t)))(parser, declared);
-			break;
-		case Value.constant:
-			ok = withType!((t) {
-				auto write = Write(kind: Write.Kind.constant, target: e, type: t);
-				write.value = constantValue.value;
-				return record(parser, write);
-			})(parser, declared);
-			break;
-		case Value.block:
-			if (isName(parser, declared, "namespace")) ok = record(parser, Write(kind: Write.Kind.namespace, target: e));
-			else if (isName(parser, declared, "type")) ok = withType!(t => record(parser, Write(kind: Write.Kind.aggregate, target: e, type: t)))(parser, declared);
-			else ok = withType!(t => record(parser, Write(kind: Write.Kind.block, target: e, type: t)))(parser, declared);
-			break;
-		case Value.call:
-			immutable from = cast(uint) fp.dynarray.length(parser.description.arguments);
-			foreach (a; fp.dynarray.slice(call.arguments)) {
-				immutable argument = intern(parser, a);
-				if (argument == doir.strings.refused || !fp.dynarray.pushBack(parser.description.arguments, argument)) return refuse(parser);
-			}
-			immutable callee = intern(parser, call.callee);
-			if (callee == doir.strings.refused) return false;
-			ok = withType!((t) {
-				auto write = Write(kind: Write.Kind.call, target: e, type: t, name: callee);
-				write.from = from;
-				write.count = cast(uint) (fp.dynarray.length(parser.description.arguments) - from);
-				return record(parser, write);
-			})(parser, declared);
-			if (ok && call.flags) {
-				auto write = Write(kind: Write.Kind.flags, target: e);
-				write.flags = call.flags;
-				ok = record(parser, write);
-			}
-			break;
-		case Value.reference:
-			immutable target = intern(parser, reference);
-			if (target == doir.strings.refused) return false;
-			if (isName(parser, declared, "alias")) ok = record(parser, Write(kind: Write.Kind.alias_, target: e, name: target));
-			else ok = withType!(t => record(parser, Write(kind: Write.Kind.reference, target: e, type: t, name: target)))(parser, declared);
-			break;
-		case Value.functionType:
-			break;
-	}
-	if (ok && exported) {
-		auto write = Write(kind: Write.Kind.flags, target: e);
-		write.flags = doir.components.ast.Flags.Export;
-		ok = record(parser, write);
-	}
-	if (!ok) return refuse(parser);
-	if (info != noToken) {
-		auto location = annotation(parser, info);
-		if (location.isNull) return false;
-		parser.description.annotation = location.get;
-		parser.description.annotated = true;
-	}
-	return true;
+	return describeAssignment(parser, e, value, declared, parsed, exported, info);
 }
 
 // One assignment; while skimming, a failed one is reported and skipped to the next terminator at its brace depth, or its block's end.
@@ -1447,6 +1517,7 @@ private void statement(ref Parser parser) {
 	}
 	if (parser.pos == start && parser.tokens[parser.pos].kind != TokenKind.end) ++parser.pos;
 	skipBlank(parser);
+	assert(parser.pos > start || parser.tokens[parser.pos].kind == TokenKind.end, "doir.parser: a statement that consumed nothing");
 }
 
 
@@ -1702,6 +1773,7 @@ version(unittest) {
 }
 
 unittest { // skimming: records in preorder, hashes that ignore trivia, and recovery
+	static assert(maxNesting >= 256, "IL-Nest: an implementation accepts at least 256 nested blocks and function types");
 	Syntax a, b;
 	scope(exit) { free(a); free(b); }
 
@@ -1789,7 +1861,7 @@ unittest { // skimming: records in preorder, hashes that ignore trivia, and reco
 	foreach (err; fp.dynarray.slice(h.errors)) assert(err.kind != SyntaxError.Kind.syntax || h.tokens[err.token].kind == TokenKind.end);
 	char* nested = describe(h, fp.string.slice(deep), h.errors[0]);
 	scope(exit) fp.string.free(nested);
-	assert(fp.string.slice(nested) == "blocks and function types nest too deeply");
+	assert(fp.string.slice(nested) == "IL-Nest: blocks and function types nest too deeply");
 
 	// Every error has a hint; a missing closer names the bracket it would close.
 	static bool hinted(ref Syntax syntax, const(char)[] source, size_t i, string expected) {
@@ -1810,6 +1882,12 @@ unittest { // skimming: records in preorder, hashes that ignore trivia, and reco
 	scope(exit) free(cut);
 	immutable unclosed = "ns : namespace = {\n\tf : (x: T\n";
 	assert(skim(unclosed, cut) && fp.dynarray.length(cut.errors) == 1 && unclosed[opening(cut, cut.errors[0])] == '(');
+	// A closed block counts whole: the `(` it leaves open is not what the file's end needs closed.
+	Syntax inner;
+	scope(exit) free(inner);
+	immutable closedInside = "ns : namespace = {\n\tf : T = {\n\t\tx : T = g(\n\t}\n";
+	assert(skim(closedInside, inner) && fp.dynarray.length(inner.errors) == 2);
+	assert(opening(inner, inner.errors[1]) == 17);
 	assert(hinted(lexed, lexical, 0, "close the string with `\"`, and check that its escapes are valid") && hinted(lexed, lexical, 1, "close the comment with `*/`"));
 	static immutable string[2][3] unclosedTokens = [["c : T = 'ab'\n", "close the character with `'`; it holds exactly one character or escape"], ["x : T <\"f.doir\"\n", "finish the source annotation, as in `<\"file.doir\":1:1>`"], ["language \"c\" { x\n", "close the block with `}`"]];
 	foreach (token; unclosedTokens) {
@@ -1945,6 +2023,17 @@ unittest { // skimming: records in preorder, hashes that ignore trivia, and reco
 }
 
 unittest { // building: each declaration form writes its builder components
+	{
+		// An unclosed block after a line break leaves the declaration valueless, and building it agrees with the skim.
+		Built b;
+		scope(exit) release(b);
+		immutable source = "n : e\n= {";
+		b.store = ecrs.context.create();
+		assert(skim(source, b.syntax) && fp.dynarray.length(b.syntax.records) == 1 && fp.dynarray.length(b.syntax.errors) == 1);
+		b.builder = Builder(&b.store, &b.strings, ecrs.context.addEntity(b.store));
+		assert(build(b.syntax, source, 0, b.builder));
+		assert(!ecrs.context.hasComponent!(doir.components.ast.Block)(b.store, b.builder.declaration));
+	}
 	{
 		Built b;
 		scope(exit) release(b);

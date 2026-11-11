@@ -18,7 +18,8 @@ public import ecrs.registry : EntityId, invalidEntity;
 
 @nogc nothrow:
 
-/// Reads the `doir.format` settings object `settings` into `s.format`: `minify`, a boolean, `semicolons`, one of `kept`, `newlines` and `newlinesAfterBraces`, `definitionColons` and `parameterColons`, each `spaced` or `attached`, and `braces`, one of `kept`, `sameLine` and `nextLine`. A member that is absent, or not one of those, leaves its option as it was.
+/// Reads the `doir.format` settings object `settings` into `s.format`: `minify`, a boolean, `semicolons`, one of `kept`, `newlines` and `newlinesAfterBraces`, `definitionColons` and `parameterColons`, each `spaced` or `attached`, and `braces`, one of `kept`, `sameLine` and `nextLine`.
+/// A member that is absent, or not one of those, leaves its option as it was.
 ///
 /// Examples:
 /// ---
