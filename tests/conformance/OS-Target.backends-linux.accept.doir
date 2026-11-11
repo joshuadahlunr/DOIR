@@ -1,0 +1,12 @@
+// OS-Target: one backend namespace pastes a machine and the Linux operating system, so its `std` holds both the machine's primitives and `std.os`.
+x86_linux : namespace = {
+	machine_path : compiler.byte_pointer = "../../reference/machine.doir"
+	_ : compiler.pointer_sized = compiler.paste_file(machine_path)
+	os_path : compiler.byte_pointer = "../../os.linux.doir"
+	_ : compiler.pointer_sized = compiler.paste_file(os_path)
+}
+export targets : namespace = {
+	export x86_linux_target : compiler.level = compiler.levels.make(x86_linux)
+	_ : compiler.level = compiler.levels.lower_to(x86_linux_target, compiler.levels.builtin, x86_linux.machine.schedule)
+	_ : compiler.level = compiler.levels.lower_to(std.level, x86_linux_target, x86_linux.machine.schedule)
+}

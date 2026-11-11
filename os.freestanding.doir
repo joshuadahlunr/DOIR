@@ -1,0 +1,227 @@
+// The freestanding operating system for a target: none at all, for a machine with no system below the program (rules OS-Target, OS-Unsupported).
+// Every `std.os` name is defined, so every symbol binds, and each call fails with `errors.unsupported`, refuses with null, or does nothing where nothing is the right answer.
+// It loads no library and names only the machine's `std` (rule L-Mono), so it pairs with any machine, and it is the native operating system on a host with no other (rule OS-Comptime).
+// The heap refuses too: a program that needs one on bare metal brings its own allocator.
+
+// The layout of `std.os.time.instant`.
+instant : type = {
+	seconds : machine.pointer_sized
+	nanoseconds : machine.pointer_sized
+}
+instant_pointer : type = compiler.pointer(instant)
+nothing : void = void()
+
+// The values of the `std.os.errors` this file returns, which it cannot name (rule L-Mono).
+error_unsupported : machine.pointer_difference = 1
+error_not_found : machine.pointer_difference = 2
+error_invalid_argument : machine.pointer_difference = 6
+
+// The answer of every call this operating system does not provide (rule OS-Unsupported).
+unsupported : () -> machine.pointer_difference = {
+	code : machine.pointer_difference = std.integer.negate(error_unsupported)
+	out : machine.pointer_difference = std.comptime_to_runtime(code)
+	_ : _ = std.return(out)
+}
+
+// The definitions `std.os`'s prototypes bind to (rule I-Extern).
+export std : namespace = {
+	os : namespace = {
+		files : namespace = {
+			standard_input : () -> machine.pointer_difference = {
+				out : machine.pointer_difference = unsupported()
+				_ : _ = std.return(out)
+			}
+			standard_output : () -> machine.pointer_difference = {
+				out : machine.pointer_difference = unsupported()
+				_ : _ = std.return(out)
+			}
+			standard_error : () -> machine.pointer_difference = {
+				out : machine.pointer_difference = unsupported()
+				_ : _ = std.return(out)
+			}
+			open : (path: compiler.byte_pointer, flags: machine.pointer_sized, permissions: machine.pointer_sized) -> machine.pointer_difference = {
+				out : machine.pointer_difference = unsupported()
+				_ : _ = std.return(out)
+			}
+			close : (h: machine.pointer_difference) -> machine.pointer_difference = {
+				out : machine.pointer_difference = unsupported()
+				_ : _ = std.return(out)
+			}
+			read : (h: machine.pointer_difference, buffer: compiler.byte_pointer, length: machine.pointer_sized) -> machine.pointer_difference = {
+				out : machine.pointer_difference = unsupported()
+				_ : _ = std.return(out)
+			}
+			write : (h: machine.pointer_difference, buffer: compiler.byte_pointer, length: machine.pointer_sized) -> machine.pointer_difference = {
+				out : machine.pointer_difference = unsupported()
+				_ : _ = std.return(out)
+			}
+			seek : (h: machine.pointer_difference, offset: machine.pointer_difference, origin: machine.pointer_sized) -> machine.pointer_difference = {
+				out : machine.pointer_difference = unsupported()
+				_ : _ = std.return(out)
+			}
+			remove : (path: compiler.byte_pointer) -> machine.pointer_difference = {
+				out : machine.pointer_difference = unsupported()
+				_ : _ = std.return(out)
+			}
+			rename : (from: compiler.byte_pointer, to: compiler.byte_pointer) -> machine.pointer_difference = {
+				out : machine.pointer_difference = unsupported()
+				_ : _ = std.return(out)
+			}
+		}
+
+		directories : namespace = {
+			create : (path: compiler.byte_pointer, permissions: machine.pointer_sized) -> machine.pointer_difference = {
+				out : machine.pointer_difference = unsupported()
+				_ : _ = std.return(out)
+			}
+			remove : (path: compiler.byte_pointer) -> machine.pointer_difference = {
+				out : machine.pointer_difference = unsupported()
+				_ : _ = std.return(out)
+			}
+			open : (path: compiler.byte_pointer) -> machine.pointer_difference = {
+				out : machine.pointer_difference = unsupported()
+				_ : _ = std.return(out)
+			}
+			next : (h: machine.pointer_difference, buffer: compiler.byte_pointer, capacity: machine.pointer_sized) -> machine.pointer_difference = {
+				out : machine.pointer_difference = unsupported()
+				_ : _ = std.return(out)
+			}
+			close : (h: machine.pointer_difference) -> machine.pointer_difference = {
+				out : machine.pointer_difference = unsupported()
+				_ : _ = std.return(out)
+			}
+			current : (buffer: compiler.byte_pointer, capacity: machine.pointer_sized) -> machine.pointer_difference = {
+				out : machine.pointer_difference = unsupported()
+				_ : _ = std.return(out)
+			}
+			change : (path: compiler.byte_pointer) -> machine.pointer_difference = {
+				out : machine.pointer_difference = unsupported()
+				_ : _ = std.return(out)
+			}
+		}
+
+		process : namespace = {
+			// Stops the machine, which has no one to hand `status` to.
+			exit : (status: machine.u8) -> void = {
+				_ : _ = std.halt()
+			}
+			argument_count : () -> machine.pointer_sized = {
+				none : machine.pointer_sized = 0
+				out : machine.pointer_sized = std.comptime_to_runtime(none)
+				_ : _ = std.return(out)
+			}
+			argument : (index: machine.pointer_sized, buffer: compiler.byte_pointer, capacity: machine.pointer_sized) -> machine.pointer_difference = {
+				code : machine.pointer_difference = std.integer.negate(error_invalid_argument)
+				out : machine.pointer_difference = std.comptime_to_runtime(code)
+				_ : _ = std.return(out)
+			}
+			environment : (name: compiler.byte_pointer, buffer: compiler.byte_pointer, capacity: machine.pointer_sized) -> machine.pointer_difference = {
+				code : machine.pointer_difference = std.integer.negate(error_not_found)
+				out : machine.pointer_difference = std.comptime_to_runtime(code)
+				_ : _ = std.return(out)
+			}
+		}
+
+		memory : namespace = {
+			// A conventional page, though nothing is mapped.
+			page_size : () -> machine.pointer_sized = {
+				size : machine.pointer_sized = 4096
+				out : machine.pointer_sized = std.comptime_to_runtime(size)
+				_ : _ = std.return(out)
+			}
+			map : (length: machine.pointer_sized, protection: machine.pointer_sized) -> compiler.byte_pointer = {
+				nowhere : compiler.byte_pointer = std.pointers.null()
+				out : compiler.byte_pointer = std.comptime_to_runtime(nowhere)
+				_ : _ = std.return(out)
+			}
+			unmap : (address: compiler.byte_pointer, length: machine.pointer_sized) -> machine.pointer_difference = {
+				out : machine.pointer_difference = unsupported()
+				_ : _ = std.return(out)
+			}
+			protect : (address: compiler.byte_pointer, length: machine.pointer_sized, protection: machine.pointer_sized) -> machine.pointer_difference = {
+				out : machine.pointer_difference = unsupported()
+				_ : _ = std.return(out)
+			}
+		}
+
+		time : namespace = {
+			monotonic : (out: instant_pointer) -> machine.pointer_difference = {
+				out : machine.pointer_difference = unsupported()
+				_ : _ = std.return(out)
+			}
+			wall_clock : (out: instant_pointer) -> machine.pointer_difference = {
+				out : machine.pointer_difference = unsupported()
+				_ : _ = std.return(out)
+			}
+			sleep : (seconds: machine.pointer_sized, nanoseconds: machine.pointer_sized) -> machine.pointer_difference = {
+				out : machine.pointer_difference = unsupported()
+				_ : _ = std.return(out)
+			}
+		}
+
+		threads : namespace = {
+			start : (entry_address: compiler.byte_pointer, argument: compiler.byte_pointer) -> machine.pointer_difference = {
+				out : machine.pointer_difference = unsupported()
+				_ : _ = std.return(out)
+			}
+			join : (thread: machine.pointer_difference) -> machine.pointer_difference = {
+				out : machine.pointer_difference = unsupported()
+				_ : _ = std.return(out)
+			}
+			// The only thread has no one to yield to.
+			yield : () -> machine.pointer_difference = {
+				none : machine.pointer_difference = 0
+				out : machine.pointer_difference = std.comptime_to_runtime(none)
+				_ : _ = std.return(out)
+			}
+			create_lock : () -> compiler.byte_pointer = {
+				nowhere : compiler.byte_pointer = std.pointers.null()
+				out : compiler.byte_pointer = std.comptime_to_runtime(nowhere)
+				_ : _ = std.return(out)
+			}
+			free_lock : (object: compiler.byte_pointer) -> void = {
+				_ : _ = std.return(nothing)
+			}
+			acquire : (object: compiler.byte_pointer) -> void = {
+				_ : _ = std.return(nothing)
+			}
+			release : (object: compiler.byte_pointer) -> void = {
+				_ : _ = std.return(nothing)
+			}
+			create_condition : () -> compiler.byte_pointer = {
+				nowhere : compiler.byte_pointer = std.pointers.null()
+				out : compiler.byte_pointer = std.comptime_to_runtime(nowhere)
+				_ : _ = std.return(out)
+			}
+			free_condition : (object: compiler.byte_pointer) -> void = {
+				_ : _ = std.return(nothing)
+			}
+			wait : (condition: compiler.byte_pointer, lock: compiler.byte_pointer) -> void = {
+				_ : _ = std.return(nothing)
+			}
+			wake_one : (object: compiler.byte_pointer) -> void = {
+				_ : _ = std.return(nothing)
+			}
+			wake_all : (object: compiler.byte_pointer) -> void = {
+				_ : _ = std.return(nothing)
+			}
+		}
+
+		heap : namespace = {
+			allocate : (size: machine.pointer_sized, alignment: machine.pointer_sized) -> compiler.byte_pointer = {
+				nowhere : compiler.byte_pointer = std.pointers.null()
+				out : compiler.byte_pointer = std.comptime_to_runtime(nowhere)
+				_ : _ = std.return(out)
+			}
+			reallocate : (p: compiler.byte_pointer, size: machine.pointer_sized, alignment: machine.pointer_sized) -> compiler.byte_pointer = {
+				nowhere : compiler.byte_pointer = std.pointers.null()
+				out : compiler.byte_pointer = std.comptime_to_runtime(nowhere)
+				_ : _ = std.return(out)
+			}
+			// Nothing was ever allocated, so only null can be passed here.
+			free : (p: compiler.byte_pointer) -> void = {
+				_ : _ = std.return(nothing)
+			}
+		}
+	}
+}

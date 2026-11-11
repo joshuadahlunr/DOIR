@@ -1,0 +1,14 @@
+// OS-Target: a backend pastes one operating system; pasting two defines every `std.os` name twice in its merged `std` (WF-Unique).
+confused : namespace = {
+	machine_path : compiler.byte_pointer = "../../reference/machine.doir"
+	_ : compiler.pointer_sized = compiler.paste_file(machine_path)
+	linux_path : compiler.byte_pointer = "../../os.linux.doir"
+	_ : compiler.pointer_sized = compiler.paste_file(linux_path)
+	freestanding_path : compiler.byte_pointer = "../../os.freestanding.doir"
+	_ : compiler.pointer_sized = compiler.paste_file(freestanding_path)
+}
+export targets : namespace = {
+	export confused_target : compiler.level = compiler.levels.make(confused)
+	_ : compiler.level = compiler.levels.lower_to(confused_target, compiler.levels.builtin, confused.machine.schedule)
+	_ : compiler.level = compiler.levels.lower_to(std.level, confused_target, confused.machine.schedule)
+}

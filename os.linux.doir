@@ -1,0 +1,1023 @@
+// The Linux operating system for a target, over glibc (rules OS-Target, OS-Sig): a backend namespace pastes this file beside its machine, and their `std` namespaces merge (rule R-Merge).
+// Written for the LP64 Linux ABIs (x86-64, AArch64, RISC-V 64): the layouts of `timespec` and `dirent` and the flag values below are theirs, and the machine must provide `i32` and `u32` (rule T-Optional).
+// The C library is loaded at comptime too (rules FP-Library, FP-Load), so this is also the native operating system that serves comptime calls on a Linux host (rule OS-Comptime).
+// The level cannot name `std`'s own declarations (rule L-Mono), so the values of `std.os.errors` and `std.os.files.flags` are restated here.
+
+c_int : alias = machine.i32
+c_unsigned : alias = machine.u32
+c_int_pointer : type = compiler.pointer(machine.i32)
+pointer_sized_pointer : type = compiler.pointer(machine.pointer_sized)
+byte_pointer_pointer : type = compiler.pointer(compiler.byte_pointer)
+u1_pointer : type = compiler.pointer(machine.u1)
+// `struct timespec`, which is also the layout of `std.os.time.instant` on these ABIs.
+instant : type = {
+	seconds : machine.pointer_sized
+	nanoseconds : machine.pointer_sized
+}
+instant_pointer : type = compiler.pointer(instant)
+nothing : void = void()
+yes : machine.u1 = 1
+no : machine.u1 = 0
+word_bytes : machine.pointer_difference = 8
+
+// The values of `std.os.errors`.
+error_unsupported : machine.pointer_difference = 1
+error_not_found : machine.pointer_difference = 2
+error_permission_denied : machine.pointer_difference = 3
+error_already_exists : machine.pointer_difference = 4
+error_interrupted : machine.pointer_difference = 5
+error_invalid_argument : machine.pointer_difference = 6
+error_would_block : machine.pointer_difference = 7
+error_no_space : machine.pointer_difference = 8
+error_not_a_directory : machine.pointer_difference = 9
+error_is_a_directory : machine.pointer_difference = 10
+error_not_empty : machine.pointer_difference = 11
+error_too_many_open : machine.pointer_difference = 12
+error_broken_pipe : machine.pointer_difference = 13
+error_out_of_memory : machine.pointer_difference = 14
+error_timed_out : machine.pointer_difference = 15
+error_other : machine.pointer_difference = 16
+
+// The values of `std.os.files.flags`, and the `O_*` flags they become.
+flag_read : machine.pointer_sized = 1
+flag_write : machine.pointer_sized = 2
+flag_create : machine.pointer_sized = 4
+flag_truncate : machine.pointer_sized = 8
+flag_append : machine.pointer_sized = 16
+flag_exclusive : machine.pointer_sized = 32
+o_create : machine.i32 = 64
+o_exclusive : machine.i32 = 128
+o_truncate : machine.i32 = 512
+o_append : machine.i32 = 1024
+o_close_on_exec : machine.i32 = 524288
+
+libc_path : compiler.byte_pointer = "libc.so.6"
+libc_library : compiler.library = compiler.load_library(libc_path)
+
+// `open` is variadic in C; passing the mode as a fixed third argument matches the C calling convention on these ABIs.
+libc : namespace = {
+	open : (path: compiler.byte_pointer, flags: c_int, mode: c_unsigned) -> c_int
+	close : (descriptor: c_int) -> c_int
+	read : (descriptor: c_int, buffer: compiler.byte_pointer, count: machine.pointer_sized) -> machine.pointer_difference
+	write : (descriptor: c_int, buffer: compiler.byte_pointer, count: machine.pointer_sized) -> machine.pointer_difference
+	seek : (descriptor: c_int, offset: machine.pointer_difference, whence: c_int) -> machine.pointer_difference
+	unlink : (path: compiler.byte_pointer) -> c_int
+	rename : (from: compiler.byte_pointer, to: compiler.byte_pointer) -> c_int
+	make_directory : (path: compiler.byte_pointer, mode: c_unsigned) -> c_int
+	remove_directory : (path: compiler.byte_pointer) -> c_int
+	open_directory : (path: compiler.byte_pointer) -> compiler.byte_pointer
+	read_directory : (directory: compiler.byte_pointer) -> compiler.byte_pointer
+	close_directory : (directory: compiler.byte_pointer) -> c_int
+	get_working_directory : (buffer: compiler.byte_pointer, size: machine.pointer_sized) -> compiler.byte_pointer
+	change_directory : (path: compiler.byte_pointer) -> c_int
+	exit : (status: c_int) -> void
+	get_environment : (name: compiler.byte_pointer) -> compiler.byte_pointer
+	system_configuration : (name: c_int) -> machine.pointer_difference
+	map_memory : (address: compiler.byte_pointer, length: machine.pointer_sized, protection: c_int, flags: c_int, descriptor: c_int, offset: machine.pointer_difference) -> compiler.byte_pointer
+	unmap_memory : (address: compiler.byte_pointer, length: machine.pointer_sized) -> c_int
+	protect_memory : (address: compiler.byte_pointer, length: machine.pointer_sized, protection: c_int) -> c_int
+	clock_get_time : (clock: c_int, out: instant_pointer) -> c_int
+	nanosleep : (request: instant_pointer, remaining: instant_pointer) -> c_int
+	thread_create : (thread: pointer_sized_pointer, attributes: compiler.byte_pointer, entry: compiler.byte_pointer, argument: compiler.byte_pointer) -> c_int
+	thread_join : (thread: machine.pointer_sized, out: byte_pointer_pointer) -> c_int
+	yield : () -> c_int
+	mutex_initialize : (mutex: compiler.byte_pointer, attributes: compiler.byte_pointer) -> c_int
+	mutex_destroy : (mutex: compiler.byte_pointer) -> c_int
+	mutex_lock : (mutex: compiler.byte_pointer) -> c_int
+	mutex_unlock : (mutex: compiler.byte_pointer) -> c_int
+	condition_initialize : (condition: compiler.byte_pointer, attributes: compiler.byte_pointer) -> c_int
+	condition_destroy : (condition: compiler.byte_pointer) -> c_int
+	condition_wait : (condition: compiler.byte_pointer, mutex: compiler.byte_pointer) -> c_int
+	condition_signal : (condition: compiler.byte_pointer) -> c_int
+	condition_broadcast : (condition: compiler.byte_pointer) -> c_int
+	allocate_aligned : (out: byte_pointer_pointer, alignment: machine.pointer_sized, size: machine.pointer_sized) -> c_int
+	reallocate : (p: compiler.byte_pointer, size: machine.pointer_sized) -> compiler.byte_pointer
+	free : (p: compiler.byte_pointer) -> void
+	usable_size : (p: compiler.byte_pointer) -> machine.pointer_sized
+	copy_memory : (destination: compiler.byte_pointer, source: compiler.byte_pointer, count: machine.pointer_sized) -> compiler.byte_pointer
+	string_length : (s: compiler.byte_pointer) -> machine.pointer_sized
+	errno_location : () -> c_int_pointer
+}
+open_symbol : compiler.byte_pointer = "open"
+_ : _ = compiler.set_symbol_name(libc.open, open_symbol)
+_ : _ = compiler.load_from_library(libc_library, libc.open)
+close_symbol : compiler.byte_pointer = "close"
+_ : _ = compiler.set_symbol_name(libc.close, close_symbol)
+_ : _ = compiler.load_from_library(libc_library, libc.close)
+read_symbol : compiler.byte_pointer = "read"
+_ : _ = compiler.set_symbol_name(libc.read, read_symbol)
+_ : _ = compiler.load_from_library(libc_library, libc.read)
+write_symbol : compiler.byte_pointer = "write"
+_ : _ = compiler.set_symbol_name(libc.write, write_symbol)
+_ : _ = compiler.load_from_library(libc_library, libc.write)
+seek_symbol : compiler.byte_pointer = "lseek"
+_ : _ = compiler.set_symbol_name(libc.seek, seek_symbol)
+_ : _ = compiler.load_from_library(libc_library, libc.seek)
+unlink_symbol : compiler.byte_pointer = "unlink"
+_ : _ = compiler.set_symbol_name(libc.unlink, unlink_symbol)
+_ : _ = compiler.load_from_library(libc_library, libc.unlink)
+rename_symbol : compiler.byte_pointer = "rename"
+_ : _ = compiler.set_symbol_name(libc.rename, rename_symbol)
+_ : _ = compiler.load_from_library(libc_library, libc.rename)
+make_directory_symbol : compiler.byte_pointer = "mkdir"
+_ : _ = compiler.set_symbol_name(libc.make_directory, make_directory_symbol)
+_ : _ = compiler.load_from_library(libc_library, libc.make_directory)
+remove_directory_symbol : compiler.byte_pointer = "rmdir"
+_ : _ = compiler.set_symbol_name(libc.remove_directory, remove_directory_symbol)
+_ : _ = compiler.load_from_library(libc_library, libc.remove_directory)
+open_directory_symbol : compiler.byte_pointer = "opendir"
+_ : _ = compiler.set_symbol_name(libc.open_directory, open_directory_symbol)
+_ : _ = compiler.load_from_library(libc_library, libc.open_directory)
+read_directory_symbol : compiler.byte_pointer = "readdir"
+_ : _ = compiler.set_symbol_name(libc.read_directory, read_directory_symbol)
+_ : _ = compiler.load_from_library(libc_library, libc.read_directory)
+close_directory_symbol : compiler.byte_pointer = "closedir"
+_ : _ = compiler.set_symbol_name(libc.close_directory, close_directory_symbol)
+_ : _ = compiler.load_from_library(libc_library, libc.close_directory)
+get_working_directory_symbol : compiler.byte_pointer = "getcwd"
+_ : _ = compiler.set_symbol_name(libc.get_working_directory, get_working_directory_symbol)
+_ : _ = compiler.load_from_library(libc_library, libc.get_working_directory)
+change_directory_symbol : compiler.byte_pointer = "chdir"
+_ : _ = compiler.set_symbol_name(libc.change_directory, change_directory_symbol)
+_ : _ = compiler.load_from_library(libc_library, libc.change_directory)
+exit_symbol : compiler.byte_pointer = "exit"
+_ : _ = compiler.set_symbol_name(libc.exit, exit_symbol)
+_ : _ = compiler.load_from_library(libc_library, libc.exit)
+get_environment_symbol : compiler.byte_pointer = "getenv"
+_ : _ = compiler.set_symbol_name(libc.get_environment, get_environment_symbol)
+_ : _ = compiler.load_from_library(libc_library, libc.get_environment)
+system_configuration_symbol : compiler.byte_pointer = "sysconf"
+_ : _ = compiler.set_symbol_name(libc.system_configuration, system_configuration_symbol)
+_ : _ = compiler.load_from_library(libc_library, libc.system_configuration)
+map_memory_symbol : compiler.byte_pointer = "mmap"
+_ : _ = compiler.set_symbol_name(libc.map_memory, map_memory_symbol)
+_ : _ = compiler.load_from_library(libc_library, libc.map_memory)
+unmap_memory_symbol : compiler.byte_pointer = "munmap"
+_ : _ = compiler.set_symbol_name(libc.unmap_memory, unmap_memory_symbol)
+_ : _ = compiler.load_from_library(libc_library, libc.unmap_memory)
+protect_memory_symbol : compiler.byte_pointer = "mprotect"
+_ : _ = compiler.set_symbol_name(libc.protect_memory, protect_memory_symbol)
+_ : _ = compiler.load_from_library(libc_library, libc.protect_memory)
+clock_get_time_symbol : compiler.byte_pointer = "clock_gettime"
+_ : _ = compiler.set_symbol_name(libc.clock_get_time, clock_get_time_symbol)
+_ : _ = compiler.load_from_library(libc_library, libc.clock_get_time)
+nanosleep_symbol : compiler.byte_pointer = "nanosleep"
+_ : _ = compiler.set_symbol_name(libc.nanosleep, nanosleep_symbol)
+_ : _ = compiler.load_from_library(libc_library, libc.nanosleep)
+thread_create_symbol : compiler.byte_pointer = "pthread_create"
+_ : _ = compiler.set_symbol_name(libc.thread_create, thread_create_symbol)
+_ : _ = compiler.load_from_library(libc_library, libc.thread_create)
+thread_join_symbol : compiler.byte_pointer = "pthread_join"
+_ : _ = compiler.set_symbol_name(libc.thread_join, thread_join_symbol)
+_ : _ = compiler.load_from_library(libc_library, libc.thread_join)
+yield_symbol : compiler.byte_pointer = "sched_yield"
+_ : _ = compiler.set_symbol_name(libc.yield, yield_symbol)
+_ : _ = compiler.load_from_library(libc_library, libc.yield)
+mutex_initialize_symbol : compiler.byte_pointer = "pthread_mutex_init"
+_ : _ = compiler.set_symbol_name(libc.mutex_initialize, mutex_initialize_symbol)
+_ : _ = compiler.load_from_library(libc_library, libc.mutex_initialize)
+mutex_destroy_symbol : compiler.byte_pointer = "pthread_mutex_destroy"
+_ : _ = compiler.set_symbol_name(libc.mutex_destroy, mutex_destroy_symbol)
+_ : _ = compiler.load_from_library(libc_library, libc.mutex_destroy)
+mutex_lock_symbol : compiler.byte_pointer = "pthread_mutex_lock"
+_ : _ = compiler.set_symbol_name(libc.mutex_lock, mutex_lock_symbol)
+_ : _ = compiler.load_from_library(libc_library, libc.mutex_lock)
+mutex_unlock_symbol : compiler.byte_pointer = "pthread_mutex_unlock"
+_ : _ = compiler.set_symbol_name(libc.mutex_unlock, mutex_unlock_symbol)
+_ : _ = compiler.load_from_library(libc_library, libc.mutex_unlock)
+condition_initialize_symbol : compiler.byte_pointer = "pthread_cond_init"
+_ : _ = compiler.set_symbol_name(libc.condition_initialize, condition_initialize_symbol)
+_ : _ = compiler.load_from_library(libc_library, libc.condition_initialize)
+condition_destroy_symbol : compiler.byte_pointer = "pthread_cond_destroy"
+_ : _ = compiler.set_symbol_name(libc.condition_destroy, condition_destroy_symbol)
+_ : _ = compiler.load_from_library(libc_library, libc.condition_destroy)
+condition_wait_symbol : compiler.byte_pointer = "pthread_cond_wait"
+_ : _ = compiler.set_symbol_name(libc.condition_wait, condition_wait_symbol)
+_ : _ = compiler.load_from_library(libc_library, libc.condition_wait)
+condition_signal_symbol : compiler.byte_pointer = "pthread_cond_signal"
+_ : _ = compiler.set_symbol_name(libc.condition_signal, condition_signal_symbol)
+_ : _ = compiler.load_from_library(libc_library, libc.condition_signal)
+condition_broadcast_symbol : compiler.byte_pointer = "pthread_cond_broadcast"
+_ : _ = compiler.set_symbol_name(libc.condition_broadcast, condition_broadcast_symbol)
+_ : _ = compiler.load_from_library(libc_library, libc.condition_broadcast)
+allocate_aligned_symbol : compiler.byte_pointer = "posix_memalign"
+_ : _ = compiler.set_symbol_name(libc.allocate_aligned, allocate_aligned_symbol)
+_ : _ = compiler.load_from_library(libc_library, libc.allocate_aligned)
+reallocate_symbol : compiler.byte_pointer = "realloc"
+_ : _ = compiler.set_symbol_name(libc.reallocate, reallocate_symbol)
+_ : _ = compiler.load_from_library(libc_library, libc.reallocate)
+free_symbol : compiler.byte_pointer = "free"
+_ : _ = compiler.set_symbol_name(libc.free, free_symbol)
+_ : _ = compiler.load_from_library(libc_library, libc.free)
+usable_size_symbol : compiler.byte_pointer = "malloc_usable_size"
+_ : _ = compiler.set_symbol_name(libc.usable_size, usable_size_symbol)
+_ : _ = compiler.load_from_library(libc_library, libc.usable_size)
+copy_memory_symbol : compiler.byte_pointer = "memcpy"
+_ : _ = compiler.set_symbol_name(libc.copy_memory, copy_memory_symbol)
+_ : _ = compiler.load_from_library(libc_library, libc.copy_memory)
+string_length_symbol : compiler.byte_pointer = "strlen"
+_ : _ = compiler.set_symbol_name(libc.string_length, string_length_symbol)
+_ : _ = compiler.load_from_library(libc_library, libc.string_length)
+errno_location_symbol : compiler.byte_pointer = "__errno_location"
+_ : _ = compiler.set_symbol_name(libc.errno_location, errno_location_symbol)
+_ : _ = compiler.load_from_library(libc_library, libc.errno_location)
+
+// Replaces `current` with `code` when `errno` is `c_value`; both are comptime at every call.
+map_errno_t : type = (errno: c_int, c_value: c_int, code: machine.pointer_difference, current: machine.pointer_difference) -> machine.pointer_difference
+_ : type = compiler.always_inline(map_errno_t)
+map_errno : map_errno_t = {
+	c_value_runtime : c_int = std.comptime_to_runtime(c_value)
+	code_runtime : machine.pointer_difference = std.comptime_to_runtime(code)
+	hit : machine.u1 = std.integer.is_equal(errno, c_value_runtime)
+	hit_wide : machine.pointer_difference = std.numbers.widen(hit)
+	change : machine.pointer_difference = std.integer.subtract(code_runtime, current)
+	step : machine.pointer_difference = std.integer.multiply(hit_wide, change)
+	out : machine.pointer_difference = std.integer.add(current, step)
+	_ : _ = std.return(out)
+}
+
+// The `std.os.errors` code of a Linux error number, `other` for one with no portable meaning.
+translate_errno : (errno: c_int) -> machine.pointer_difference = {
+	eperm : c_int = 1
+	enoent : c_int = 2
+	eintr : c_int = 4
+	ebadf : c_int = 9
+	eagain : c_int = 11
+	enomem : c_int = 12
+	eacces : c_int = 13
+	eexist : c_int = 17
+	enotdir : c_int = 20
+	eisdir : c_int = 21
+	einval : c_int = 22
+	emfile : c_int = 24
+	enospc : c_int = 28
+	epipe : c_int = 32
+	enosys : c_int = 38
+	enotempty : c_int = 39
+	etimedout : c_int = 110
+	unmapped : machine.pointer_difference = std.comptime_to_runtime(error_other)
+	m1 : machine.pointer_difference = map_errno(errno, eperm, error_permission_denied, unmapped)
+	m2 : machine.pointer_difference = map_errno(errno, enoent, error_not_found, m1)
+	m3 : machine.pointer_difference = map_errno(errno, eintr, error_interrupted, m2)
+	m4 : machine.pointer_difference = map_errno(errno, ebadf, error_invalid_argument, m3)
+	m5 : machine.pointer_difference = map_errno(errno, eagain, error_would_block, m4)
+	m6 : machine.pointer_difference = map_errno(errno, enomem, error_out_of_memory, m5)
+	m7 : machine.pointer_difference = map_errno(errno, eacces, error_permission_denied, m6)
+	m8 : machine.pointer_difference = map_errno(errno, eexist, error_already_exists, m7)
+	m9 : machine.pointer_difference = map_errno(errno, enotdir, error_not_a_directory, m8)
+	m10 : machine.pointer_difference = map_errno(errno, eisdir, error_is_a_directory, m9)
+	m11 : machine.pointer_difference = map_errno(errno, einval, error_invalid_argument, m10)
+	m12 : machine.pointer_difference = map_errno(errno, emfile, error_too_many_open, m11)
+	m13 : machine.pointer_difference = map_errno(errno, enospc, error_no_space, m12)
+	m14 : machine.pointer_difference = map_errno(errno, epipe, error_broken_pipe, m13)
+	m15 : machine.pointer_difference = map_errno(errno, enosys, error_unsupported, m14)
+	m16 : machine.pointer_difference = map_errno(errno, enotempty, error_not_empty, m15)
+	out : machine.pointer_difference = map_errno(errno, etimedout, error_timed_out, m16)
+	_ : _ = std.return(out)
+}
+
+// The negated code of the failure `errno` holds (rule OS-Result).
+failure : () -> machine.pointer_difference = {
+	location : c_int_pointer = libc.errno_location()
+	errno : c_int = std.pointers.load(location)
+	code : machine.pointer_difference = translate_errno(errno)
+	out : machine.pointer_difference = std.integer.negate(code)
+	_ : _ = std.return(out)
+}
+
+// An `int` result, where -1 is failure with the reason in `errno`.
+checked : (value: c_int) -> machine.pointer_difference = {
+	zero : c_int = 0
+	zero_runtime : c_int = std.comptime_to_runtime(zero)
+	failed : machine.u1 = std.integer.is_less(value, zero_runtime)
+	report_failure : block = {
+		code : machine.pointer_difference = failure()
+		_ : _ = std.block_result(code)
+	}
+	report_value : block = {
+		wide : machine.pointer_difference = std.numbers.widen(value)
+		_ : _ = std.block_result(wide)
+	}
+	out : machine.pointer_difference = std.if(failed, report_failure, report_value)
+	_ : _ = std.return(out)
+}
+
+// A `long` or `ssize_t` result, where -1 is failure with the reason in `errno`.
+checked_long : (value: machine.pointer_difference) -> machine.pointer_difference = {
+	zero : machine.pointer_difference = 0
+	zero_runtime : machine.pointer_difference = std.comptime_to_runtime(zero)
+	failed : machine.u1 = std.integer.is_less(value, zero_runtime)
+	report_failure : block = {
+		code : machine.pointer_difference = failure()
+		_ : _ = std.block_result(code)
+	}
+	report_value : block = { _ : _ = std.block_result(value) ; }
+	out : machine.pointer_difference = std.if(failed, report_failure, report_value)
+	_ : _ = std.return(out)
+}
+
+// A pthread result, which is 0 or the error number itself rather than -1 and `errno`.
+checked_pthread : (code: c_int) -> machine.pointer_difference = {
+	zero : c_int = 0
+	zero_runtime : c_int = std.comptime_to_runtime(zero)
+	no_result : machine.pointer_difference = 0
+	no_result_runtime : machine.pointer_difference = std.comptime_to_runtime(no_result)
+	failed : machine.u1 = std.integer.is_not_equal(code, zero_runtime)
+	report_failure : block = {
+		translated : machine.pointer_difference = translate_errno(code)
+		negative : machine.pointer_difference = std.integer.negate(translated)
+		_ : _ = std.block_result(negative)
+	}
+	report_success : block = { _ : _ = std.block_result(no_result_runtime) ; }
+	out : machine.pointer_difference = std.if(failed, report_failure, report_success)
+	_ : _ = std.return(out)
+}
+
+// `c_value` when `flags` has the bit `portable`, else 0; both are comptime at every call.
+c_flag_t : type = (flags: machine.pointer_sized, portable: machine.pointer_sized, c_value: c_int) -> c_int
+_ : type = compiler.always_inline(c_flag_t)
+c_flag : c_flag_t = {
+	zero : machine.pointer_sized = 0
+	zero_runtime : machine.pointer_sized = std.comptime_to_runtime(zero)
+	portable_runtime : machine.pointer_sized = std.comptime_to_runtime(portable)
+	c_value_runtime : c_int = std.comptime_to_runtime(c_value)
+	bits : machine.pointer_sized = std.bitwise_and(flags, portable_runtime)
+	hit : machine.u1 = std.integer.is_not_equal(bits, zero_runtime)
+	hit_wide : c_int = std.numbers.widen(hit)
+	out : c_int = std.integer.multiply(hit_wide, c_value_runtime)
+	_ : _ = std.return(out)
+}
+
+// Copies the zero-terminated `source` into `buffer` when it fits with its terminator, and returns its length either way (the `std.os.directories` convention).
+copy_name : (source: compiler.byte_pointer, buffer: compiler.byte_pointer, capacity: machine.pointer_sized) -> machine.pointer_difference = {
+	one : machine.pointer_sized = 1
+	one_runtime : machine.pointer_sized = std.comptime_to_runtime(one)
+	length : machine.pointer_sized = libc.string_length(source)
+	fits : machine.u1 = std.integer.is_less(length, capacity)
+	copy : block = {
+		with_terminator : machine.pointer_sized = std.integer.add(length, one_runtime)
+		_ : compiler.byte_pointer = libc.copy_memory(buffer, source, with_terminator)
+		_ : _ = std.block_result(nothing)
+	}
+	skip : block = { _ : _ = std.block_result(nothing) ; }
+	_ : void = std.if(fits, copy, skip)
+	out : machine.pointer_difference = std.reinterpret_bits(length)
+	_ : _ = std.return(out)
+}
+
+// Whether the `dirent` at `entry` is `.` or `..`, which `std.os.directories.next` skips; `d_name` is at byte 19.
+is_dot_entry : (entry: compiler.byte_pointer) -> machine.u1 = {
+	name_offset : machine.pointer_difference = 19
+	name_offset_runtime : machine.pointer_difference = std.comptime_to_runtime(name_offset)
+	one : machine.pointer_difference = 1
+	one_runtime : machine.pointer_difference = std.comptime_to_runtime(one)
+	two : machine.pointer_difference = 2
+	two_runtime : machine.pointer_difference = std.comptime_to_runtime(two)
+	dot : machine.u8 = 46
+	dot_runtime : machine.u8 = std.comptime_to_runtime(dot)
+	terminator : machine.u8 = 0
+	terminator_runtime : machine.u8 = std.comptime_to_runtime(terminator)
+	name : compiler.byte_pointer = std.pointers.offset(entry, name_offset_runtime)
+	second_at : compiler.byte_pointer = std.pointers.offset(name, one_runtime)
+	third_at : compiler.byte_pointer = std.pointers.offset(name, two_runtime)
+	first : machine.u8 = std.pointers.load(name)
+	second : machine.u8 = std.pointers.load(second_at)
+	third : machine.u8 = std.pointers.load(third_at)
+	starts_with_dot : machine.u1 = std.integer.is_equal(first, dot_runtime)
+	one_dot : machine.u1 = std.integer.is_equal(second, terminator_runtime)
+	second_dot : machine.u1 = std.integer.is_equal(second, dot_runtime)
+	ends_third : machine.u1 = std.integer.is_equal(third, terminator_runtime)
+	two_dots : machine.u1 = std.logical_and(second_dot, ends_third)
+	dots_only : machine.u1 = std.logical_or(one_dot, two_dots)
+	out : machine.u1 = std.logical_and(starts_with_dot, dots_only)
+	_ : _ = std.return(out)
+}
+
+// Reads `/proc/self/cmdline`, the arguments each ending in a zero byte, since glibc exposes no `argv`.
+// Copies argument `index` as `copy_name` does and returns its length, or `-invalid_argument` past the last; stores through `seen` how many arguments ended before it.
+scan_command_line : (index: machine.pointer_sized, buffer: compiler.byte_pointer, capacity: machine.pointer_sized, seen: pointer_sized_pointer) -> machine.pointer_difference = {
+	path : compiler.byte_pointer = "/proc/self/cmdline"
+	path_runtime : compiler.byte_pointer = std.comptime_to_runtime(path)
+	no_mode : c_unsigned = 0
+	no_mode_runtime : c_unsigned = std.comptime_to_runtime(no_mode)
+	close_on_exec_runtime : c_int = std.comptime_to_runtime(o_close_on_exec)
+	zero_int : c_int = 0
+	zero_int_runtime : c_int = std.comptime_to_runtime(zero_int)
+	descriptor : c_int = libc.open(path_runtime, close_on_exec_runtime, no_mode_runtime)
+	unopened : machine.u1 = std.integer.is_less(descriptor, zero_int_runtime)
+	report_failure : block = {
+		code : machine.pointer_difference = failure()
+		_ : _ = std.block_result(code)
+	}
+	scan : block = {
+		zero : machine.pointer_sized = 0
+		zero_runtime : machine.pointer_sized = std.comptime_to_runtime(zero)
+		one : machine.pointer_sized = 1
+		one_runtime : machine.pointer_sized = std.comptime_to_runtime(one)
+		one_read : machine.pointer_difference = 1
+		one_read_runtime : machine.pointer_difference = std.comptime_to_runtime(one_read)
+		terminator : machine.u8 = 0
+		terminator_runtime : machine.u8 = std.comptime_to_runtime(terminator)
+		yes_runtime : machine.u1 = std.comptime_to_runtime(yes)
+		no_runtime : machine.u1 = std.comptime_to_runtime(no)
+		byte_cell : compiler.byte_pointer = std.stack.allocate(machine.u8)
+		ended_cell : pointer_sized_pointer = std.stack.allocate(machine.pointer_sized)
+		length_cell : pointer_sized_pointer = std.stack.allocate(machine.pointer_sized)
+		done_cell : u1_pointer = std.stack.allocate(machine.u1)
+		_ : machine.pointer_sized = std.pointers.store(ended_cell, zero_runtime)
+		_ : machine.pointer_sized = std.pointers.store(length_cell, zero_runtime)
+		_ : machine.u1 = std.pointers.store(done_cell, no_runtime)
+		more : block = {
+			done : machine.u1 = std.pointers.load(done_cell)
+			going : machine.u1 = std.logical_not(done)
+			_ : _ = std.block_result(going)
+		}
+		step : block = {
+			got : machine.pointer_difference = libc.read(descriptor, byte_cell, one_runtime)
+			got_one : machine.u1 = std.integer.is_equal(got, one_read_runtime)
+			take : block = {
+				character : machine.u8 = std.pointers.load(byte_cell)
+				ended : machine.pointer_sized = std.pointers.load(ended_cell)
+				at_terminator : machine.u1 = std.integer.is_equal(character, terminator_runtime)
+				in_wanted : machine.u1 = std.integer.is_equal(ended, index)
+				wanted : block = {
+					finish : block = {
+						_ : machine.u1 = std.pointers.store(done_cell, yes_runtime)
+						_ : _ = std.block_result(nothing)
+					}
+					keep : block = {
+						length : machine.pointer_sized = std.pointers.load(length_cell)
+						fits : machine.u1 = std.integer.is_less(length, capacity)
+						store_character : block = {
+							at : compiler.byte_pointer = std.pointers.element_pointer(buffer, length)
+							_ : machine.u8 = std.pointers.store(at, character)
+							_ : _ = std.block_result(nothing)
+						}
+						skip : block = { _ : _ = std.block_result(nothing) ; }
+						_ : void = std.if(fits, store_character, skip)
+						longer : machine.pointer_sized = std.integer.add(length, one_runtime)
+						_ : machine.pointer_sized = std.pointers.store(length_cell, longer)
+						_ : _ = std.block_result(nothing)
+					}
+					_ : void = std.if(at_terminator, finish, keep)
+					_ : _ = std.block_result(nothing)
+				}
+				earlier : block = {
+					count : block = {
+						more_ended : machine.pointer_sized = std.integer.add(ended, one_runtime)
+						_ : machine.pointer_sized = std.pointers.store(ended_cell, more_ended)
+						_ : _ = std.block_result(nothing)
+					}
+					skip : block = { _ : _ = std.block_result(nothing) ; }
+					_ : void = std.if(at_terminator, count, skip)
+					_ : _ = std.block_result(nothing)
+				}
+				_ : void = std.if(in_wanted, wanted, earlier)
+				_ : _ = std.block_result(nothing)
+			}
+			stop : block = {
+				_ : machine.u1 = std.pointers.store(done_cell, yes_runtime)
+				_ : _ = std.block_result(nothing)
+			}
+			_ : void = std.if(got_one, take, stop)
+			_ : _ = std.block_result(nothing)
+		}
+		_ : void = std.while(more, step)
+		_ : c_int = libc.close(descriptor)
+		ended : machine.pointer_sized = std.pointers.load(ended_cell)
+		_ : machine.pointer_sized = std.pointers.store(seen, ended)
+		reached : machine.u1 = std.integer.is_equal(ended, index)
+		found : block = {
+			length : machine.pointer_sized = std.pointers.load(length_cell)
+			fits : machine.u1 = std.integer.is_less(length, capacity)
+			terminate : block = {
+				at : compiler.byte_pointer = std.pointers.element_pointer(buffer, length)
+				_ : machine.u8 = std.pointers.store(at, terminator_runtime)
+				_ : _ = std.block_result(nothing)
+			}
+			skip : block = { _ : _ = std.block_result(nothing) ; }
+			_ : void = std.if(fits, terminate, skip)
+			length_signed : machine.pointer_difference = std.reinterpret_bits(length)
+			_ : _ = std.block_result(length_signed)
+		}
+		missing : block = {
+			code : machine.pointer_difference = std.integer.negate(error_invalid_argument)
+			code_runtime : machine.pointer_difference = std.comptime_to_runtime(code)
+			_ : _ = std.block_result(code_runtime)
+		}
+		answer : machine.pointer_difference = std.if(reached, found, missing)
+		_ : _ = std.block_result(answer)
+	}
+	out : machine.pointer_difference = std.if(unopened, report_failure, scan)
+	_ : _ = std.return(out)
+}
+
+// The definitions `std.os`'s prototypes bind to (rule I-Extern), under the same symbols (rule R-Mangle).
+export std : namespace = {
+	os : namespace = {
+		files : namespace = {
+			standard_input : () -> machine.pointer_difference = {
+				descriptor : machine.pointer_difference = 0
+				out : machine.pointer_difference = std.comptime_to_runtime(descriptor)
+				_ : _ = std.return(out)
+			}
+			standard_output : () -> machine.pointer_difference = {
+				descriptor : machine.pointer_difference = 1
+				out : machine.pointer_difference = std.comptime_to_runtime(descriptor)
+				_ : _ = std.return(out)
+			}
+			standard_error : () -> machine.pointer_difference = {
+				descriptor : machine.pointer_difference = 2
+				out : machine.pointer_difference = std.comptime_to_runtime(descriptor)
+				_ : _ = std.return(out)
+			}
+
+			// `read` and `write` give the access mode, `O_RDONLY` 0, `O_WRONLY` 1 or `O_RDWR` 2, which is `writes * (1 + reads)`.
+			open : (path: compiler.byte_pointer, flags: machine.pointer_sized, permissions: machine.pointer_sized) -> machine.pointer_difference = {
+				one : c_int = 1
+				one_runtime : c_int = std.comptime_to_runtime(one)
+				reads : c_int = c_flag(flags, flag_read, one)
+				writes : c_int = c_flag(flags, flag_write, one)
+				reads_also : c_int = std.integer.add(one_runtime, reads)
+				access : c_int = std.integer.multiply(writes, reads_also)
+				creates : c_int = c_flag(flags, flag_create, o_create)
+				truncates : c_int = c_flag(flags, flag_truncate, o_truncate)
+				appends : c_int = c_flag(flags, flag_append, o_append)
+				exclusive : c_int = c_flag(flags, flag_exclusive, o_exclusive)
+				close_on_exec_runtime : c_int = std.comptime_to_runtime(o_close_on_exec)
+				with_create : c_int = std.integer.add(access, creates)
+				with_truncate : c_int = std.integer.add(with_create, truncates)
+				with_append : c_int = std.integer.add(with_truncate, appends)
+				with_exclusive : c_int = std.integer.add(with_append, exclusive)
+				all : c_int = std.integer.add(with_exclusive, close_on_exec_runtime)
+				mode : c_unsigned = std.numbers.truncate(permissions)
+				descriptor : c_int = libc.open(path, all, mode)
+				out : machine.pointer_difference = checked(descriptor)
+				_ : _ = std.return(out)
+			}
+			close : (h: machine.pointer_difference) -> machine.pointer_difference = {
+				descriptor : c_int = std.numbers.truncate(h)
+				closed : c_int = libc.close(descriptor)
+				out : machine.pointer_difference = checked(closed)
+				_ : _ = std.return(out)
+			}
+			read : (h: machine.pointer_difference, buffer: compiler.byte_pointer, length: machine.pointer_sized) -> machine.pointer_difference = {
+				descriptor : c_int = std.numbers.truncate(h)
+				count : machine.pointer_difference = libc.read(descriptor, buffer, length)
+				out : machine.pointer_difference = checked_long(count)
+				_ : _ = std.return(out)
+			}
+			write : (h: machine.pointer_difference, buffer: compiler.byte_pointer, length: machine.pointer_sized) -> machine.pointer_difference = {
+				descriptor : c_int = std.numbers.truncate(h)
+				count : machine.pointer_difference = libc.write(descriptor, buffer, length)
+				out : machine.pointer_difference = checked_long(count)
+				_ : _ = std.return(out)
+			}
+			// The origins are `SEEK_SET`, `SEEK_CUR` and `SEEK_END` already.
+			seek : (h: machine.pointer_difference, offset: machine.pointer_difference, origin: machine.pointer_sized) -> machine.pointer_difference = {
+				descriptor : c_int = std.numbers.truncate(h)
+				whence : c_int = std.numbers.truncate(origin)
+				position : machine.pointer_difference = libc.seek(descriptor, offset, whence)
+				out : machine.pointer_difference = checked_long(position)
+				_ : _ = std.return(out)
+			}
+			remove : (path: compiler.byte_pointer) -> machine.pointer_difference = {
+				removed : c_int = libc.unlink(path)
+				out : machine.pointer_difference = checked(removed)
+				_ : _ = std.return(out)
+			}
+			rename : (from: compiler.byte_pointer, to: compiler.byte_pointer) -> machine.pointer_difference = {
+				renamed : c_int = libc.rename(from, to)
+				out : machine.pointer_difference = checked(renamed)
+				_ : _ = std.return(out)
+			}
+		}
+
+		directories : namespace = {
+			create : (path: compiler.byte_pointer, permissions: machine.pointer_sized) -> machine.pointer_difference = {
+				mode : c_unsigned = std.numbers.truncate(permissions)
+				made : c_int = libc.make_directory(path, mode)
+				out : machine.pointer_difference = checked(made)
+				_ : _ = std.return(out)
+			}
+			remove : (path: compiler.byte_pointer) -> machine.pointer_difference = {
+				removed : c_int = libc.remove_directory(path)
+				out : machine.pointer_difference = checked(removed)
+				_ : _ = std.return(out)
+			}
+			// The handle is the `DIR *` itself; user-space addresses are never negative on these ABIs.
+			open : (path: compiler.byte_pointer) -> machine.pointer_difference = {
+				directory : compiler.byte_pointer = libc.open_directory(path)
+				missing : machine.u1 = std.pointers.is_null(directory)
+				report_failure : block = {
+					code : machine.pointer_difference = failure()
+					_ : _ = std.block_result(code)
+				}
+				report_handle : block = {
+					h : machine.pointer_difference = std.reinterpret_bits(directory)
+					_ : _ = std.block_result(h)
+				}
+				out : machine.pointer_difference = std.if(missing, report_failure, report_handle)
+				_ : _ = std.return(out)
+			}
+			// `readdir` returns null both at the end and on failure, so `errno` is cleared first to tell them apart.
+			next : (h: machine.pointer_difference, buffer: compiler.byte_pointer, capacity: machine.pointer_sized) -> machine.pointer_difference = {
+				name_offset : machine.pointer_difference = 19
+				name_offset_runtime : machine.pointer_difference = std.comptime_to_runtime(name_offset)
+				zero : c_int = 0
+				zero_runtime : c_int = std.comptime_to_runtime(zero)
+				no : machine.u1 = 0
+				no_runtime : machine.u1 = std.comptime_to_runtime(no)
+				directory : compiler.byte_pointer = std.reinterpret_bits(h)
+				errno_cell : c_int_pointer = libc.errno_location()
+				_ : c_int = std.pointers.store(errno_cell, zero_runtime)
+				entry_cell : byte_pointer_pointer = std.stack.allocate(compiler.byte_pointer)
+				first : compiler.byte_pointer = libc.read_directory(directory)
+				_ : compiler.byte_pointer = std.pointers.store(entry_cell, first)
+				more : block = {
+					entry : compiler.byte_pointer = std.pointers.load(entry_cell)
+					absent : machine.u1 = std.pointers.is_null(entry)
+					at_end : block = { _ : _ = std.block_result(no_runtime) ; }
+					check : block = {
+						dots : machine.u1 = is_dot_entry(entry)
+						_ : _ = std.block_result(dots)
+					}
+					going : machine.u1 = std.if(absent, at_end, check)
+					_ : _ = std.block_result(going)
+				}
+				skip_entry : block = {
+					following : compiler.byte_pointer = libc.read_directory(directory)
+					_ : compiler.byte_pointer = std.pointers.store(entry_cell, following)
+					_ : _ = std.block_result(nothing)
+				}
+				_ : void = std.while(more, skip_entry)
+				entry : compiler.byte_pointer = std.pointers.load(entry_cell)
+				finished : machine.u1 = std.pointers.is_null(entry)
+				report_end : block = {
+					errno : c_int = std.pointers.load(errno_cell)
+					clean : machine.u1 = std.integer.is_equal(errno, zero_runtime)
+					no_more : block = {
+						none : machine.pointer_difference = 0
+						none_runtime : machine.pointer_difference = std.comptime_to_runtime(none)
+						_ : _ = std.block_result(none_runtime)
+					}
+					report_failure : block = {
+						code : machine.pointer_difference = failure()
+						_ : _ = std.block_result(code)
+					}
+					ending : machine.pointer_difference = std.if(clean, no_more, report_failure)
+					_ : _ = std.block_result(ending)
+				}
+				report_name : block = {
+					name : compiler.byte_pointer = std.pointers.offset(entry, name_offset_runtime)
+					length : machine.pointer_difference = copy_name(name, buffer, capacity)
+					_ : _ = std.block_result(length)
+				}
+				out : machine.pointer_difference = std.if(finished, report_end, report_name)
+				_ : _ = std.return(out)
+			}
+			close : (h: machine.pointer_difference) -> machine.pointer_difference = {
+				directory : compiler.byte_pointer = std.reinterpret_bits(h)
+				closed : c_int = libc.close_directory(directory)
+				out : machine.pointer_difference = checked(closed)
+				_ : _ = std.return(out)
+			}
+			// `getcwd` fails with `ERANGE` when the buffer is too small, without saying how large it must be, so the answer then is `capacity`, which asks for more.
+			current : (buffer: compiler.byte_pointer, capacity: machine.pointer_sized) -> machine.pointer_difference = {
+				erange : c_int = 34
+				erange_runtime : c_int = std.comptime_to_runtime(erange)
+				got : compiler.byte_pointer = libc.get_working_directory(buffer, capacity)
+				failed : machine.u1 = std.pointers.is_null(got)
+				report_failure : block = {
+					errno_cell : c_int_pointer = libc.errno_location()
+					errno : c_int = std.pointers.load(errno_cell)
+					too_small : machine.u1 = std.integer.is_equal(errno, erange_runtime)
+					ask_for_more : block = {
+						larger : machine.pointer_difference = std.reinterpret_bits(capacity)
+						_ : _ = std.block_result(larger)
+					}
+					report_errno : block = {
+						code : machine.pointer_difference = failure()
+						_ : _ = std.block_result(code)
+					}
+					answer : machine.pointer_difference = std.if(too_small, ask_for_more, report_errno)
+					_ : _ = std.block_result(answer)
+				}
+				report_length : block = {
+					length : machine.pointer_sized = libc.string_length(buffer)
+					length_signed : machine.pointer_difference = std.reinterpret_bits(length)
+					_ : _ = std.block_result(length_signed)
+				}
+				out : machine.pointer_difference = std.if(failed, report_failure, report_length)
+				_ : _ = std.return(out)
+			}
+			change : (path: compiler.byte_pointer) -> machine.pointer_difference = {
+				changed : c_int = libc.change_directory(path)
+				out : machine.pointer_difference = checked(changed)
+				_ : _ = std.return(out)
+			}
+		}
+
+		process : namespace = {
+			exit : (status: machine.u8) -> void = {
+				code : c_int = std.numbers.widen(status)
+				_ : void = libc.exit(code)
+				_ : _ = std.return(nothing)
+			}
+			// Scans for an argument past every possible index, so the scan counts them all.
+			argument_count : () -> machine.pointer_sized = {
+				zero : machine.pointer_sized = 0
+				zero_runtime : machine.pointer_sized = std.comptime_to_runtime(zero)
+				past_every : machine.pointer_sized = std.bitwise_not(zero)
+				past_every_runtime : machine.pointer_sized = std.comptime_to_runtime(past_every)
+				nowhere : compiler.byte_pointer = std.pointers.null()
+				nowhere_runtime : compiler.byte_pointer = std.comptime_to_runtime(nowhere)
+				seen_cell : pointer_sized_pointer = std.stack.allocate(machine.pointer_sized)
+				_ : machine.pointer_sized = std.pointers.store(seen_cell, zero_runtime)
+				_ : machine.pointer_difference = scan_command_line(past_every_runtime, nowhere_runtime, zero_runtime, seen_cell)
+				out : machine.pointer_sized = std.pointers.load(seen_cell)
+				_ : _ = std.return(out)
+			}
+			argument : (index: machine.pointer_sized, buffer: compiler.byte_pointer, capacity: machine.pointer_sized) -> machine.pointer_difference = {
+				seen_cell : pointer_sized_pointer = std.stack.allocate(machine.pointer_sized)
+				out : machine.pointer_difference = scan_command_line(index, buffer, capacity, seen_cell)
+				_ : _ = std.return(out)
+			}
+			environment : (name: compiler.byte_pointer, buffer: compiler.byte_pointer, capacity: machine.pointer_sized) -> machine.pointer_difference = {
+				value : compiler.byte_pointer = libc.get_environment(name)
+				unset : machine.u1 = std.pointers.is_null(value)
+				report_unset : block = {
+					code : machine.pointer_difference = std.integer.negate(error_not_found)
+					code_runtime : machine.pointer_difference = std.comptime_to_runtime(code)
+					_ : _ = std.block_result(code_runtime)
+				}
+				report_value : block = {
+					length : machine.pointer_difference = copy_name(value, buffer, capacity)
+					_ : _ = std.block_result(length)
+				}
+				out : machine.pointer_difference = std.if(unset, report_unset, report_value)
+				_ : _ = std.return(out)
+			}
+		}
+
+		// The protections are `PROT_READ`, `PROT_WRITE` and `PROT_EXEC` already.
+		memory : namespace = {
+			page_size : () -> machine.pointer_sized = {
+				page_size_name : c_int = 30
+				page_size_name_runtime : c_int = std.comptime_to_runtime(page_size_name)
+				size : machine.pointer_difference = libc.system_configuration(page_size_name_runtime)
+				out : machine.pointer_sized = std.reinterpret_bits(size)
+				_ : _ = std.return(out)
+			}
+			// `MAP_PRIVATE | MAP_ANONYMOUS` is 34, and `mmap` fails with `MAP_FAILED`, all ones, rather than null.
+			map : (length: machine.pointer_sized, protection: machine.pointer_sized) -> compiler.byte_pointer = {
+				nowhere : compiler.byte_pointer = std.pointers.null()
+				nowhere_runtime : compiler.byte_pointer = std.comptime_to_runtime(nowhere)
+				private_anonymous : c_int = 34
+				private_anonymous_runtime : c_int = std.comptime_to_runtime(private_anonymous)
+				one : c_int = 1
+				no_descriptor : c_int = std.integer.negate(one)
+				no_descriptor_runtime : c_int = std.comptime_to_runtime(no_descriptor)
+				start : machine.pointer_difference = 0
+				start_runtime : machine.pointer_difference = std.comptime_to_runtime(start)
+				one_wide : machine.pointer_difference = 1
+				failed_bits : machine.pointer_difference = std.integer.negate(one_wide)
+				failed_bits_runtime : machine.pointer_difference = std.comptime_to_runtime(failed_bits)
+				c_protection : c_int = std.numbers.truncate(protection)
+				mapped : compiler.byte_pointer = libc.map_memory(nowhere_runtime, length, c_protection, private_anonymous_runtime, no_descriptor_runtime, start_runtime)
+				mapped_bits : machine.pointer_difference = std.reinterpret_bits(mapped)
+				failed : machine.u1 = std.integer.is_equal(mapped_bits, failed_bits_runtime)
+				refused : block = { _ : _ = std.block_result(nowhere_runtime) ; }
+				granted : block = { _ : _ = std.block_result(mapped) ; }
+				out : compiler.byte_pointer = std.if(failed, refused, granted)
+				_ : _ = std.return(out)
+			}
+			unmap : (address: compiler.byte_pointer, length: machine.pointer_sized) -> machine.pointer_difference = {
+				unmapped : c_int = libc.unmap_memory(address, length)
+				out : machine.pointer_difference = checked(unmapped)
+				_ : _ = std.return(out)
+			}
+			protect : (address: compiler.byte_pointer, length: machine.pointer_sized, protection: machine.pointer_sized) -> machine.pointer_difference = {
+				c_protection : c_int = std.numbers.truncate(protection)
+				protected : c_int = libc.protect_memory(address, length, c_protection)
+				out : machine.pointer_difference = checked(protected)
+				_ : _ = std.return(out)
+			}
+		}
+
+		time : namespace = {
+			// `CLOCK_MONOTONIC`.
+			monotonic : (out: instant_pointer) -> machine.pointer_difference = {
+				clock : c_int = 1
+				clock_runtime : c_int = std.comptime_to_runtime(clock)
+				read : c_int = libc.clock_get_time(clock_runtime, out)
+				answer : machine.pointer_difference = checked(read)
+				_ : _ = std.return(answer)
+			}
+			// `CLOCK_REALTIME`.
+			wall_clock : (out: instant_pointer) -> machine.pointer_difference = {
+				clock : c_int = 0
+				clock_runtime : c_int = std.comptime_to_runtime(clock)
+				read : c_int = libc.clock_get_time(clock_runtime, out)
+				answer : machine.pointer_difference = checked(read)
+				_ : _ = std.return(answer)
+			}
+			sleep : (seconds: machine.pointer_sized, nanoseconds: machine.pointer_sized) -> machine.pointer_difference = {
+				word_bytes_runtime : machine.pointer_difference = std.comptime_to_runtime(word_bytes)
+				nowhere : instant_pointer = std.pointers.null()
+				nowhere_runtime : instant_pointer = std.comptime_to_runtime(nowhere)
+				request : instant_pointer = std.stack.allocate(instant)
+				seconds_cell : pointer_sized_pointer = std.reinterpret_bits(request)
+				_ : machine.pointer_sized = std.pointers.store(seconds_cell, seconds)
+				request_bytes : compiler.byte_pointer = std.reinterpret_bits(request)
+				nanoseconds_at : compiler.byte_pointer = std.pointers.offset(request_bytes, word_bytes_runtime)
+				nanoseconds_cell : pointer_sized_pointer = std.reinterpret_bits(nanoseconds_at)
+				_ : machine.pointer_sized = std.pointers.store(nanoseconds_cell, nanoseconds)
+				slept : c_int = libc.nanosleep(request, nowhere_runtime)
+				out : machine.pointer_difference = checked(slept)
+				_ : _ = std.return(out)
+			}
+		}
+
+		// `pthread_mutex_t` and `pthread_cond_t` fit in 64 bytes on these ABIs.
+		threads : namespace = {
+			// The handle is the `pthread_t`, an address that is never negative.
+			start : (entry_address: compiler.byte_pointer, argument: compiler.byte_pointer) -> machine.pointer_difference = {
+				zero : c_int = 0
+				zero_runtime : c_int = std.comptime_to_runtime(zero)
+				no_attributes : compiler.byte_pointer = std.pointers.null()
+				no_attributes_runtime : compiler.byte_pointer = std.comptime_to_runtime(no_attributes)
+				thread_cell : pointer_sized_pointer = std.stack.allocate(machine.pointer_sized)
+				code : c_int = libc.thread_create(thread_cell, no_attributes_runtime, entry_address, argument)
+				failed : machine.u1 = std.integer.is_not_equal(code, zero_runtime)
+				report_failure : block = {
+					negative : machine.pointer_difference = checked_pthread(code)
+					_ : _ = std.block_result(negative)
+				}
+				report_thread : block = {
+					thread : machine.pointer_sized = std.pointers.load(thread_cell)
+					h : machine.pointer_difference = std.reinterpret_bits(thread)
+					_ : _ = std.block_result(h)
+				}
+				out : machine.pointer_difference = std.if(failed, report_failure, report_thread)
+				_ : _ = std.return(out)
+			}
+			join : (thread: machine.pointer_difference) -> machine.pointer_difference = {
+				id : machine.pointer_sized = std.reinterpret_bits(thread)
+				ignored : byte_pointer_pointer = std.pointers.null()
+				ignored_runtime : byte_pointer_pointer = std.comptime_to_runtime(ignored)
+				code : c_int = libc.thread_join(id, ignored_runtime)
+				answer : machine.pointer_difference = checked_pthread(code)
+				_ : _ = std.return(answer)
+			}
+			yield : () -> machine.pointer_difference = {
+				yielded : c_int = libc.yield()
+				out : machine.pointer_difference = checked(yielded)
+				_ : _ = std.return(out)
+			}
+			create_lock : () -> compiler.byte_pointer = {
+				size : machine.pointer_sized = 64
+				size_runtime : machine.pointer_sized = std.comptime_to_runtime(size)
+				alignment : machine.pointer_sized = 16
+				alignment_runtime : machine.pointer_sized = std.comptime_to_runtime(alignment)
+				zero : c_int = 0
+				zero_runtime : c_int = std.comptime_to_runtime(zero)
+				nowhere : compiler.byte_pointer = std.pointers.null()
+				nowhere_runtime : compiler.byte_pointer = std.comptime_to_runtime(nowhere)
+				lock : compiler.byte_pointer = std.os.heap.allocate(size_runtime, alignment_runtime)
+				refused : machine.u1 = std.pointers.is_null(lock)
+				report_refusal : block = { _ : _ = std.block_result(nowhere_runtime) ; }
+				initialize : block = {
+					code : c_int = libc.mutex_initialize(lock, nowhere_runtime)
+					failed : machine.u1 = std.integer.is_not_equal(code, zero_runtime)
+					discard : block = {
+						_ : void = std.os.heap.free(lock)
+						_ : _ = std.block_result(nowhere_runtime)
+					}
+					keep : block = { _ : _ = std.block_result(lock) ; }
+					made : compiler.byte_pointer = std.if(failed, discard, keep)
+					_ : _ = std.block_result(made)
+				}
+				out : compiler.byte_pointer = std.if(refused, report_refusal, initialize)
+				_ : _ = std.return(out)
+			}
+			free_lock : (object: compiler.byte_pointer) -> void = {
+				_ : c_int = libc.mutex_destroy(object)
+				_ : void = std.os.heap.free(object)
+				_ : _ = std.return(nothing)
+			}
+			acquire : (object: compiler.byte_pointer) -> void = {
+				_ : c_int = libc.mutex_lock(object)
+				_ : _ = std.return(nothing)
+			}
+			release : (object: compiler.byte_pointer) -> void = {
+				_ : c_int = libc.mutex_unlock(object)
+				_ : _ = std.return(nothing)
+			}
+			create_condition : () -> compiler.byte_pointer = {
+				size : machine.pointer_sized = 64
+				size_runtime : machine.pointer_sized = std.comptime_to_runtime(size)
+				alignment : machine.pointer_sized = 16
+				alignment_runtime : machine.pointer_sized = std.comptime_to_runtime(alignment)
+				zero : c_int = 0
+				zero_runtime : c_int = std.comptime_to_runtime(zero)
+				nowhere : compiler.byte_pointer = std.pointers.null()
+				nowhere_runtime : compiler.byte_pointer = std.comptime_to_runtime(nowhere)
+				condition : compiler.byte_pointer = std.os.heap.allocate(size_runtime, alignment_runtime)
+				refused : machine.u1 = std.pointers.is_null(condition)
+				report_refusal : block = { _ : _ = std.block_result(nowhere_runtime) ; }
+				initialize : block = {
+					code : c_int = libc.condition_initialize(condition, nowhere_runtime)
+					failed : machine.u1 = std.integer.is_not_equal(code, zero_runtime)
+					discard : block = {
+						_ : void = std.os.heap.free(condition)
+						_ : _ = std.block_result(nowhere_runtime)
+					}
+					keep : block = { _ : _ = std.block_result(condition) ; }
+					made : compiler.byte_pointer = std.if(failed, discard, keep)
+					_ : _ = std.block_result(made)
+				}
+				out : compiler.byte_pointer = std.if(refused, report_refusal, initialize)
+				_ : _ = std.return(out)
+			}
+			free_condition : (object: compiler.byte_pointer) -> void = {
+				_ : c_int = libc.condition_destroy(object)
+				_ : void = std.os.heap.free(object)
+				_ : _ = std.return(nothing)
+			}
+			wait : (condition: compiler.byte_pointer, lock: compiler.byte_pointer) -> void = {
+				_ : c_int = libc.condition_wait(condition, lock)
+				_ : _ = std.return(nothing)
+			}
+			wake_one : (object: compiler.byte_pointer) -> void = {
+				_ : c_int = libc.condition_signal(object)
+				_ : _ = std.return(nothing)
+			}
+			wake_all : (object: compiler.byte_pointer) -> void = {
+				_ : c_int = libc.condition_broadcast(object)
+				_ : _ = std.return(nothing)
+			}
+		}
+
+		// `posix_memalign` needs an alignment of at least a pointer, and `realloc` keeps only `malloc`'s 16, so a stricter `reallocate` moves the block itself.
+		heap : namespace = {
+			allocate : (size: machine.pointer_sized, alignment: machine.pointer_sized) -> compiler.byte_pointer = {
+				word : machine.pointer_sized = 8
+				word_runtime : machine.pointer_sized = std.comptime_to_runtime(word)
+				zero : c_int = 0
+				zero_runtime : c_int = std.comptime_to_runtime(zero)
+				nowhere : compiler.byte_pointer = std.pointers.null()
+				nowhere_runtime : compiler.byte_pointer = std.comptime_to_runtime(nowhere)
+				at_least_word : machine.pointer_sized = std.integer.max(alignment, word_runtime)
+				cell : byte_pointer_pointer = std.stack.allocate(compiler.byte_pointer)
+				code : c_int = libc.allocate_aligned(cell, at_least_word, size)
+				failed : machine.u1 = std.integer.is_not_equal(code, zero_runtime)
+				refused : block = { _ : _ = std.block_result(nowhere_runtime) ; }
+				granted : block = {
+					p : compiler.byte_pointer = std.pointers.load(cell)
+					_ : _ = std.block_result(p)
+				}
+				out : compiler.byte_pointer = std.if(failed, refused, granted)
+				_ : _ = std.return(out)
+			}
+			reallocate : (p: compiler.byte_pointer, size: machine.pointer_sized, alignment: machine.pointer_sized) -> compiler.byte_pointer = {
+				malloc_alignment : machine.pointer_sized = 16
+				malloc_alignment_runtime : machine.pointer_sized = std.comptime_to_runtime(malloc_alignment)
+				empty : machine.u1 = std.pointers.is_null(p)
+				fresh : block = {
+					q : compiler.byte_pointer = std.os.heap.allocate(size, alignment)
+					_ : _ = std.block_result(q)
+				}
+				resize : block = {
+					loose : machine.u1 = std.integer.is_less_equal(alignment, malloc_alignment_runtime)
+					in_place : block = {
+						q : compiler.byte_pointer = libc.reallocate(p, size)
+						_ : _ = std.block_result(q)
+					}
+					moved : block = {
+						q : compiler.byte_pointer = std.os.heap.allocate(size, alignment)
+						refused : machine.u1 = std.pointers.is_null(q)
+						keep_old : block = { _ : _ = std.block_result(q) ; }
+						transfer : block = {
+							old : machine.pointer_sized = libc.usable_size(p)
+							kept : machine.pointer_sized = std.integer.min(old, size)
+							_ : compiler.byte_pointer = libc.copy_memory(q, p, kept)
+							_ : void = libc.free(p)
+							_ : _ = std.block_result(q)
+						}
+						answer : compiler.byte_pointer = std.if(refused, keep_old, transfer)
+						_ : _ = std.block_result(answer)
+					}
+					answer : compiler.byte_pointer = std.if(loose, in_place, moved)
+					_ : _ = std.block_result(answer)
+				}
+				out : compiler.byte_pointer = std.if(empty, fresh, resize)
+				_ : _ = std.return(out)
+			}
+			free : (p: compiler.byte_pointer) -> void = {
+				_ : void = libc.free(p)
+				_ : _ = std.return(nothing)
+			}
+		}
+	}
+}

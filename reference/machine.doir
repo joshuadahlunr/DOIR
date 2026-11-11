@@ -4,6 +4,7 @@
 // The second `std` block is the exception: `standard.emulated.doir` gives those a software body, so a backend defines only the ones it has an instruction for.
 // The file is a backend's contents: a backends file pastes it into a namespace, makes that namespace a level and lowers it onto `compiler.levels.builtin` (`L-Lower`, `reference/backends.doir`), so its root namespaces are exported.
 // Its signatures name only level-0 and machine entities (`L-Mono`).
+// A target pastes an operating system beside it, which supplies `std.os`, the heap included (`OS-Target`, `reference/operating_system.doir`); static storage is laid out by the compiler, and comptime memory is the host's (`MEM-Static`, `MEM-Comptime`).
 
 // Primitive types (`T-Sig`). Widths are the target's, not the host's: `H-Target` makes comptime layouts use the target's, and `compiler.pointer_sized` is only the host word the widths are written in.
 export machine : namespace = {
@@ -150,13 +151,6 @@ export std : namespace = {
 		pop : (amount: machine.pointer_sized) -> compiler.byte_pointer
 		allocate : (T: type) -> _
 		top : () -> compiler.byte_pointer
-	}
-
-	// The runtime heap is required (MEM-Heap), usually over the C library. Static storage is laid out by the compiler, and comptime memory is the host's (MEM-Static, MEM-Comptime).
-	heap : namespace = {
-		allocate : (size: machine.pointer_sized, alignment: machine.pointer_sized) -> compiler.byte_pointer
-		reallocate : (p: compiler.byte_pointer, size: machine.pointer_sized, alignment: machine.pointer_sized) -> compiler.byte_pointer
-		free : (p: compiler.byte_pointer) -> void
 	}
 
 	// The arithmetic every emulated body is written over (Part II §13): one adder, a complete pair of bitwise operations, and one ordering, all on integers (N-Kind).

@@ -1,0 +1,13 @@
+// OS-Comptime: a comptime call of `std.os` runs the native operating system's definition, so a metaprogram can ask the build machine its page size.
+page_size_t : type = () -> std.pointer_sized
+_ : type = std.types.always_comptime(page_size_t)
+build_page_size : page_size_t = {
+	size : std.pointer_sized = std.os.memory.page_size()
+	_ : _ = std.return(size)
+}
+size : std.pointer_sized = build_page_size()
+zero : std.pointer_sized = 0
+positive : std.u1 = std.is_less(zero, size)
+message : std.c_string = "OS-Comptime: the native operating system reports a page size at compile time"
+_ : void = std.diagnostics.assert(positive, message)
+_ : _ = std.halt()

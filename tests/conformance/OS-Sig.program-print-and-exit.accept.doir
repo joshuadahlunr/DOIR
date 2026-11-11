@@ -1,0 +1,8 @@
+// OS-Sig: a program prints through `std.os.files.print` and ends with `std.os.process.exit`, both supplied by the target's operating system.
+message : std.c_string = "hello from std.os\n"
+message_runtime : std.c_string = std.comptime_to_runtime(message)
+printed : std.os.result = std.os.files.print(message_runtime)
+status : std.u8 = 0
+status_runtime : std.u8 = std.comptime_to_runtime(status)
+_ : void = std.os.process.exit(status_runtime)
+_ : _ = std.halt()

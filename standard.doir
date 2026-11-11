@@ -4,6 +4,7 @@
 // If its type is marked `comptime` it is a host hook the compiler supplies (rule H-Hook, listed in `reference/host.doir`); otherwise a lower level or the linker supplies it (rule I-Extern).
 // Most of those a lower level would supply have a software body in `standard.emulated.doir`, pasted at the end of `std`, which a backend's own definition replaces (rule I-Extern); `reference/machine.doir` lists what a backend must still supply.
 // Each emulated prototype's comment names the prototypes its software body calls; each of those is a backend primitive or emulated in turn (rule I-Extern).
+// The operating-system interface, `std.os`, is pasted from `standard.os.doir`; a target supplies it from the operating system pasted beside its machine, as `reference/operating_system.doir` lists (rules OS-Target, OS-Sig).
 // The arithmetic and comparisons that take both integers and floats have a prototype per kind, in `std.integer` and `std.float`, behind one wrapper each, so a backend can supply one kind and leave the other to software (rule N-Kind).
 // `std.meta.*` is entirely hooks, and `std.types.*` and `std.functions.*` are inline wrappers over it (rule RF-Wrapper).
 // Implements in-place modification (M-Flag) and bidirectional deduction (D-Deduce).
@@ -281,10 +282,8 @@ std : namespace = {
 	export import : import_t
 
 	// Rule FP-Library: a loaded dynamic library, named by its entity.
-	// Always comptime and unique, like an overload set, so it is equivalent to no other type (rule S-Struct) and never reaches memory (rule MEM-Escape).
-	library_shape : type = {}
-	export library : type = types.distinct_copy(library_shape)
-	_ : type = types.always_comptime(library)
+	// The floor's handle (rule H-Boot), so an operating system below `std` loads its libraries with the same type (rule OS-Target); always comptime, so it never reaches memory (rule MEM-Escape).
+	export library : alias = compiler.library
 
 	// Loads a library into the compiler for comptime calls, and records it as a dynamic dependency of every target the call is live for (rule FP-Library).
 	// `paths` holds one or more `c_string`s, tried in order at comptime and again when the program starts; the first that loads is the library.
@@ -853,7 +852,7 @@ std : namespace = {
 	export for : (init: block, condition: block, step: block, body: block) -> _ // Emulated over `while` (rule I-Extern).
 	// The count stored before element 0 of a heap loop result, and the call that frees it (rule B-Loop).
 	export loop_length : (Tptr: deduced type, result: Tptr) -> pointer_sized // Emulated over `pointers.load`, `pointers.offset` and `reinterpret_bits` (rule I-Extern).
-	export free_loop_result : (Tptr: deduced type, result: Tptr) -> void // Emulated over `heap.free`, `if`, `pointers.is_null`, `pointers.offset` and `reinterpret_bits` (rule I-Extern).
+	export free_loop_result : (Tptr: deduced type, result: Tptr) -> void // Emulated over `os.heap.free`, `if`, `pointers.is_null`, `pointers.offset` and `reinterpret_bits` (rule I-Extern).
 	// Both blocks yield the type the destination names (rules B-If, D-Return).
 	export if : (condition: u1, then: block, else: block) -> _ // Emulated over `jump_to`, `jump_to_if`, `place_label`, `pointers.load`, `pointers.store`, `reinterpret_bits`, `stack.pop` and `stack.push` (rule I-Extern).
 
@@ -933,21 +932,10 @@ std : namespace = {
 		export top : top_t
 	}
 
-	// The heap (rule MEM-Heap): the machine supplies the runtime bodies, the comptime host the comptime ones (rule MEM-Comptime). Null is refusal, and a refused `reallocate` leaves `p` valid.
-	heap : namespace = {
-		allocate_t : type = (size: pointer_sized, alignment: pointer_sized) -> byte_pointer
-		reallocate_t : type = (p: byte_pointer, size: pointer_sized, alignment: pointer_sized) -> byte_pointer
-		free_t : type = (p: byte_pointer) -> void
-		_ : type = types.never_comptime(allocate_t)
-		_ : type = types.never_comptime(reallocate_t)
-		_ : type = types.never_comptime(free_t)
+	// The heap is the operating system's, `std.os.heap` (rules MEM-Heap, OS-Sig).
 
-		export allocate : allocate_t
-		export reallocate : reallocate_t
-		export free : free_t
-	}
-
-	// Static storage (rule MEM-Static): one zero-initialized `T` per call entity and `T`, for the life of the program. Its address is comptime; the caller names `pointer(T)` (rule D-Return).
+	// Static storage (rule MEM-Static): one zero-initialized `T` per call entity and `T`, for the life of the program.
+	// Its address is comptime; the caller names `pointer(T)` (rule D-Return).
 	static : namespace = {
 		allocate_t : type = (T: type) -> _
 		_ : type = types.always_comptime(allocate_t)
@@ -1257,4 +1245,8 @@ std : namespace = {
 	// Pasted rather than imported, since those bodies call `std` and an imported file cannot see its importer (rules I-Paste, I-Import).
 	emulated_path : c_string = "standard.emulated.doir"
 	_ : pointer_sized = compiler.paste_file(emulated_path)
+
+	// The operating-system interface, `std.os` (rules OS-Sig, OS-Target), pasted like the software bodies so that a target supplies it as it supplies the machine's primitives.
+	os_path : c_string = "standard.os.doir"
+	_ : pointer_sized = compiler.paste_file(os_path)
 }

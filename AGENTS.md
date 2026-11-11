@@ -48,6 +48,8 @@ Three reference codebases guide implementation (`rustc-architecture.md` summariz
 
 - `doir.spec.md`: The normative language specification. Rule tags (e.g., `M-Flag`, `R-Unqual`, `L-Stage`, `D-Deduce`) must be cited in code and commits.
 - `standard.doir`: The canonical interface specification.
+- `standard.os.doir`: The canonical operating-system interface, `std.os`, which `standard.doir` pastes into `std`.
+  A target is a machine and an operating system pasted into one backend namespace (`OS-Target`); `reference/operating_system.doir` is what an operating system supplies, and `os.linux.doir`, `os.windows.doir` and `os.freestanding.doir` are the ones there are.
 - If code contradicts `doir.spec.md`, the specification is authoritative unless recorded in Part III (Divergences) of `doir.spec.md`.
 - `roadmap.md`: The build plan. What it schedules is what gets built.
 - `rustc-architecture.md`, `roslyn-architecture.md` and `ir-design.md` are references, not mandates: background and proposals to consult, never requirements. Where one disagrees with the spec, the roadmap or this file, those win.

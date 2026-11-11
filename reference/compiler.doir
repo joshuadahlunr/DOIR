@@ -42,6 +42,17 @@ compiler : namespace = {
 	paste_file_t : type = (path: byte_pointer) -> pointer_sized	// Comptime
 	paste_file : paste_file_t
 
+	// Dynamic libraries (FP-Library, FP-Load): floor names (H-Boot), because the operating system pasted into a backend loads its C library below `std` (OS-Target).
+	// They are the same host entries as `std.load_library`, `std.functions.load_from_library` and `std.functions.set_symbol_name`, and `std.library` aliases `library`.
+	library : type = comptime_base_type(%64, %64)	// AlwaysComptime, like `entity`
+	load_library_t : type = (paths: pack) -> library	// Comptime
+	load_library : load_library_t
+	load_from_library_t : type = (T: deduced type, source: library, function: T) -> T	// Comptime
+	load_from_library : load_from_library_t
+	// Renames a prototype's symbol in place (M-SymbolName), so one declared in a namespace binds to its C name.
+	set_symbol_name_t : type = (T: deduced type, function: T, new_name: byte_pointer) -> T	// Comptime
+	set_symbol_name : set_symbol_name_t
+
 	// Emission.
 	emit_t : type = (b: byte) -> byte	// Comptime
 	emit : emit_t

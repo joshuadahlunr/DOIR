@@ -1,0 +1,415 @@
+// Operating-system interface for DOIR, `std.os`: what POSIX is to C, a small portable core of files, directories, processes, memory, time, threads and the heap (rules OS-Sig, OS-Target).
+// `standard.doir` pastes this file into `std` (rule I-Paste), so `std.os` is part of `std` and every target supplies it.
+// A target is a machine and an operating system pasted into one backend namespace, whose two `std` namespaces merge (rules R-Merge, OS-Target); `reference/operating_system.doir` lists what the operating system must supply.
+// A prototype here binds to the operating system's definition of the same symbol (rule I-Extern), and the few with a software body in `os.emulated` below are replaced the same way.
+// Every fallible call returns an `os.result`: the value when it is not negative, and a negated `os.errors` code when it is, with the arguments left as they were (rule OS-Result).
+// An operating system without some area still defines its names, and they fail with `errors.unsupported` (rule OS-Unsupported).
+// Every function type is never comptime, so an emitted call is never folded away; a call the interpreter runs is served by the operating system the compiler runs on (rule OS-Comptime).
+
+os : namespace = {
+	// Rule OS-Result: a non-negative value is the result, a negative one the negated `errors` code of the failure.
+	export result : alias = std.pointer_difference
+	// A file, directory or thread the operating system has opened for the program; never negative.
+	export handle : alias = std.pointer_difference
+
+	// The portable failure codes (rule OS-Result); an operating system maps its own codes onto them, and any it cannot map onto `other`.
+	errors : namespace = {
+		// The operating system does not provide this call (rule OS-Unsupported).
+		export unsupported : std.pointer_difference = 1
+		export not_found : std.pointer_difference = 2
+		export permission_denied : std.pointer_difference = 3
+		export already_exists : std.pointer_difference = 4
+		// A signal arrived before anything was transferred; the call may be retried.
+		export interrupted : std.pointer_difference = 5
+		export invalid_argument : std.pointer_difference = 6
+		// The call would have had to wait, and the handle does not wait.
+		export would_block : std.pointer_difference = 7
+		export no_space : std.pointer_difference = 8
+		export not_a_directory : std.pointer_difference = 9
+		export is_a_directory : std.pointer_difference = 10
+		export not_empty : std.pointer_difference = 11
+		export too_many_open : std.pointer_difference = 12
+		// The other end of a pipe or socket was closed.
+		export broken_pipe : std.pointer_difference = 13
+		export out_of_memory : std.pointer_difference = 14
+		export timed_out : std.pointer_difference = 15
+		export other : std.pointer_difference = 16
+	}
+
+	files : namespace = {
+		// The bits of `open`'s `flags`; `read` and `write` may be combined, and at least one is required.
+		flags : namespace = {
+			export read : std.pointer_sized = 1
+			export write : std.pointer_sized = 2
+			// Creates the file if it does not exist, with the `permissions` given to `open`.
+			export create : std.pointer_sized = 4
+			export truncate : std.pointer_sized = 8
+			// Every write goes to the current end of the file.
+			export append : std.pointer_sized = 16
+			// With `create`, fails with `errors.already_exists` if the file exists.
+			export exclusive : std.pointer_sized = 32
+		}
+
+		// Where `seek`'s offset is measured from.
+		origins : namespace = {
+			export start : std.pointer_sized = 0
+			export current : std.pointer_sized = 1
+			export end : std.pointer_sized = 2
+		}
+
+		standard_stream_t : type = () -> result
+		// `permissions` are the POSIX mode bits (0o644, say), used only with `flags.create`; an operating system without them ignores them.
+		open_t : type = (path: std.c_string, flags: std.pointer_sized, permissions: std.pointer_sized) -> result
+		handle_t : type = (h: handle) -> result
+		// Moves up to `length` bytes between the file and `buffer`, and returns how many moved; 0 from `read` is the end of the file.
+		transfer_t : type = (h: handle, buffer: std.byte_pointer, length: std.pointer_sized) -> result
+		// Returns the new position, in bytes from the start of the file.
+		seek_t : type = (h: handle, offset: std.pointer_difference, origin: std.pointer_sized) -> result
+		path_t : type = (path: std.c_string) -> result
+		rename_t : type = (from: std.c_string, to: std.c_string) -> result
+		print_t : type = (message: std.c_string) -> result
+		_ : type = std.types.never_comptime(standard_stream_t)
+		_ : type = std.types.never_comptime(open_t)
+		_ : type = std.types.never_comptime(handle_t)
+		_ : type = std.types.never_comptime(transfer_t)
+		_ : type = std.types.never_comptime(seek_t)
+		_ : type = std.types.never_comptime(path_t)
+		_ : type = std.types.never_comptime(rename_t)
+		_ : type = std.types.never_comptime(print_t)
+
+		// The streams the program starts with; they are open for its whole life and need no `close`, and are an `errors` code where there are none.
+		export standard_input : standard_stream_t
+		export standard_output : standard_stream_t
+		export standard_error : standard_stream_t
+		// Returns the handle of the opened file.
+		export open : open_t
+		export close : handle_t
+		export read : transfer_t
+		export write : transfer_t
+		export seek : seek_t
+		// Removes a file, not a directory (`directories.remove`).
+		export remove : path_t
+		// Replaces `to` if it exists.
+		export rename : rename_t
+
+		// Writes all `length` bytes, retrying a write that was interrupted; returns how many were written, fewer only if a write wrote none.
+		export write_all : transfer_t // Emulated over `files.write` (rule I-Extern).
+		// Reads until `buffer` is full or the file ends, retrying a read that was interrupted; returns how many bytes were read.
+		export read_all : transfer_t // Emulated over `files.read` (rule I-Extern).
+		// The file's length in bytes, leaving its position where it was.
+		export size : handle_t // Emulated over `files.seek` (rule I-Extern).
+		// Writes the zero-terminated `message` to `standard_output`, without adding a newline.
+		export print : print_t // Emulated over `files.standard_output` and `files.write_all` (rule I-Extern).
+	}
+
+	// The calls that copy a name into the caller's `buffer` return the name's length, and add a zero byte only when the length is below `capacity`, so a result of at least `capacity` asks for a larger buffer.
+	directories : namespace = {
+		create_t : type = (path: std.c_string, permissions: std.pointer_sized) -> result
+		path_t : type = (path: std.c_string) -> result
+		handle_t : type = (h: handle) -> result
+		name_t : type = (h: handle, buffer: std.byte_pointer, capacity: std.pointer_sized) -> result
+		current_t : type = (buffer: std.byte_pointer, capacity: std.pointer_sized) -> result
+		_ : type = std.types.never_comptime(create_t)
+		_ : type = std.types.never_comptime(path_t)
+		_ : type = std.types.never_comptime(handle_t)
+		_ : type = std.types.never_comptime(name_t)
+		_ : type = std.types.never_comptime(current_t)
+
+		export create : create_t
+		// Removes an empty directory.
+		export remove : path_t
+		// Returns a handle whose entries `next` reads.
+		export open : path_t
+		// Copies the next entry's name, never `.` or `..`, and returns 0 after the last.
+		export next : name_t
+		export close : handle_t
+		// Copies the working directory's path.
+		export current : current_t
+		// Makes `path` the working directory.
+		export change : path_t
+	}
+
+	process : namespace = {
+		exit_t : type = (status: std.u8) -> void
+		count_t : type = () -> std.pointer_sized
+		argument_t : type = (index: std.pointer_sized, buffer: std.byte_pointer, capacity: std.pointer_sized) -> result
+		environment_t : type = (name: std.c_string, buffer: std.byte_pointer, capacity: std.pointer_sized) -> result
+		_ : type = std.types.never_comptime(exit_t)
+		_ : type = std.types.never_comptime(count_t)
+		_ : type = std.types.never_comptime(argument_t)
+		_ : type = std.types.never_comptime(environment_t)
+
+		// Ends the program with `status`; it does not return.
+		export exit : exit_t
+		// How many arguments the program was started with, its own name first.
+		export argument_count : count_t
+		// Copies argument `index` as the `directories` calls copy a name; `errors.invalid_argument` when `index` is not below `argument_count`.
+		export argument : argument_t
+		// Copies the environment variable `name` as the `directories` calls copy a name; `errors.not_found` when it is unset.
+		export environment : environment_t
+	}
+
+	// Whole pages of address space, for allocators and executable code.
+	memory : namespace = {
+		// The bits of a protection; `none` makes every access a fault.
+		protections : namespace = {
+			export none : std.pointer_sized = 0
+			export read : std.pointer_sized = 1
+			export write : std.pointer_sized = 2
+			export execute : std.pointer_sized = 4
+		}
+
+		page_size_t : type = () -> std.pointer_sized
+		map_t : type = (length: std.pointer_sized, protection: std.pointer_sized) -> std.byte_pointer
+		range_t : type = (address: std.byte_pointer, length: std.pointer_sized) -> result
+		protect_t : type = (address: std.byte_pointer, length: std.pointer_sized, protection: std.pointer_sized) -> result
+		_ : type = std.types.never_comptime(page_size_t)
+		_ : type = std.types.never_comptime(map_t)
+		_ : type = std.types.never_comptime(range_t)
+		_ : type = std.types.never_comptime(protect_t)
+
+		export page_size : page_size_t
+		// Zeroed pages, `length` rounded up to whole pages; null when refused, like `heap.allocate`.
+		export map : map_t
+		// Releases pages `map` returned; `address` and `length` are those it was given.
+		export unmap : range_t
+		export protect : protect_t
+	}
+
+	time : namespace = {
+		// A duration, or a point in time as the duration since an origin; two words, so no 64-bit integer is needed.
+		export instant : type = {
+			seconds : std.pointer_sized
+			nanoseconds : std.pointer_sized
+		}
+		export instant_pointer : type = std.types.pointer(instant)
+
+		read_clock_t : type = (out: instant_pointer) -> result
+		sleep_t : type = (seconds: std.pointer_sized, nanoseconds: std.pointer_sized) -> result
+		_ : type = std.types.never_comptime(read_clock_t)
+		_ : type = std.types.never_comptime(sleep_t)
+
+		// Stores a time that only moves forward, from an unspecified origin, for measuring durations.
+		export monotonic : read_clock_t
+		// Stores the time since 1970-01-01 00:00:00 UTC, which may jump when the system clock is set.
+		export wall_clock : read_clock_t
+		// Waits at least the duration given; `errors.interrupted` if a signal ended it early.
+		export sleep : sleep_t
+	}
+
+	threads : namespace = {
+		// What a thread runs, handed `create`'s `argument`; it returns nothing, since Windows keeps only 32 bits of a thread's result, so a result goes back through `argument`.
+		export entry_t : type = (argument: std.byte_pointer) -> void
+		export entry_pointer : type = std.types.function_pointer(entry_t)
+
+		start_t : type = (entry_address: std.byte_pointer, argument: std.byte_pointer) -> result
+		join_t : type = (thread: handle) -> result
+		yield_t : type = () -> result
+		create_object_t : type = () -> std.byte_pointer
+		object_t : type = (object: std.byte_pointer) -> void
+		wait_t : type = (condition: std.byte_pointer, lock: std.byte_pointer) -> void
+		_ : type = std.types.never_comptime(start_t)
+		_ : type = std.types.never_comptime(join_t)
+		_ : type = std.types.never_comptime(yield_t)
+		_ : type = std.types.never_comptime(create_object_t)
+		_ : type = std.types.never_comptime(object_t)
+		_ : type = std.types.never_comptime(wait_t)
+
+		// Starts a thread running `entry(argument)` and returns its handle; `entry` must follow the platform's C calling convention (rule OS-Sig).
+		// It is an inline wrapper over `start`, since a function pointer type cannot be written below `std` (rule FP-Type).
+		create_t : type = (entry: entry_pointer, argument: std.byte_pointer) -> result
+		_ : type = std.functions.always_inline(create_t)
+		export create : create_t = {
+			entry_address : std.byte_pointer = std.reinterpret_bits(entry)
+			out : result = start(entry_address, argument)
+			_ : _ = std.return(out)
+		}
+		// `create` with the entry's address as a byte pointer: the call an operating system supplies.
+		export start : start_t
+		// Waits for `thread` to end, and releases its handle.
+		export join : join_t
+		// Offers the rest of the thread's time slice to other threads.
+		export yield : yield_t
+
+		// Locks and conditions are opaque objects on the operating system's heap, since their sizes differ between systems; a create returns null when refused.
+		export create_lock : create_object_t
+		export free_lock : object_t
+		// Waits until no other thread holds the lock, then holds it; a thread may not acquire a lock it holds.
+		export acquire : object_t
+		export release : object_t
+		export create_condition : create_object_t
+		export free_condition : object_t
+		// Releases `lock`, which the thread holds, until the condition is woken, then holds it again; it may also wake spuriously, so wait in a loop.
+		export wait : wait_t
+		export wake_one : object_t
+		export wake_all : object_t
+	}
+
+	// The heap (rule MEM-Heap): the operating system supplies the runtime bodies, the comptime host the comptime ones (rule MEM-Comptime).
+	// Null is refusal, and a refused `reallocate` leaves `p` valid.
+	heap : namespace = {
+		allocate_t : type = (size: std.pointer_sized, alignment: std.pointer_sized) -> std.byte_pointer
+		reallocate_t : type = (p: std.byte_pointer, size: std.pointer_sized, alignment: std.pointer_sized) -> std.byte_pointer
+		free_t : type = (p: std.byte_pointer) -> void
+		_ : type = std.types.never_comptime(allocate_t)
+		_ : type = std.types.never_comptime(reallocate_t)
+		_ : type = std.types.never_comptime(free_t)
+
+		export allocate : allocate_t
+		export reallocate : reallocate_t
+		export free : free_t
+	}
+
+	// Software bodies for the prototypes above that are written over others, each taking its prototype's symbol (rules I-Extern, M-SymbolName), as `standard.emulated.doir` does.
+	emulated : namespace = {
+		// The body of `write_all` (`writing` true) and `read_all`: transfers until `length` bytes have moved, a call moves none, or one fails other than by being interrupted.
+		// `writing` is comptime, so the `std.if` choosing the call folds (rule C-Splice).
+		repeat_t : type = (writing: std.u1, h: handle, buffer: std.byte_pointer, length: std.pointer_sized) -> result
+		_ : type = std.functions.always_inline(repeat_t)
+		repeat : repeat_t = {
+			zero : std.pointer_sized = 0
+			zero_runtime : std.pointer_sized = std.comptime_to_runtime(zero)
+			no_failure : result = 0
+			no_failure_runtime : result = std.comptime_to_runtime(no_failure)
+			interrupted : result = std.negate(errors.interrupted)
+			interrupted_runtime : result = std.comptime_to_runtime(interrupted)
+			not_done : std.u1 = std.false
+			not_done_runtime : std.u1 = std.comptime_to_runtime(not_done)
+			done : std.u1 = std.true
+			done_runtime : std.u1 = std.comptime_to_runtime(done)
+			moved_cell : std.pointer_sized_pointer = std.stack.allocate(std.pointer_sized)
+			failure_cell : std.pointer_difference_pointer = std.stack.allocate(result)
+			done_cell : std.u1_pointer = std.stack.allocate(std.u1)
+			_ : std.pointer_sized = std.pointers.store(moved_cell, zero_runtime)
+			_ : result = std.pointers.store(failure_cell, no_failure_runtime)
+			_ : std.u1 = std.pointers.store(done_cell, not_done_runtime)
+			more : block = {
+				moved : std.pointer_sized = std.pointers.load(moved_cell)
+				short : std.u1 = std.is_less(moved, length)
+				stopped : std.u1 = std.pointers.load(done_cell)
+				running : std.u1 = std.logical_not(stopped)
+				going : std.u1 = std.logical_and(short, running)
+				_ : _ = std.block_result(going)
+			}
+			step : block = {
+				moved : std.pointer_sized = std.pointers.load(moved_cell)
+				moved_signed : std.pointer_difference = std.reinterpret_bits(moved)
+				at : std.byte_pointer = std.pointers.offset(buffer, moved_signed)
+				left : std.pointer_sized = std.subtract(length, moved)
+				write_some : block = {
+					written : result = files.write(h, at, left)
+					_ : _ = std.block_result(written)
+				}
+				read_some : block = {
+					read : result = files.read(h, at, left)
+					_ : _ = std.block_result(read)
+				}
+				got : result = std.if(writing, write_some, read_some)
+				positive : std.u1 = std.is_positive(got)
+				count : block = {
+					got_unsigned : std.pointer_sized = std.reinterpret_bits(got)
+					sum : std.pointer_sized = std.add(moved, got_unsigned)
+					_ : std.pointer_sized = std.pointers.store(moved_cell, sum)
+					_ : _ = std.block_result(std.nothing)
+				}
+				stop : block = {
+					retry : std.u1 = std.is_equal(got, interrupted_runtime)
+					again : block = { _ : _ = std.block_result(std.nothing) ; }
+					give_up : block = {
+						_ : result = std.pointers.store(failure_cell, got)
+						_ : std.u1 = std.pointers.store(done_cell, done_runtime)
+						_ : _ = std.block_result(std.nothing)
+					}
+					_ : void = std.if(retry, again, give_up)
+					_ : _ = std.block_result(std.nothing)
+				}
+				_ : void = std.if(positive, count, stop)
+				_ : _ = std.block_result(std.nothing)
+			}
+			_ : void = std.while(more, step)
+			failure : result = std.pointers.load(failure_cell)
+			failed : std.u1 = std.is_negative(failure)
+			report_failure : block = { _ : _ = std.block_result(failure) ; }
+			report_count : block = {
+				moved : std.pointer_sized = std.pointers.load(moved_cell)
+				moved_signed : result = std.reinterpret_bits(moved)
+				_ : _ = std.block_result(moved_signed)
+			}
+			out : result = std.if(failed, report_failure, report_count)
+			_ : _ = std.return(out)
+		}
+
+		write_all : files.transfer_t = {
+			writing : std.u1 = std.true
+			out : result = repeat(writing, h, buffer, length)
+			_ : _ = std.return(out)
+		}
+		write_all_symbol : std.c_string = "std.os.files.write_all"
+		_ : _ = std.functions.set_symbol_name(write_all, write_all_symbol)
+
+		read_all : files.transfer_t = {
+			writing : std.u1 = std.false
+			out : result = repeat(writing, h, buffer, length)
+			_ : _ = std.return(out)
+		}
+		read_all_symbol : std.c_string = "std.os.files.read_all"
+		_ : _ = std.functions.set_symbol_name(read_all, read_all_symbol)
+
+		// Seeks to the current position to learn it, to the end to learn the length, then back.
+		size : files.handle_t = {
+			zero : std.pointer_difference = 0
+			zero_runtime : std.pointer_difference = std.comptime_to_runtime(zero)
+			current_runtime : std.pointer_sized = std.comptime_to_runtime(files.origins.current)
+			end_runtime : std.pointer_sized = std.comptime_to_runtime(files.origins.end)
+			start_runtime : std.pointer_sized = std.comptime_to_runtime(files.origins.start)
+			here : result = files.seek(h, zero_runtime, current_runtime)
+			lost : std.u1 = std.is_negative(here)
+			report_here : block = { _ : _ = std.block_result(here) ; }
+			measure : block = {
+				length : result = files.seek(h, zero_runtime, end_runtime)
+				restored : result = files.seek(h, here, start_runtime)
+				restore_failed : std.u1 = std.is_negative(restored)
+				report_restore : block = { _ : _ = std.block_result(restored) ; }
+				report_length : block = { _ : _ = std.block_result(length) ; }
+				answer : result = std.if(restore_failed, report_restore, report_length)
+				_ : _ = std.block_result(answer)
+			}
+			out : result = std.if(lost, report_here, measure)
+			_ : _ = std.return(out)
+		}
+		size_symbol : std.c_string = "std.os.files.size"
+		_ : _ = std.functions.set_symbol_name(size, size_symbol)
+
+		// Counts the bytes before the zero terminator, then writes them all.
+		print : files.print_t = {
+			zero : std.byte = 0
+			zero_runtime : std.byte = std.comptime_to_runtime(zero)
+			one : std.pointer_sized = 1
+			one_runtime : std.pointer_sized = std.comptime_to_runtime(one)
+			nothing_counted : std.pointer_sized = 0
+			nothing_counted_runtime : std.pointer_sized = std.comptime_to_runtime(nothing_counted)
+			length_cell : std.pointer_sized_pointer = std.stack.allocate(std.pointer_sized)
+			_ : std.pointer_sized = std.pointers.store(length_cell, nothing_counted_runtime)
+			more : block = {
+				length : std.pointer_sized = std.pointers.load(length_cell)
+				at : std.byte_pointer = std.pointers.element_pointer(message, length)
+				character : std.byte = std.pointers.load(at)
+				going : std.u1 = std.is_not_equal(character, zero_runtime)
+				_ : _ = std.block_result(going)
+			}
+			count : block = {
+				length : std.pointer_sized = std.pointers.load(length_cell)
+				longer : std.pointer_sized = std.add(length, one_runtime)
+				_ : std.pointer_sized = std.pointers.store(length_cell, longer)
+				_ : _ = std.block_result(std.nothing)
+			}
+			_ : void = std.while(more, count)
+			length : std.pointer_sized = std.pointers.load(length_cell)
+			output : result = files.standard_output()
+			out : result = files.write_all(output, message, length)
+			_ : _ = std.return(out)
+		}
+		print_symbol : std.c_string = "std.os.files.print"
+		_ : _ = std.functions.set_symbol_name(print, print_symbol)
+	}
+}

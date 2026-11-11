@@ -1,7 +1,13 @@
-// The build's backends and how the tower lowers onto them (`L-Tower`, `L-Lower`). Each backend is a namespace, here filled by pasting `machine.doir` into it (`I-Paste`), and `compiler.levels.make` makes it a level of the tower. Under a target, the levels above see that backend's members - `machine`, `compiler_impl` and the `std` bodies - where they look down (`R-Unqual`, `T-Device`). The scan reads these calls before ascent, so they sit at level scope and name their arguments (`L-Scan`).
+// The build's backends and how the tower lowers onto them (`L-Tower`, `L-Lower`).
+// Each backend is a namespace, here filled by pasting a machine and an operating system into it (`I-Paste`, `OS-Target`), whose `std` namespaces merge (`R-Merge`), and `compiler.levels.make` makes it a level of the tower.
+// Under a target, the levels above see that backend's members - `machine`, `compiler_impl`, the operating system's C libraries and the `std` bodies - where they look down (`R-Unqual`, `T-Device`).
+// The scan reads these calls before ascent, so they sit at level scope and name their arguments (`L-Scan`).
+// The prototype machine has no C library, so it pairs with the freestanding operating system; pasting `../os.linux.doir` instead makes it a Linux target.
 mizu_backend : namespace = {
-	path : compiler.byte_pointer = "machine.doir"
-	_ : compiler.pointer_sized = compiler.paste_file(path)
+	machine_path : compiler.byte_pointer = "machine.doir"
+	_ : compiler.pointer_sized = compiler.paste_file(machine_path)
+	os_path : compiler.byte_pointer = "../os.freestanding.doir"
+	_ : compiler.pointer_sized = compiler.paste_file(os_path)
 }
 
 // The levels above name targets through this namespace (`std.targets.compile_for`). Mizu lowers onto `builtin` with its schedule, which makes it a target, and `std` lowers onto Mizu: `std` never names a backend, so this file says how it reaches each one. The legacy schedule lowers both, so both edges run it. With one target, `set_host` may be left out; with several, exactly one is the host.

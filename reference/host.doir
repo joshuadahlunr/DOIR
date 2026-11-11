@@ -4,9 +4,10 @@
 //
 // How an argument crosses: one of an always-comptime type (`type`, `std.meta.entity`, `pack`, `compiler.level`) as the `compiler.entity` naming it; one of a fixed type as its value in the target's layout (`H-Target`), written here as its `std` type. A hook's value of a deduced type crosses as the entity naming its binding, and so does a `_` result, which the destination aliases (`A-Bind`). A primitive's value of a deduced type crosses as a `compiler.byte_pointer` to its bytes in comptime memory, its type's entity giving the layout, and a result of a deduced type is written through `result`.
 host_services : namespace = {
-	revision : compiler.pointer_sized = 3
+	revision : compiler.pointer_sized = 4
 
 	import : (path: std.c_string) -> std.pointer_sized
+	// Also serves the floor's `compiler.load_library`, as `meta.functions.load_from_library` and `set_symbol_name` serve their `compiler` twins (H-Boot, OS-Target).
 	load_library : (paths: compiler.entity) -> compiler.entity
 
 	// Store and reflection.
@@ -165,10 +166,13 @@ host_services : namespace = {
 		top : () -> std.byte_pointer
 	}
 
-	heap : namespace = {
-		allocate : (size: std.pointer_sized, alignment: std.pointer_sized) -> std.byte_pointer
-		reallocate : (p: std.byte_pointer, size: std.pointer_sized, alignment: std.pointer_sized) -> std.byte_pointer
-		free : (p: std.byte_pointer)
+	// The comptime heap, `std.os.heap` (MEM-Heap): the one part of `std.os` the host serves itself; the rest it serves from the native operating system (OS-Comptime).
+	os : namespace = {
+		heap : namespace = {
+			allocate : (size: std.pointer_sized, alignment: std.pointer_sized) -> std.byte_pointer
+			reallocate : (p: std.byte_pointer, size: std.pointer_sized, alignment: std.pointer_sized) -> std.byte_pointer
+			free : (p: std.byte_pointer)
+		}
 	}
 
 	// `Tptr` is always a pointer type, so a pointer crosses as its value.

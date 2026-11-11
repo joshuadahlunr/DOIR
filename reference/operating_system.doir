@@ -1,0 +1,98 @@
+// An operating system's contract, everything `standard.os.doir` requires of one, written as the declarations an operating system makes (`OS-Sig`): sig(std.os), as `machine.doir` is sig(std) for a machine.
+// A target is a backend namespace into which a machine file and an operating-system file are both pasted, so their `std` namespaces merge (`OS-Target`, `R-Merge`); `os.linux.doir`, `os.windows.doir` and `os.freestanding.doir` are the operating systems this repository has.
+// Each declaration here is a prototype of `std.os` restated in level-0 and machine types (`L-Mono`), under the symbol `std.os.…` its definition must have (`R-Mangle`, `I-Extern`).
+// The flags are `std.os`'s, and so are the conventions: an `std.os.result` is a `machine.pointer_difference`, negative for a negated `std.os.errors` code (`OS-Result`).
+// An operating system without some area still defines all of its names (`OS-Unsupported`).
+// The C functions an operating system is written over are loaded with `compiler.load_library` and bound with `compiler.load_from_library`, so the native one also serves comptime (`OS-Comptime`, `FP-Load`).
+
+// The shapes the declarations below are written in.
+byte_pointer_pointer : type = compiler.pointer(compiler.byte_pointer)
+// The layout of `std.os.time.instant`.
+instant : type = {
+	seconds : machine.pointer_sized
+	nanoseconds : machine.pointer_sized
+}
+instant_pointer : type = compiler.pointer(instant)
+
+// The calls an operating system supplies.
+export std : namespace = {
+	os : namespace = {
+		files : namespace = {
+			standard_input : () -> machine.pointer_difference
+			standard_output : () -> machine.pointer_difference
+			standard_error : () -> machine.pointer_difference
+			open : (path: compiler.byte_pointer, flags: machine.pointer_sized, permissions: machine.pointer_sized) -> machine.pointer_difference
+			close : (h: machine.pointer_difference) -> machine.pointer_difference
+			read : (h: machine.pointer_difference, buffer: compiler.byte_pointer, length: machine.pointer_sized) -> machine.pointer_difference
+			write : (h: machine.pointer_difference, buffer: compiler.byte_pointer, length: machine.pointer_sized) -> machine.pointer_difference
+			seek : (h: machine.pointer_difference, offset: machine.pointer_difference, origin: machine.pointer_sized) -> machine.pointer_difference
+			remove : (path: compiler.byte_pointer) -> machine.pointer_difference
+			rename : (from: compiler.byte_pointer, to: compiler.byte_pointer) -> machine.pointer_difference
+		}
+
+		directories : namespace = {
+			create : (path: compiler.byte_pointer, permissions: machine.pointer_sized) -> machine.pointer_difference
+			remove : (path: compiler.byte_pointer) -> machine.pointer_difference
+			open : (path: compiler.byte_pointer) -> machine.pointer_difference
+			next : (h: machine.pointer_difference, buffer: compiler.byte_pointer, capacity: machine.pointer_sized) -> machine.pointer_difference
+			close : (h: machine.pointer_difference) -> machine.pointer_difference
+			current : (buffer: compiler.byte_pointer, capacity: machine.pointer_sized) -> machine.pointer_difference
+			change : (path: compiler.byte_pointer) -> machine.pointer_difference
+		}
+
+		process : namespace = {
+			exit : (status: machine.u8) -> void
+			argument_count : () -> machine.pointer_sized
+			argument : (index: machine.pointer_sized, buffer: compiler.byte_pointer, capacity: machine.pointer_sized) -> machine.pointer_difference
+			environment : (name: compiler.byte_pointer, buffer: compiler.byte_pointer, capacity: machine.pointer_sized) -> machine.pointer_difference
+		}
+
+		memory : namespace = {
+			page_size : () -> machine.pointer_sized
+			map : (length: machine.pointer_sized, protection: machine.pointer_sized) -> compiler.byte_pointer
+			unmap : (address: compiler.byte_pointer, length: machine.pointer_sized) -> machine.pointer_difference
+			protect : (address: compiler.byte_pointer, length: machine.pointer_sized, protection: machine.pointer_sized) -> machine.pointer_difference
+		}
+
+		time : namespace = {
+			monotonic : (out: instant_pointer) -> machine.pointer_difference
+			wall_clock : (out: instant_pointer) -> machine.pointer_difference
+			sleep : (seconds: machine.pointer_sized, nanoseconds: machine.pointer_sized) -> machine.pointer_difference
+		}
+
+		// `start` is handed the entry's address; `std.os.threads.create` is an inline wrapper with no symbol of its own.
+		threads : namespace = {
+			start : (entry_address: compiler.byte_pointer, argument: compiler.byte_pointer) -> machine.pointer_difference
+			join : (thread: machine.pointer_difference) -> machine.pointer_difference
+			yield : () -> machine.pointer_difference
+			create_lock : () -> compiler.byte_pointer
+			free_lock : (object: compiler.byte_pointer) -> void
+			acquire : (object: compiler.byte_pointer) -> void
+			release : (object: compiler.byte_pointer) -> void
+			create_condition : () -> compiler.byte_pointer
+			free_condition : (object: compiler.byte_pointer) -> void
+			wait : (condition: compiler.byte_pointer, lock: compiler.byte_pointer) -> void
+			wake_one : (object: compiler.byte_pointer) -> void
+			wake_all : (object: compiler.byte_pointer) -> void
+		}
+
+		// The runtime heap (`MEM-Heap`), which is the operating system's rather than the machine's.
+		heap : namespace = {
+			allocate : (size: machine.pointer_sized, alignment: machine.pointer_sized) -> compiler.byte_pointer
+			reallocate : (p: compiler.byte_pointer, size: machine.pointer_sized, alignment: machine.pointer_sized) -> compiler.byte_pointer
+			free : (p: compiler.byte_pointer) -> void
+		}
+	}
+}
+
+// Emulated unless defined here (`I-Extern`): `standard.os.doir`'s `os.emulated` gives each a software body over the calls above, and an operating system's definition replaces it.
+export std : namespace = {
+	os : namespace = {
+		files : namespace = {
+			write_all : (h: machine.pointer_difference, buffer: compiler.byte_pointer, length: machine.pointer_sized) -> machine.pointer_difference
+			read_all : (h: machine.pointer_difference, buffer: compiler.byte_pointer, length: machine.pointer_sized) -> machine.pointer_difference
+			size : (h: machine.pointer_difference) -> machine.pointer_difference
+			print : (message: compiler.byte_pointer) -> machine.pointer_difference
+		}
+	}
+}

@@ -173,7 +173,10 @@ Legacy behavior reference: [doir-lang/DOIR/tree/D](https://github.com/doir-lang/
     The 32-bit variant defines only the primitives of `reference/machine.doir`'s first `std` block, so the emulation is what it runs.
     It also declares `machine.f32` but defines nothing in `std.float` (`N-Kind`), so its binary32 arithmetic is the software floats, whose steps `tests/software_float.py` already checks.
   - Overload sets (`TF-Overload`): the `std.meta.functions.create_overload_set` and `add_overload` hooks, and call resolution as a query keyed by ⟨call, position⟩ that picks the one viable exact member, else the one viable generic one.
+  - The operating system (Part II §19): each backend pastes a machine and an operating system (`OS-Target`), Mizu with `os.freestanding.doir` and a native one with `os.linux.doir` or `os.windows.doir`, and every `std.os` prototype binds on both targets, checked against `reference/operating_system.doir` (`OS-Sig`).
+    That needs the floor's `compiler.library`, `load_library`, `load_from_library` and `set_symbol_name` (`H-Boot`) on the `HostServices` entries `std`'s twins use, and the comptime host serving `std.os` from the native operating system, evaluated for comptime alone when the target's is another (`OS-Comptime`).
 - **Verification:** `test_standard.doir` compiles and passes verification without errors on both targets, and gives the same results on the variant, which emulates, as on Mizu, which does not: bit for bit for floats, NaN payloads aside.
+  A program over `std.os` prints, reads back a file it wrote and joins a thread on the native target, gets `errors.unsupported` on freestanding Mizu, and reads the build machine's page size at comptime on both.
 
 ### Phase 9: Graphics Target Backend (Chapter 6)
 - **Goal:** Prove that a target is ordinary library code and that the same source runs on two targets. Chapter 6 is due before Chapter 4, so this phase starts as soon as Phase 5 makes the host ABI callable, and runs in parallel with Phase 8.

@@ -199,6 +199,10 @@ DOIR types are structural (`S-Struct`): two types convert implicitly exactly whe
 
 A program is a set of files, arranged into a tower of levels that the compiler reads from the files themselves before it evaluates anything (`L-Tower`, `L-Scan`). The levels of the tower are each file's root, the builtin block, and each namespace that `compiler.levels.make` makes into a `compiler.level`. `compiler.levels.lower_to(from, to, passes)` says that one level is lowered onto another by `passes` (`L-Lower`), and may be written in any file, so `std` never has to name the backends it runs on. `compiler.levels.check(t, name)` adds a check to the semantic analysis a level runs over its own entities (`L-Sema`): a level defines its analysis with `check` and its lowering with `lower_to`, and neither needs a change to the compiler. A level that writes no edge lowers onto the levels it names, so a program over `std` writes none. A backend lowers onto `compiler.levels.builtin`, the builtin block, and the levels that do are the build's targets: the levels above them are evaluated and lowered once for each. With more than one, `compiler.levels.set_host` marks the one that runs the program. One file is the program: on the host its top-level declarations run top to bottom, starting from its first (`L-Entry`). A build with no target gets one by default: the backend native to the machine the compiler runs on, or Mizu if that cannot be determined (`T-Value`). There is no `main`.
 
+A backend is a machine and an operating system together.
+Its namespace pastes both a machine file (`reference/machine.doir`, or x86 or RISC-V) and an operating-system file (`os.linux.doir`, `os.windows.doir` or `os.freestanding.doir`), and their `std` namespaces merge (`OS-Target`).
+The machine supplies `std`'s primitives, and the operating system supplies `std.os`: files, directories, processes, memory, time, threads and the heap (Part II §19).
+
 ```rust
 x86_backend : namespace = { ... }      // machine, compiler_impl and the std bodies for x86
 spirv_backend : namespace = { ... }
@@ -741,8 +745,14 @@ where $\pi^{*}$ applies $\pi$ to every entity id inside a component value (`Pare
   $$
   > **In Plain English:** Loops take blocks, not inline expressions. `condition` yields a `std.u1`, and `init` and `step` yield `std.nothing`. A body that yields `std.nothing` makes the loop return `void`. A body that yields a value of any other type $\tau$ makes the loop return the values of its runs, in order, and the destination's declared type says which of two forms it gets (`D-Return`):
   >
-  > - **`array(τ, n)`:** the values as one array value, an ordinary binding like any other aggregate, so nothing is freed. It is ill-formed unless the count is comptime and equal to $n$. The count is comptime when running `init`, then `condition` and `step` alone without the body, folds (`C-Interpret`, in comptime memory, `MEM-Comptime`) and the body stores to none of the memory they read; so `std.while`, which has no `step`, has a comptime count only when it is zero.
-  > - **`pointer(τ)`:** element 0 of a heap allocation (`MEM-Heap`) that the loop grows as it runs, whatever the count. The allocation begins $h$ bytes before element 0, where $h$ is the size of `std.pointer_sized` rounded up to the alignment of $\tau$, and holds the count there as a `std.pointer_sized`. `std.loop_length(p)` reads it and `std.free_loop_result(p)` frees the allocation; the caller must free it. If the heap refuses, the loop still runs every iteration and returns null. A `std.return` out of the body (`B-Return`) frees what the loop had allocated.
+  > - **`array(τ, n)`:** the values as one array value, an ordinary binding like any other aggregate, so nothing is freed.
+  >   It is ill-formed unless the count is comptime and equal to $n$.
+  >   The count is comptime when running `init`, then `condition` and `step` alone without the body, folds (`C-Interpret`, in comptime memory, `MEM-Comptime`) and the body stores to none of the memory they read; so `std.while`, which has no `step`, has a comptime count only when it is zero.
+  > - **`pointer(τ)`:** element 0 of a heap allocation (`std.os.heap`, `MEM-Heap`) that the loop grows as it runs, whatever the count.
+  >   The allocation begins $h$ bytes before element 0, where $h$ is the size of `std.pointer_sized` rounded up to the alignment of $\tau$, and holds the count there as a `std.pointer_sized`.
+  >   `std.loop_length(p)` reads it and `std.free_loop_result(p)` frees the allocation; the caller must free it.
+  >   If the heap refuses, the loop still runs every iteration and returns null.
+  >   A `std.return` out of the body (`B-Return`) frees what the loop had allocated.
   >
   > Each run of a block binds its declarations afresh (`SSA`), so nothing carries from one iteration to the next except memory: a loop mutates its counter through a stack cell (`std.stack.allocate` plus `std.pointers.store`), allocated before the loop (`MEM-Stack`).
 - **[B-Defer] Deferred Blocks:**  
@@ -838,6 +848,7 @@ where $\pi^{*}$ applies $\pi$ to every entity id inside a component value (`Pare
   > The library stays loaded until the compiler exits; there is no unloading.
   > When the host can load none of the paths it is a compile error at the call, annotating each path with the loader's reason for refusing it, whose hint is to install the library or add the path it lives at.
   > A program's comptime answers now depend on a native library, so `H-Det` holds only as far as that library gives the same answers on every host.
+  > `compiler.load_library` is the same operation for code below `std` (`H-Boot`), such as an operating system loading its C library (`OS-Target`).
 - **[FP-Load] Binding a Prototype to a Library:**  
   $$
   \frac{e \vdash l \Downarrow L \quad e \vdash a \Downarrow f \quad \text{val}(f) = \{\text{FunctionReturn}, \text{Valueless}\}}{\langle c : \_ = \mathrm{std.functions.load\_from\_library}(l, a) \rangle \rightsquigarrow \text{Library}(f) := L; \quad \text{Alias}(c) := f}
@@ -852,7 +863,7 @@ where $\pi^{*}$ applies $\pi$ to every entity id inside a component value (`Pare
   > So the prototype's type may not take a pack, a block or an always-comptime argument, since a native function has one fixed shape (`FP-Call`).
   > Binding the same prototype to the same library again changes nothing (`M-Idempotent`); binding it to a second library, or binding a function with a body, is ill-formed, a compile error at the call whose hint names the earlier library or the body.
   > A symbol the library does not define is a compile error at the call whose hint names the symbol and the library.
-  > `std.meta.functions.load_from_library` is the entity form, and `std.functions.load_from_library` wraps it (`RF-Wrapper`).
+  > `std.meta.functions.load_from_library` is the entity form, and `std.functions.load_from_library` wraps it (`RF-Wrapper`); `compiler.load_from_library` is the same operation for code below `std` (`H-Boot`).
 
 ---
 
@@ -1006,6 +1017,7 @@ where $\pi^{*}$ applies $\pi$ to every entity id inside a component value (`Pare
   | Examples | `compiler.emit`, `compiler.base_type`, `compiler.levels.lower_to`, `compiler.levels.check`, `compiler.assembler.*`, `compiler.paste_file` | `std.meta.entity_of`, `std.meta.types.field_offset_bits`, `std.import` |
 
   Some names are floor rather than debt.
+  `compiler.library`, `compiler.load_library`, `compiler.load_from_library` and `compiler.set_symbol_name` are floor because the operating system pasted into a backend binds its C library below `std` (`OS-Target`); they are the same `HostServices` entries as `std.load_library`, `std.functions.load_from_library` and `std.functions.set_symbol_name`, under a second name, and `std.library` aliases `compiler.library`.
   `compiler.entity` lives at level 0 because the `compiler_impl` hooks need it below `std`, and `compiler.argument_count` and `compiler.argument` let `compiler_impl.pass_arguments` and bridge calls (`T-Bridge`) inspect call arguments without violating `L-Mono`; `compiler.paste_file` is how a build without `std` brings in files, by pasting them; `std.import`, which compiles a file separately, is not its twin but a different operation above level 0.
   One debt is visible: `compiler.entity` pins the entity type to the host word the bootstrap invented.
   And every name in Part I §7 is still called, by this repository or by the Mizu level Phase 5 ports (`mizu.doir`, `tree/D`); the legacy names nothing called (`always_comptime`, `indicate_yield`, `debug_print`, `current_entity`, `assembler.yield_register`) are retired, and a port that meets one replaces it with its `std` counterpart.
@@ -1194,9 +1206,12 @@ where $\pi^{*}$ applies $\pi$ to every entity id inside a component value (`Pare
   > **In Plain English:** Stack memory belongs to the frame of the function it was allocated in and lives until that function returns, not until the enclosing block ends. A splice (`C-Inline`, `B-Inline`) has no frame of its own, so an inlined allocation belongs to the caller, which is what lets a helper hand back stack memory. `allocate` aligns to `T` and yields a pointer to `T` (`TF-Name` cannot write `pointer(T)` in a type position, so `D-Return` solves it from the destination binding's declared type); `push` reserves `n` bytes aligned to `a`, a power of two, and `pop(n)` releases the most recent push of `n` bytes, which must be the last one not yet popped. `top` is the current top of the stack, and `std.stack.load` and `store` access a value at a byte offset from it. An allocation inside a loop body allocates on every iteration, so cells a loop reuses are allocated before it.
 - **[MEM-Heap] The Heap:**  
   $$
-  \mathrm{std.heap.allocate}(n, a),\ \mathrm{std.heap.reallocate}(p, n, a) : \mathtt{byte\_pointer} \cup \{\text{null}\} \qquad \mathrm{std.heap.free}(p)
+  \mathrm{std.os.heap.allocate}(n, a),\ \mathrm{std.os.heap.reallocate}(p, n, a) : \mathtt{byte\_pointer} \cup \{\text{null}\} \qquad \mathrm{std.os.heap.free}(p)
   $$
-  > **In Plain English:** `allocate` returns `n` bytes aligned to `a`, or null when refused. `reallocate` resizes `p`, keeping the first `min(old, n)` bytes, and returns null when refused, leaving `p` valid; a null `p` allocates. `free` releases `p`; null is a no-op. The machine supplies the runtime bodies (`I-Extern`); the comptime host supplies the comptime ones (`MEM-Comptime`).
+  > **In Plain English:** `allocate` returns `n` bytes aligned to `a`, or null when refused.
+  > `reallocate` resizes `p`, keeping the first `min(old, n)` bytes, and returns null when refused, leaving `p` valid; a null `p` allocates.
+  > `free` releases `p`; null is a no-op.
+  > The heap is the operating system's, not the machine's: the operating system pasted into the target supplies the runtime bodies (`OS-Sig`, `I-Extern`), and the comptime host the comptime ones (`MEM-Comptime`).
 - **[MEM-Static] Static Storage:**  
   $$
   \mathrm{std.static.allocate}(T) \rightsquigarrow v \quad \text{Flags}(v) \supseteq \{\text{Comptime}\} \quad v \text{ points to zero-initialized storage for one } T \text{ that lives as long as the program}
@@ -1211,7 +1226,8 @@ where $\pi^{*}$ applies $\pi$ to every entity id inside a component value (`Pare
   $$
   \frac{\text{a memory primitive executes during } \text{cmp}(n) \text{ (C-Interpret)}}{\text{it acts on the host's comptime memory, laid out for the target (H-Target), and its pointer results are Comptime}}
   $$
-  > **In Plain English:** The comptime interpreter has a stack and a heap of its own, provided through the `HostServices` table (`H-Services`): `std.stack`, `std.heap`, `std.pointers.load`, `store`, `load_field`, `store_field`, `offset`, `element_pointer` and `difference` all work there, with target sizes, alignments and byte order, so a metaprogram can build a dynarray or a hash table. Comptime stack memory lives as long as the interpreted frame; comptime heap memory not freed by the time `cmp(n)` terminates is released then (`L-Freeze`).
+  > **In Plain English:** The comptime interpreter has a stack and a heap of its own, provided through the `HostServices` table (`H-Services`): `std.stack`, `std.os.heap`, `std.pointers.load`, `store`, `load_field`, `store_field`, `offset`, `element_pointer` and `difference` all work there, with target sizes, alignments and byte order, so a metaprogram can build a dynarray or a hash table.
+  > Comptime stack memory lives as long as the interpreted frame; comptime heap memory not freed by the time `cmp(n)` terminates is released then (`L-Freeze`).
 - **[MEM-Escape] Comptime Pointers Stay in Comptime:**  
   $$
   \frac{v \text{ points into comptime stack or heap memory}}{\mathrm{std.comptime\_to\_runtime}(v),\ \text{a store of } v \text{ into static storage, and } \mathrm{std.attributes.set}(\_, \_, v) \text{ are ill-formed}} \qquad \frac{\text{AlwaysComptime} \in \text{Flags}(\text{TypeOf}(v))}{\mathrm{std.comptime\_to\_runtime}(v) \text{ and a store of } v \text{ through any pointer are ill-formed}}
@@ -1375,7 +1391,15 @@ where $\pi^{*}$ applies $\pi$ to every entity id inside a component value (`Pare
   $$
   \text{host} = \begin{cases} \tau_1 & n \le 1 \\ \text{the one target passed to } \mathrm{compiler.levels.set\_host} & n > 1 \end{cases} \qquad n > 1 \land \text{no or several targets passed to } \mathrm{compiler.levels.set\_host} \implies \text{ill-formed}
   $$
-  > **In Plain English:** A `compiler.level` is a value naming a level of the tower: `compiler.levels.make` makes a namespace one, `this_file` names the root of its own file, and `lower_to` joins levels with edges. A backend's namespace provides the `machine` types, `compiler_impl` hooks and `std` bodies; it becomes a target by lowering onto `compiler.levels.builtin` with its passes, and descent and emission run once per target. There is no build-wide fallback schedule: every pass belongs to an edge. One build can have x86 and SPIR-V targets at once. With one target it is the host; with several, `compiler.levels.set_host` marks the one that runs the program's root (`L-Entry`), and leaving it out or marking two is an error. The host mark is read by descent, not by the scan, so it may be written in any level. A build with no target gets one by default, supplied by the compiler with that backend's own passes: the backend native to the machine the compiler runs on, or Mizu if the compiler cannot tell what that is. Whatever would have lowered straight onto `builtin` lowers onto it instead, and it is the host. Where this specification indexes descent by $\tau$ (`Lowered`, `VirtualReg`$_\tau$, `T-Live`, `T-Bridge`), $\tau$ ranges over the targets.
+  > **In Plain English:** A `compiler.level` is a value naming a level of the tower: `compiler.levels.make` makes a namespace one, `this_file` names the root of its own file, and `lower_to` joins levels with edges.
+  > A backend's namespace provides the `machine` types, `compiler_impl` hooks and `std` bodies; it becomes a target by lowering onto `compiler.levels.builtin` with its passes, and descent and emission run once per target.
+  > There is no build-wide fallback schedule: every pass belongs to an edge.
+  > One build can have x86 and SPIR-V targets at once.
+  > With one target it is the host; with several, `compiler.levels.set_host` marks the one that runs the program's root (`L-Entry`), and leaving it out or marking two is an error.
+  > The host mark is read by descent, not by the scan, so it may be written in any level.
+  > A build with no target gets one by default, supplied by the compiler with that backend's own passes: the backend native to the machine the compiler runs on, paired with the operating system the compiler runs on (`OS-Target`), or Mizu with the freestanding one if the compiler cannot tell what they are.
+  > Whatever would have lowered straight onto `builtin` lowers onto it instead, and it is the host.
+  > Where this specification indexes descent by $\tau$ (`Lowered`, `VirtualReg`$_\tau$, `T-Live`, `T-Bridge`), $\tau$ ranges over the targets.
 - **[T-Live] Declarations Are Live for a Target Set:**  
   $$
   \frac{e \vdash a \Downarrow d \quad e \vdash s \Downarrow \sigma}{\langle c : \_ = \mathrm{std.targets.compile\_for}(a, s) \rangle \rightsquigarrow \text{On}(d) := \text{On}(d) \cup \{\sigma\}; \quad \text{Alias}(c) := d}
@@ -1447,10 +1471,11 @@ where $\pi^{*}$ applies $\pi$ to every entity id inside a component value (`Pare
 
   Types are reached through the `machine` namespace (`R-Unqual`). The compiler calls the `compiler_impl` hooks itself while lowering a function. Their signatures name only `compiler` and `machine` entities, so `L-Mono` holds: the entity handle they take is `compiler.entity`, which `std.meta.entity` aliases.
 
-  Beyond the table a backend supplies the body of every `standard.doir` prototype that is neither a host hook (`H-Hook`) nor given a software body by `standard.emulated.doir` (`I-Extern`), including the runtime heap behind `std.heap` (`MEM-Heap`), and its physical register classes (`REG-Phys`, Part I §7), which are calls into the builtin block.
+  Beyond the table a backend supplies the body of every `standard.doir` prototype that is neither a host hook (`H-Hook`) nor given a software body by `standard.emulated.doir` (`I-Extern`), and its physical register classes (`REG-Phys`, Part I §7), which are calls into the builtin block.
   It may define an emulated one too, and its definition then replaces the software body for every operand type that operation takes; the operations over both integers and floats have one prototype per kind (`N-Kind`), so a backend replaces the integer and float bodies separately.
   Its descent passes are not in the namespace: they are the passes of its edge onto `compiler.levels.builtin` (`L-Lower`).
   `reference/machine.doir` states the whole contract as declarations.
+  The same namespace also holds an operating system, which supplies `std.os` and the heap; that half of the signature is `OS-Sig`'s.
 - **[T-Optional] Optional Target Features:**  
   $$
   \frac{n \in \text{opt}(\mathtt{std}) \quad S \text{ does not provide } n}{\text{every alias of } n \text{ is absent: declaring it is well-formed, using it is ill-formed (A-Res)}}
@@ -1484,6 +1509,54 @@ Both registers are components on the binding's own entity, indexed per target $\
   \frac{e : \text{VirtualReg}_\tau \quad v = \text{VirtualReg}_\tau(e)}{\text{PhysicalReg}_\tau(e) := \text{allocate}_\tau(v) \in \mathcal{R}_{\text{phys},\tau} \cup \text{SpillSlots}_\tau}
   $$
   > **In Plain English:** The register allocator for target $\tau$ maps each virtual register to a real target register (like `RAX` on x86 or `R0` on ARM), or to a stack spill slot when registers run out, and records the result on every entity holding that virtual register under target $\tau$. Because `allocate` depends only on $v$, values joined by `REG-Share` share the exact same CPU register. A runtime aggregate is one virtual register of its storage size; how the machine holds it is the machine's choice.
+
+---
+
+## 19. The Operating System
+
+`std` is to RISC-V what `std.os` is to POSIX: a small portable core that a target supplies, with software bodies for what can be written over it.
+`standard.os.doir` declares it and `standard.doir` pastes it into `std` (`I-Paste`); [`reference/operating_system.doir`](reference/operating_system.doir) states what an operating system must supply, as `reference/machine.doir` does for a machine.
+
+- **[OS-Target] A Target Is a Machine and an Operating System:**  
+  $$
+  \text{a backend namespace } N \text{ that pastes a machine file and an operating-system file supplies } \mathrm{sig}(\mathtt{std}) \cup \mathrm{sig}(\mathtt{std.os})\text{; their } \mathtt{std} \text{ namespaces merge (R-Merge)}
+  $$
+  > **In Plain English:** A target is not a machine alone: x86 with Linux, RISC-V with Linux, x86 with Windows and Mizu with nothing are four targets.
+  > The backend namespace pastes both files, so the machine's `std` (its primitives) and the operating system's `std` (its `std.os` bodies) are one namespace, and `std`'s prototypes bind to both through `I-Extern`, with no new mechanism: a namespace made a level adds no prefix (`R-Mangle`), so the operating system's `open` in `std.os.files` has the symbol `std.os.files.open`.
+  > An operating system is written at level 1, beside the machine, so it names the machine's `std` and the floor but not `std`'s own declarations (`L-Mono`); it restates the values of `std.os.errors` and `std.os.files.flags` it returns.
+  > It is written over the system's C library, which it loads with the floor's `compiler.load_library`, renaming each C prototype to its C symbol (`compiler.set_symbol_name`, `M-SymbolName`) and binding it with `compiler.load_from_library` (`FP-Library`, `FP-Load`, `H-Boot`).
+  > The C library's namespace sits at the backend's root, so the levels above see it like any backend member (`R-Unqual`), as a platform extension.
+  > A target pastes one operating system; two would define each `std.os` name twice (`WF-Unique`).
+- **[OS-Sig] Operating-System Signature Satisfaction:**  
+  $$
+  \frac{\text{target } S \quad n \in \mathrm{sig}(\mathtt{std.os})}{S \text{ provides } n}
+  $$
+  > **In Plain English:** `sig(std.os)` is every bodyless prototype of `std.os` not given a body in `std.os.emulated`: the calls of `std.os.files`, `directories`, `process`, `memory`, `time`, `threads` and `heap` that `reference/operating_system.doir` lists.
+  > The others, `files.write_all`, `files.read_all`, `files.size` and `files.print`, have software bodies an operating system may replace (`I-Extern`); `threads.create` is an inline wrapper over `threads.start`, since a function pointer type cannot be written below `std` (`FP-Type`).
+  > A thread entry is a DOIR function the system calls, so the backend's convention for `std.os.threads.entry_t` must be the platform's C convention; it returns nothing, since Windows keeps only 32 bits of a thread's result.
+  > Every `std.os` function type is never comptime, as `std.os.heap`'s are, so an emitted call is never folded away (`C-Call`).
+- **[OS-Result] Results Carry Their Failure:**  
+  $$
+  \mathtt{std.os.result} = \mathtt{std.pointer\_difference}; \qquad r \ge 0 \implies r \text{ is the result}; \qquad r < 0 \implies -r \in \mathtt{std.os.errors}
+  $$
+  > **In Plain English:** A call that can fail returns its result, a byte count, a position or a handle, or the negated code of a portable failure; there is no `errno`.
+  > An operating system maps its own codes onto `std.os.errors`, and one with no portable meaning onto `errors.other`.
+  > A failed call leaves its arguments as they were.
+  > A call that returns a pointer refuses with null instead, as `std.os.heap` does (`MEM-Heap`); one that copies a name returns its length and writes the name only when it fits with its terminator, so a result of at least the capacity asks for a larger buffer.
+- **[OS-Unsupported] Absent Areas Still Bind:**  
+  $$
+  \frac{n \in \mathrm{sig}(\mathtt{std.os}) \quad \text{the operating system cannot provide } n}{\text{it defines } n \text{ returning } -\mathtt{std.os.errors.unsupported}\text{, null, or nothing}}
+  $$
+  > **In Plain English:** An operating system without files, threads or a heap still defines every name, so every symbol binds and a program that uses one fails at run time with a code it can test, as POSIX's `ENOSYS`, rather than at link time.
+  > `os.freestanding.doir` is the operating system with no system at all: it stops the machine on `exit`, refuses every allocation, and fails or does nothing everywhere else.
+- **[OS-Comptime] The Native Operating System Serves Comptime:**  
+  $$
+  \frac{\text{the interpreter runs a call of } n \in \mathtt{std.os} \text{ (C-Interpret)}}{\text{it runs the native operating system's definition of } n\text{, whatever operating system the target pairs with}}
+  $$
+  > **In Plain English:** As the comptime host supplies the comptime heap (`MEM-Heap`, `MEM-Comptime`), it supplies the rest of `std.os` from the operating system the compiler itself runs on: `os.linux.doir` on Linux, `os.windows.doir` on Windows, and `os.freestanding.doir` on anything else.
+  > Their C libraries are loaded into the compiler (`FP-Library`), so a metaprogram can read a file or the clock on the build machine.
+  > When the native operating system is not the target's, the host evaluates its file for comptime alone: it is never lowered, and its libraries are no dependency of the program, so a Windows program builds on Linux.
+  > Comptime answers then depend on the build machine, so `H-Det` holds only as far as its operating system answers alike, as `FP-Library` already says of native libraries.
 
 ---
 

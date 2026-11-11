@@ -1,0 +1,21 @@
+// OS-Unsupported: on the freestanding operating system `open` still binds, and fails with a negated `std.os.errors.unsupported` the program can test.
+path : std.c_string = "data.txt"
+path_runtime : std.c_string = std.comptime_to_runtime(path)
+flags : std.pointer_sized = std.os.files.flags.read
+flags_runtime : std.pointer_sized = std.comptime_to_runtime(flags)
+permissions : std.pointer_sized = 0
+permissions_runtime : std.pointer_sized = std.comptime_to_runtime(permissions)
+opened : std.os.result = std.os.files.open(path_runtime, flags_runtime, permissions_runtime)
+failed : std.u1 = std.is_negative(opened)
+report : block = {
+	status : std.u8 = 1
+	status_runtime : std.u8 = std.comptime_to_runtime(status)
+	_ : void = std.os.process.exit(status_runtime)
+	_ : _ = std.block_result(std.nothing)
+}
+use : block = {
+	_ : std.os.result = std.os.files.close(opened)
+	_ : _ = std.block_result(std.nothing)
+}
+_ : void = std.if(failed, report, use)
+_ : _ = std.halt()

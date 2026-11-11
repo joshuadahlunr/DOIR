@@ -2265,7 +2265,7 @@ emulated : namespace = {
 			length_slot : std.pointer_sized_pointer = std.reinterpret_bits(state_raw)
 			capacity_slot : std.pointer_sized_pointer = std.pointers.element_pointer(length_slot, one_runtime)
 			block_slot : std.pointer_sized_pointer = std.pointers.element_pointer(length_slot, two_runtime)
-			first_block : std.byte_pointer = std.heap.allocate(first_bytes_runtime, alignment_runtime)
+			first_block : std.byte_pointer = std.os.heap.allocate(first_bytes_runtime, alignment_runtime)
 			first_block_bits : std.pointer_sized = std.reinterpret_bits(first_block)
 			_ : std.pointer_sized = std.pointers.store(length_slot, zero_runtime)
 			_ : std.pointer_sized = std.pointers.store(capacity_slot, first_capacity_runtime)
@@ -2274,7 +2274,7 @@ emulated : namespace = {
 			release : block = {
 				held_bits : std.pointer_sized = std.pointers.load(block_slot)
 				held : std.byte_pointer = std.reinterpret_bits(held_bits)
-				_ : void = std.heap.free(held)
+				_ : void = std.os.heap.free(held)
 				_ : std.byte_pointer = std.stack.pop(state_bytes_runtime)
 				_ : _ = std.block_result(std.nothing)
 			}
@@ -2293,10 +2293,10 @@ emulated : namespace = {
 					doubled : std.pointer_sized = std.add(capacity, capacity)
 					element_total : std.pointer_sized = std.multiply(doubled, element_bytes_runtime)
 					total : std.pointer_sized = std.add(header_runtime, element_total)
-					moved : std.byte_pointer = std.heap.reallocate(held, total, alignment_runtime)
+					moved : std.byte_pointer = std.os.heap.reallocate(held, total, alignment_runtime)
 					refused : std.u1 = std.pointers.is_null(moved)
 					give_up : block = {
-						_ : void = std.heap.free(held)
+						_ : void = std.os.heap.free(held)
 						_ : std.pointer_sized = std.pointers.store(block_slot, null_bits)
 						_ : _ = std.block_result(std.nothing)
 					}
@@ -2411,7 +2411,7 @@ emulated : namespace = {
 	loop_length_symbol : std.c_string = "std.loop_length"
 	_ : _ = std.functions.set_symbol_name(loop_length, loop_length_symbol)
 
-	// A null result, from a refused allocation, has nothing to free, as `std.heap.free` of null does nothing (rule MEM-Heap).
+	// A null result, from a refused allocation, has nothing to free, as `std.os.heap.free` of null does nothing (rule MEM-Heap).
 	free_loop_result : (Tptr: deduced type, result: Tptr) -> void = {
 		refused : std.u1 = std.pointers.is_null(result)
 		nothing_held : block = { _ : _ = std.block_result(std.nothing) ; }
@@ -2421,7 +2421,7 @@ emulated : namespace = {
 			back_runtime : std.pointer_difference = std.comptime_to_runtime(back)
 			first : std.byte_pointer = std.reinterpret_bits(result)
 			start : std.byte_pointer = std.pointers.offset(first, back_runtime)
-			_ : void = std.heap.free(start)
+			_ : void = std.os.heap.free(start)
 			_ : _ = std.block_result(std.nothing)
 		}
 		_ : void = std.if(refused, nothing_held, release)

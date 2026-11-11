@@ -8,7 +8,9 @@ Each file in `tests/conformance` is named `<Rule-Tag>.<case>.accept.doir` or `<R
 - `syntax...`: a reject case the grammar decides, which must fail with a syntax error.
 - anything else: a library file between `std` and the program.
 
-A case's build is the files `reference/compiler.doir`, `reference/backends.doir`, `standard.doir` and the case, whose tower the compiler reads from them (`L-Tower`, `L-Scan`); a `// backends: <path>` comment replaces the backends file, relative to the corpus. Files under `support/` are what cases import or build on; they must parse.
+A case's build is the files `reference/compiler.doir`, `reference/backends.doir`, `standard.doir` and the case, whose tower the compiler reads from them (`L-Tower`, `L-Scan`); a `// backends: <path>` comment replaces the backends file, relative to the corpus.
+`standard.doir` pastes `standard.os.doir`, and `reference/backends.doir` pairs the Mizu machine with the freestanding operating system (`OS-Target`), so an `OS-` case gets `std.os` with no file of its own; a `backends…` case pairs another.
+Files under `support/` are what cases import or build on; they must parse.
 
 `doir_check` parses and checks the few rules its diagnostics name. A reject case for one of those rules must fail naming its tag; for a rule it checks only in part (`PARTIAL`), a case it passes is pending instead. A reject case for any other rule must parse cleanly and is counted as pending: it waits for the compiler, and a syntax error or another rule's diagnostic means the case is broken. Runs `tools/doir_check.py` through `uv`, unless `--checker` names another executable.
 
