@@ -246,7 +246,8 @@ uint flags(ref doir.query.QueryEngine engine, EntityId e) {
 	return 0;
 }
 
-// Takes over folded `value` as `e`'s frozen `C`; outside a query, an input commit marking a differing value changed. Returns false on refusal, releasing `value`.
+// Takes over folded `value` as `e`'s frozen `C`; outside a query, an input commit marking a differing value changed.
+// Returns false on refusal, releasing `value`.
 private bool writeFrozen(C)(ref doir.query.QueryEngine engine, EntityId e, ref C value) {
 	immutable inside = doir.query.currentQuery(engine) != invalidEntity;
 	bool changed = true;

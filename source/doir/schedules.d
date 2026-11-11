@@ -146,6 +146,8 @@ private bool changedSince(ref doir.query.QueryEngine engine, doir.query.Revision
 /// assert(whenChangedAt(engine, &count, verified, watched[]) && runs == 2);
 /// ---
 bool whenChangedAt(S)(ref doir.query.QueryEngine engine, auto ref S schedule, ref doir.query.Revision verified, const(EntityId)[] watched) if (isEngineSchedule!S) {
+	assert(doir.query.runsNoQuery(engine), "doir.schedules.whenChangedAt: run inside a query");
+	assert(verified <= engine.revision, "doir.schedules.whenChangedAt: verified at a revision the engine has not reached; is it another engine's?");
 	if (verified == engine.revision) return true;
 	if (verified != 0 && !changedSince(engine, verified, watched)) {
 		verified = engine.revision;
@@ -299,7 +301,8 @@ private bool visitsBefore(S)(ref doir.query.QueryEngine engine, ref const Visit!
 	return a.e < b.e;
 }
 
-// What a run of `S` visits from `candidates`, sorted and deduplicated; an entity that lost its `S.Tag` loses its memo instead. False on refusal.
+// What a run of `S` visits from `candidates`, sorted and deduplicated; an entity that lost its `S.Tag` loses its memo instead.
+// False on refusal.
 private bool gatherVisits(S)(ref doir.query.QueryEngine engine, const(EntityId)[] candidates, ref Visit!S* out_) @trusted {
 	foreach (e; candidates) {
 		if (e == invalidEntity) continue;
@@ -317,6 +320,7 @@ private bool gatherVisits(S)(ref doir.query.QueryEngine engine, const(EntityId)[
 	foreach (i, ref v; all)
 		if (i == 0 || v.e != all[kept - 1].e) all[kept++] = v;
 	if (kept < all.length) cast(void) fp.dynarray.removeLast(out_, all.length - kept);
+	foreach (i; 1 .. kept) assert(all[i - 1].e != all[i].e && !visitsBefore!S(engine, all[i], all[i - 1]), "doir.schedules: visits out of order, or repeated");
 	return true;
 }
 
@@ -328,6 +332,7 @@ private bool gatherVisits(S)(ref doir.query.QueryEngine engine, const(EntityId)[
 /// Only an input commit's changes enter the domain: a query producing an `S.Tag` is not seen until the domain is visited whole.
 /// No thread may be demanding.
 ///
+/// A memo reports once per revision, so a second run in the same revision reports nothing; begin a revision (`doir.query.beginRevision`) to report again.
 /// Returns false if an allocation was refused, which loses some diagnostics, sets `engine.refused`, and makes the next run visit the whole domain.
 ///
 /// Examples:
@@ -355,6 +360,7 @@ bool runSystem(S)(ref doir.query.QueryEngine engine) @trusted if (isSystem!S) {
 		engine.refused = true;
 		return false;
 	}
+	assert(state.lastRunRevision <= engine.revision, "doir.schedules: a system ran in a revision ahead of the engine's");
 	auto changes = doir.query.changesSince(engine, state.cursor);
 	immutable whole = state.lastRunRevision == 0 || !changes.complete || engine.edgesMissing;
 	// Memos going stale during the batch queue themselves on a fresh list, for the next run.
@@ -393,6 +399,7 @@ bool runSystem(S)(ref doir.query.QueryEngine engine) @trusted if (isSystem!S) {
 		engine.refused = true;
 		return false;
 	}
+	assert(changes.next >= state.cursor || !changes.complete, "doir.schedules: the change cursor moved back");
 	state.lastRunRevision = engine.revision;
 	state.cursor = changes.next;
 	return true;

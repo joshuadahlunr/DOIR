@@ -24,6 +24,7 @@ public import ecrs.registry : EntityId;
 // How many workspace symbols one answer lists at most; an editor asks again as more of the query is typed.
 private enum size_t symbolLimit = 1000;
 
+// bounded: doir.syntax.parser.maxNesting, the deepest blocks a commit builds
 // Appends to `symbols` the declarations of `block`, which starts at `base` in document `o`, whose names contain `query`, below `container`, counting them in `written`.
 private void workspaceSymbols(ref doir.lsp.session.Session s, bc.json.Value symbols, ref doir.lsp.session.Opened o, const fp.rope.Rope text, EntityId block, size_t base, const(char)[] query, const(char)[] container, ref size_t written) {
 	foreach (child; doir.lsp.store.childrenOf(s, block)) {

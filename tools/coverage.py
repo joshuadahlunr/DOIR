@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""Measures per-module test coverage: the unit tests, and `tests/lsp_test.py` run against the server. -cov needs druntime, so both build as plain D rather than -betterC.
+"""Measures per-module test coverage: the unit tests, and `tests/lsp_test.py` run against the server.
+-cov needs druntime, so both build as plain D rather than -betterC.
 
 Reports on this repository's `reference/` and `source/` modules, a line counting as covered when either run reaches it; dependencies are compiled in but left out of the report, as is the driver `source/main.d`.
 
@@ -13,7 +14,8 @@ compiler = os.environ.get('DC', 'ldc2')
 exe = os.path.join(out, 'doir-coverage' + ('.exe' if os.name == 'nt' else ''))
 server_out = os.path.join(out, 'server')
 server_exe = os.path.join(server_out, 'doir' + ('.exe' if os.name == 'nt' else ''))
-# main is extern(C), so nothing starts druntime; without these hooks -cov never writes its listings. merge:1 because each LSP client is a new process.
+# main is extern(C), so nothing starts druntime; without these hooks -cov never writes its listings.
+# merge:1 because each LSP client is a new process.
 server_runtime = '''module coverage_runtime;
 extern(C) __gshared string[] rt_options = ["covopt=merge:1 dstpath:%s"];
 extern(C) int rt_init();
@@ -55,7 +57,8 @@ def compile_command(import_paths, libs, sources, output):
 
 
 def build_and_run():
-	"""Builds the unit tests with -cov into `bin/coverage` and runs them, then builds the server with -cov into `bin/coverage/server` and runs `tests/lsp_test.py` against it, leaving a `.lst` listing per module in each. Exits on a failed build or test run."""
+	"""Builds the unit tests with -cov into `bin/coverage` and runs them, then builds the server with -cov into `bin/coverage/server` and runs `tests/lsp_test.py` against it, leaving a `.lst` listing per module in each.
+	Exits on a failed build or test run."""
 	import_paths = [relative_to_root(p) for p in describe('--import-paths')]
 	sources = [relative_to_root(p) for p in describe('--data=source-files', '--data-list')]
 	if not import_paths or not sources:
@@ -71,7 +74,8 @@ def build_and_run():
 	if subprocess.run([*compile_command(import_paths, libs, sources, exe), '-unittest'], cwd=root).returncode != 0:
 		sys.exit(1)
 
-	# --DRT-testmode lets druntime reach main. Run from the root: -cov reopens sources by their relative paths; `dstpath` puts listings in `bin/`.
+	# --DRT-testmode lets druntime reach main.
+	# Run from the root: -cov reopens sources by their relative paths; `dstpath` puts listings in `bin/`.
 	run = subprocess.run([os.path.join(root, exe), '--DRT-testmode=run-main', '--DRT-covopt=dstpath:' + out + ' merge:0'],
 		cwd=root, capture_output=True, text=True)
 	with open(os.path.join(root, out, 'run.log'), 'w') as log:

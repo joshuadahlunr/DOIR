@@ -101,9 +101,11 @@ EntityId addFile(ref doir.query.QueryEngine engine, ref doir.strings.Strings str
 	immutable e = ecrs.context.addEntity(*engine.store);
 	if (e != invalidEntity && ecrs.context.setComponent!(doir.components.source.SourceFile)(*engine.store, e, doir.components.source.SourceFile(id))) {
 		ecrs.context.commitTransaction(*engine.store);
+		assert(ecrs.context.getComponent!(doir.components.source.SourceFile)(*engine.store, e).path == id, "doir.source.addFile: a file that forgot its path");
 		return e;
 	}
 	ecrs.context.rollbackTransaction(*engine.store);
+	assert(!ecrs.context.inTransaction(*engine.store), "doir.source.addFile: a refused add left its transaction open");
 	return invalidEntity;
 }
 
@@ -124,7 +126,9 @@ EntityId addFile(ref doir.query.QueryEngine engine, ref doir.strings.Strings str
 /// assert(rootOf(engine, file) == invalidEntity);
 /// ---
 EntityId rootOf(ref doir.query.QueryEngine engine, EntityId file) {
+	assert(file != invalidEntity, "doir.source.rootOf: the root of no file");
 	auto root = ecrs.context.findComponent!(doir.components.source.FileRoot)(*engine.store, file);
+	assert(root is null || root.root != file, "doir.source.rootOf: a file that is its own root");
 	return root is null ? invalidEntity : root.root;
 }
 
@@ -155,7 +159,8 @@ const(fp.rope.Rope) textOf(ref doir.query.QueryEngine engine, EntityId file) {
 
 // --- the commit --------------------------------------------------------------
 
-// The state of one commit. It runs in a store transaction, so slices of components it removes or replaces stay valid until it ends.
+// The state of one commit.
+// It runs in a store transaction, so slices of components it removes or replaces stay valid until it ends.
 private struct Commit {
 	doir.query.QueryEngine* engine;
 	ecrs.context.Context* store;
@@ -187,7 +192,8 @@ private struct Deferred {
 // A block's contents are skimmed in chunks of about this many bytes, so a whole-file commit holds no whole file's tokens; tests make it small.
 private __gshared size_t chunkBytes = 1 << 18;
 
-// Rebuilds on workers; off, the million-line file was slower (1.47 against 1.27 s), storages and interning costing more than spread writes. Tests enable it.
+// Rebuilds on workers; off, the million-line file was slower (1.47 against 1.27 s), storages and interning costing more than spread writes.
+// Tests enable it.
 private __gshared bool deferBuilds = false;
 
 // A syntax error and the record whose block holds it directly, `rootOwner` for the root.
@@ -198,13 +204,18 @@ private struct HeldError {
 
 private enum uint rootOwner = uint.max;
 
-// Removes `e`, first marking stale the queries that read it, since its id may be handed out again. False on refusal.
+// Removes `e`, first marking stale the queries that read it, since its id may be handed out again.
+// False on refusal.
 private bool remove(ref Commit c, EntityId e) {
+	assert(e != invalidEntity, "doir.source: removing no entity");
+	assert(ecrs.context.inTransaction(*c.store), "doir.source: removing an entity outside the commit's transaction");
 	doir.query.markReadersStale(*c.engine, e);
 	return ecrs.context.removeEntity(*c.store, e);
 }
 
-// Removes `e`, its parts and everything nested in it. Returns false on refusal, partway; the commit's transaction undoes it.
+// bounded: doir.syntax.parser.maxNesting, the deepest blocks a commit builds
+// Removes `e`, its parts and everything nested in it.
+// Returns false on refusal, partway; the commit's transaction undoes it.
 private bool removeTree(ref Commit c, EntityId e) {
 	if (auto block = ecrs.context.findComponent!(doir.components.ast.Block)(*c.store, e))
 		foreach (child; fp.dynarray.slice(block.related))
@@ -215,8 +226,11 @@ private bool removeTree(ref Commit c, EntityId e) {
 	return remove(c, e);
 }
 
-// Builds record `r` into `e`, reusing old parts then `fresh`, and removing leftovers or appending them to `leftover`. False on refusal.
+// Builds record `r` into `e`, reusing old parts then `fresh`, and removing leftovers or appending them to `leftover`.
+// False on refusal.
 private bool rebuild(ref Commit c, size_t r, EntityId e, const(EntityId)[] fresh = null, EntityId** leftover = null) {
+	assert(r < fp.dynarray.length(c.syntax.records), "doir.source: rebuilding a record the syntax does not have");
+	assert(e != invalidEntity, "doir.source: rebuilding into no entity");
 	const(EntityId)[] old = null;
 	if (auto parts = ecrs.context.findComponent!(doir.components.source.ParsedParts)(*c.store, e)) {
 		old = fp.dynarray.slice(parts.related);
@@ -236,6 +250,7 @@ private bool rebuild(ref Commit c, size_t r, EntityId e, const(EntityId)[] fresh
 	built.related = b.parts;
 	if (!ok) return false;
 	immutable used = fp.dynarray.length(b.parts) < old.length ? fp.dynarray.length(b.parts) : old.length;
+	assert(used <= old.length, "doir.source: reused more old parts than there were");
 	foreach (part; old[used .. $])
 		if (leftover !is null ? !fp.dynarray.pushBack(*leftover, part) : !remove(c, part)) return false;
 	if (b.annotated && !ecrs.context.setComponent!(doir.components.source.SourceAnnotation)(*c.store, e, doir.components.source.SourceAnnotation(b.annotation))) return false;
@@ -262,11 +277,16 @@ private Keyed* keyedTable() {
 	fp.hashtable.Config config;
 	config.hashFunction = &hashKeyed;
 	config.equalFunction = &equalKeyed;
-	return fp.hashtable.create!Keyed(config);
+	auto table = fp.hashtable.create!Keyed(config);
+	assert(table is null || fp.hashtable.validate(table), "doir.source: a new keyed table that breaks its invariants");
+	return table;
 }
 
-// The old entities a block's new entries match, or `invalidEntity`: each entry is its name, `unnamed` for `_`, and its hash. False on refusal.
+// The old entities a block's new entries match, or `invalidEntity`: each entry is its name, `unnamed` for `_`, and its hash.
+// False on refusal.
 private bool match(ref Commit c, const(EntityId)[] old, const(doir.strings.StringId)[] names, const(ulong)[] hashes, ulong parentPath, EntityId* matched, ulong* paths) {
+	assert(names.length == hashes.length, "doir.source: entries whose names and hashes disagree in number");
+	assert(matched !is null && paths !is null || names.length == 0, "doir.source: matching into nowhere");
 	auto byPath = keyedTable();
 	if (byPath is null) return false;
 	scope(exit) fp.hashtable.free(byPath);
@@ -313,13 +333,18 @@ private bool match(ref Commit c, const(EntityId)[] old, const(doir.strings.Strin
 		if (!fp.dynarray.pushBack(newIndex, i) || !fp.dynarray.pushBack(newHashes, hashes[i])) return false;
 	}
 	if (!fp.algorithms.commonSubsequence(fp.dynarray.slice(oldHashes), fp.dynarray.slice(newHashes), maxEdits, pairs)) return false;
-	foreach (pair; fp.dynarray.slice(pairs)) matched[newIndex[pair[1]]] = oldUnnamed[pair[0]];
+	foreach (pair; fp.dynarray.slice(pairs)) {
+		assert(names[newIndex[pair[1]]] == doir.strings.unnamed && matched[newIndex[pair[1]]] == invalidEntity, "doir.source: an unnamed match over a named entry, or matched twice");
+		matched[newIndex[pair[1]]] = oldUnnamed[pair[0]];
+	}
 	return true;
 }
 
-// Order keys for a block's new entries: matched ones keep theirs along a longest increasing run, the rest go between neighbours. False on refusal.
+// Order keys for a block's new entries: matched ones keep theirs along a longest increasing run, the rest go between neighbours.
+// False on refusal.
 private bool assignPositions(ref Commit c, Position parent, const(EntityId)[] matched, bool rekey, Position* out_) {
 	immutable n = matched.length;
+	assert(out_ !is null || n == 0, "doir.source: positions assigned into nowhere");
 	Position* old = null;
 	size_t* tails = null, previous = null;
 	bool* keep = null;
@@ -353,11 +378,13 @@ private bool assignPositions(ref Commit c, Position parent, const(EntityId)[] ma
 		out_[i] = before = doir.engine.positions.between(c.engine.positions, parent, before, after);
 		if (before == doir.engine.positions.refused) return false;
 	}
+	foreach (i; 1 .. n) assert(doir.engine.positions.precedes(c.engine.positions, out_[i - 1], out_[i]), "doir.source: a block's entries given positions out of order (C-Order)");
 	return true;
 }
 
 // Whether `e`'s old text, starting at `oldStart`, equals `record`'s up to `end`; `whole` also requires the same length.
 private bool sameText(ref Commit c, size_t oldStart, uint oldLength, ref const doir.syntax.parser.Record record, size_t end, bool whole) {
+	assert(record.spanStart <= end && end <= c.text.length, "doir.source: comparing text past the commit's");
 	immutable length = end - record.spanStart;
 	if (!c.hadText || (whole && length != oldLength) || length > oldLength) return false;
 	return fp.rope.equalAt(c.oldText, oldStart, c.text[record.spanStart .. end]);
@@ -365,7 +392,8 @@ private bool sameText(ref Commit c, size_t oldStart, uint oldLength, ref const d
 
 // --- syntax errors -----------------------------------------------------------
 
-// Fills `c.owned`: each error's innermost record whose block holds its token, the closing brace included, ordered by that record. False on refusal.
+// Fills `c.owned`: each error's innermost record whose block holds its token, the closing brace included, ordered by that record.
+// False on refusal.
 private bool assignErrors(ref Commit c) @trusted {
 	auto records = fp.dynarray.slice(c.syntax.records);
 	auto errors = fp.dynarray.slice(c.syntax.errors);
@@ -389,18 +417,21 @@ private bool assignErrors(ref Commit c) @trusted {
 		c.owned[i] = HeldError(r, cast(uint) i);
 	}
 	std.algorithm.sorting.sort!((ref a, ref b) => a.owner != b.owner ? a.owner < b.owner : a.error < b.error)(c.owned[0 .. errors.length]);
+	foreach (i; 0 .. errors.length) assert(c.owned[i].owner == rootOwner || c.owned[i].owner < records.length, "doir.source: an error held by a record the syntax does not have");
 	return true;
 }
 
-// Appends to `list` the errors of `owner`'s block in `c.syntax`, offsets taken from `holderStart` in the file. False on refusal.
+// Appends to `list` the errors of `owner`'s block in `c.syntax`, offsets taken from `holderStart` in the file.
+// False on refusal.
 private bool gatherErrors(ref Commit c, uint owner, size_t holderStart, ref doir.components.source.SyntaxErrors list) {
 	auto owned = fp.dynarray.slice(c.owned);
 	immutable first = fp.algorithms.lowerBound!((o, key) => o.owner < key)(owned, owner);
 	size_t end = first;
 	while (end < owned.length && owned[end].owner == owner) ++end;
+	immutable before = fp.dynarray.length(list.errors);
 	foreach (o; owned[first .. end]) {
 		immutable error = c.syntax.errors[o.error];
-		assert(c.base + error.at >= holderStart);
+		assert(c.base + error.at >= holderStart, "doir.source: an error before the block that holds it");
 		doir.components.source.StoredError stored;
 		stored.at = cast(uint) (c.base + error.at - holderStart);
 		immutable open = doir.syntax.parser.opening(*c.syntax, error);
@@ -416,10 +447,12 @@ private bool gatherErrors(ref Commit c, uint owner, size_t holderStart, ref doir
 			return false;
 		}
 	}
+	assert(fp.dynarray.length(list.errors) == before + (end - first), "doir.source: gathered other than the block's errors");
 	return true;
 }
 
-// Makes `list`, which it takes over, `e`'s `SyntaxErrors`, or removes the component if `list` is empty. False on refusal.
+// Makes `list`, which it takes over, `e`'s `SyntaxErrors`, or removes the component if `list` is empty.
+// False on refusal.
 private bool setErrors(ref Commit c, EntityId e, ref doir.components.source.SyntaxErrors list) {
 	if (fp.dynarray.length(list.errors) == 0) {
 		list.finalize();
@@ -427,20 +460,24 @@ private bool setErrors(ref Commit c, EntityId e, ref doir.components.source.Synt
 	}
 	auto moved = list;
 	list.errors = null;
+	assert(fp.dynarray.length(moved.errors) > 0, "doir.source: setting an empty error list rather than removing it");
 	return ecrs.context.setComponent!(doir.components.source.SyntaxErrors)(*c.store, e, moved);
 }
 
-// Replaces `e`'s `SyntaxErrors` with `owner`'s block's from `c.syntax`, offset by `holderStart`, removing the component when empty. False on refusal.
+// Replaces `e`'s `SyntaxErrors` with `owner`'s block's from `c.syntax`, offset by `holderStart`, removing the component when empty.
+// False on refusal.
 private bool storeErrors(ref Commit c, uint owner, EntityId e, size_t holderStart) {
 	doir.components.source.SyntaxErrors list;
 	scope(exit) list.finalize();
 	return gatherErrors(c, owner, holderStart, list) && setErrors(c, e, list);
 }
 
-// Moves `holder`'s errors at or after `from`, bytes from its start, by `delta`, writing a copy so a rollback restores them. False on refusal.
+// Moves `holder`'s errors at or after `from`, bytes from its start, by `delta`, writing a copy so a rollback restores them.
+// False on refusal.
 private bool shiftErrors(ref Commit c, EntityId holder, size_t from, ptrdiff_t delta) {
 	auto held = ecrs.context.findComponent!(doir.components.source.SyntaxErrors)(*c.store, holder);
 	if (held is null) return true;
+	assert(ecrs.context.inTransaction(*c.store), "doir.source: shifting errors outside the commit's transaction, which no rollback would restore");
 	doir.components.source.SyntaxErrors list;
 	scope(exit) list.finalize();
 	foreach (error; fp.dynarray.slice(held.errors)) {
@@ -466,8 +503,11 @@ private bool shiftErrors(ref Commit c, EntityId holder, size_t from, ptrdiff_t d
 
 // --- the commit, continued ---------------------------------------------------
 
-// Queues record `r`'s rebuild into `e`, an entry of `block` named `name`, making here the part entities its description needs. False on refusal.
+// Queues record `r`'s rebuild into `e`, an entry of `block` named `name`, making here the part entities its description needs.
+// False on refusal.
 private bool defer(ref Commit c, size_t r, EntityId e, EntityId block, doir.strings.StringId name) {
+	assert(c.deferring && c.described !is null, "doir.source: deferring a rebuild with nothing to apply on a worker");
+	assert(e != invalidEntity && block != invalidEntity, "doir.source: deferring a rebuild into no entity or block");
 	auto old = ecrs.context.findComponent!(doir.components.source.ParsedParts)(*c.store, e);
 	immutable have = old is null ? 0 : fp.dynarray.length(old.related);
 	Deferred d = Deferred(r, e, block, name);
@@ -478,13 +518,16 @@ private bool defer(ref Commit c, size_t r, EntityId e, EntityId block, doir.stri
 			return false;
 		}
 	}
+	assert(have + fp.dynarray.length(d.fresh) >= c.described[r].parts, "doir.source: a deferred rebuild with too few part entities");
 	if (fp.dynarray.pushBack(c.deferred, d)) return true;
 	fp.dynarray.free(d.fresh);
 	return false;
 }
 
-// Runs `d` on a worker: the rebuild, then what it cleared. False on refusal.
+// Runs `d` on a worker: the rebuild, then what it cleared.
+// False on refusal.
 private bool runDeferred(ref Commit c, ref Deferred d) {
+	assert(d.record < fp.dynarray.length(c.syntax.records) && d.entity != invalidEntity, "doir.source: a deferred rebuild of no record or entity");
 	auto store = c.store;
 	doir.components.ast.Block list;
 	// Only a declaration that still has a block keeps the list its contents wrote; a rebuild clears any other.
@@ -500,6 +543,7 @@ private bool runDeferred(ref Commit c, ref Deferred d) {
 		return false;
 	}
 	if (block !is null && !ecrs.context.setComponent!(doir.components.ast.Block)(*store, d.entity, list)) return false;
+	assert(ecrs.context.getComponent!(doir.components.ast.Parent)(*store, d.entity).parent == d.block, "doir.source: a deferred rebuild that lost its parent (WF-Par)");
 	return !d.mark || markChangedWithParts(c, d.entity);
 }
 
@@ -510,12 +554,14 @@ private struct DeferredShare {
 }
 
 private bool runShare(ref doir.query.QueryEngine, ref DeferredShare share) {
+	assert(share.commit !is null, "doir.source: a share of no commit");
 	foreach (ref d; share.deferred)
 		if (!runDeferred(*share.commit, d)) return false;
 	return true;
 }
 
-// Runs the rebuilds `commitRecord` deferred, split among the workers, removing the old parts left over and emptying the queue. False on refusal.
+// Runs the rebuilds `commitRecord` deferred, split among the workers, removing the old parts left over and emptying the queue.
+// False on refusal.
 private bool flushDeferred(ref Commit c) @trusted {
 	auto all = fp.dynarray.slice(c.deferred);
 	scope(exit) {
@@ -529,13 +575,18 @@ private bool flushDeferred(ref Commit c) @trusted {
 	// Each entity a rebuild writes gains each component at most once, so that many slots per storage are made beforehand.
 	size_t entities = 0;
 	foreach (ref d; all) entities += 1 + c.described[d.record].parts;
+	// A refused reservation gives back the ones before it, which ordinary additions would otherwise take.
 	static foreach (C; imported!"std.meta".AliasSeq!(doir.syntax.parser.ParsedComponents, doir.components.source.ParsedParts, doir.components.source.SourceSpan, doir.components.query.ChangedAt))
-		if (!ecrs.context.reserveConcurrentAdds!C(*c.store, entities)) return false;
+		if (!ecrs.context.reserveConcurrentAdds!C(*c.store, entities)) {
+			ecrs.context.cancelConcurrentAdds(*c.store);
+			return false;
+		}
 	auto pool = c.engine.workers;
 	immutable workers = bc.threadpool.workerCount(pool);
 	immutable share = (all.length + workers - 1) / workers;
 	immutable count = (all.length + share - 1) / share; // at most `workers`
 	mixin fp.pointer.allocateOnStack!(DeferredShare, "shares", "count");
+	assert(count >= 1 && count <= workers && (count - 1) * share < all.length, "doir.source: more shares than workers, or one with nothing to do");
 	foreach (i; 0 .. count)
 		shares[i] = DeferredShare(&c, all[i * share .. (i + 1) * share < all.length ? (i + 1) * share : all.length]);
 	if (!ecrs.schedules.concurrentWrites(*c.engine, ecrs.schedules.parallel!runShare(pool, shares[0 .. count]))) return false;
@@ -545,10 +596,13 @@ private bool flushDeferred(ref Commit c) @trusted {
 	return true;
 }
 
-// Writes record `r` of `c.syntax`, an entry of `block`, into `e` (its match or `invalidEntity`), recursing and appending it to `entries`. False on refusal.
+// Writes record `r` of `c.syntax`, an entry of `block`, into `e` (its match or `invalidEntity`), recursing and appending it to `entries`.
+// False on refusal.
 private bool commitRecord(ref Commit c, EntityId block, size_t r, EntityId e, ulong path, Position key, size_t parentStart, size_t oldBase, ref EntityId* entries) {
+	assert(r < fp.dynarray.length(c.syntax.records), "doir.source: committing a record the syntax does not have");
 	immutable record = c.syntax.records[r];
 	immutable start = c.base + record.spanStart;
+	assert(start >= parentStart && record.spanEnd >= record.spanStart, "doir.source: a record before its parent, or ending before it starts");
 	if (!fp.dynarray.pushBack(entries, e)) return false;
 	immutable span = doir.components.source.SourceSpan(cast(uint) (start - parentStart), record.spanEnd - record.spanStart);
 	bool changed = false, built = false;
@@ -598,6 +652,7 @@ private bool commitRecord(ref Commit c, EntityId block, size_t r, EntityId e, ul
 		else if (!markChangedWithParts(c, e)) return false;
 	}
 
+	assert(ecrs.context.getComponent!(doir.components.source.SourceSpan)(*c.store, e) == span, "doir.source: a committed record with another span");
 	if (record.blockOpen == doir.syntax.parser.noBlock) {
 		if (ecrs.context.hasComponent!(doir.components.source.SyntaxErrors)(*c.store, e) && !ecrs.context.removeComponent!(doir.components.source.SyntaxErrors)(*c.store, e)) return false;
 		foreach (child; oldChildren)
@@ -608,8 +663,10 @@ private bool commitRecord(ref Commit c, EntityId block, size_t r, EntityId e, ul
 		&& commitBlock(c, e, oldChildren, r + 1, record.end, path ? path : record.hash, key, start, oldStart, moved);
 }
 
-// Marks `e` and the parts the parse made for it changed. False on refusal.
+// Marks `e` and the parts the parse made for it changed.
+// False on refusal.
 private bool markChangedWithParts(ref Commit c, EntityId e) {
+	assert(e != invalidEntity, "doir.source: marking no entity changed");
 	if (!doir.query.markChanged(*c.engine, e)) return false;
 	if (auto all = ecrs.context.findComponent!(doir.components.source.ParsedParts)(*c.store, e))
 		foreach (part; fp.dynarray.slice(all.related))
@@ -617,7 +674,8 @@ private bool markChangedWithParts(ref Commit c, EntityId e) {
 	return true;
 }
 
-// Gives `block` its new `entries`, removing the `old` ones `matched` kept none of, and marks it if the list changed. False on refusal.
+// Gives `block` its new `entries`, removing the `old` ones `matched` kept none of, and marks it if the list changed.
+// False on refusal.
 private bool finishBlock(ref Commit c, EntityId block, const(EntityId)[] old, const(EntityId)[] matched, ref EntityId* entries) {
 	// Searched sorted, so a block of many entries costs no more than sorting them.
 	EntityId* kept = null;
@@ -630,6 +688,7 @@ private bool finishBlock(ref Commit c, EntityId block, const(EntityId)[] old, co
 	}
 	// Compared with `old`, not the list in the store, which a rebuild of `block` emptied.
 	immutable differs = old != fp.dynarray.slice(entries);
+	foreach (e; fp.dynarray.slice(entries)) assert(e != invalidEntity && e != block, "doir.source: a block entry that is no entity, or the block itself");
 	doir.components.ast.Block list;
 	list.related = entries;
 	entries = null;
@@ -637,8 +696,11 @@ private bool finishBlock(ref Commit c, EntityId block, const(EntityId)[] old, co
 	return !differs || doir.query.markChanged(*c.engine, block);
 }
 
-// Matches records `low` to `high` of `c.syntax`, `block`'s contents, against `old` and writes them, recursing; `parentStart` and `oldBase` locate the block. False on refusal.
+// Matches records `low` to `high` of `c.syntax`, `block`'s contents, against `old` and writes them, recursing; `parentStart` and `oldBase` locate the block.
+// False on refusal.
 private bool commitBlock(ref Commit c, EntityId block, const(EntityId)[] old, size_t low, size_t high, ulong parentPath, Position parentAt, size_t parentStart, size_t oldBase, bool rekey) {
+	assert(low <= high && high <= fp.dynarray.length(c.syntax.records), "doir.source: a block's records past the syntax");
+	assert(block != invalidEntity, "doir.source: committing the contents of no block");
 	auto records = c.syntax.records;
 	uint* newRecords = null;
 	doir.strings.StringId* names = null;
@@ -661,6 +723,7 @@ private bool commitBlock(ref Commit c, EntityId block, const(EntityId)[] old, si
 	}
 	foreach (i, r; fp.dynarray.slice(newRecords))
 		if (!commitRecord(c, block, r, matched[i], paths[i], keys[i], parentStart, oldBase, entries)) return false;
+	assert(fp.dynarray.length(entries) == n, "doir.source: a block written with another number of entries");
 	return finishBlock(c, block, old, fp.dynarray.slice(matched), entries);
 }
 
@@ -682,7 +745,8 @@ private struct Child {
 	size_t piece;
 }
 
-// What `survey` found: pieces and entries, the block's own syntax errors, and, if `hashed`, its hash carried through them. Plain data, released by `free`.
+// What `survey` found: pieces and entries, the block's own syntax errors, and, if `hashed`, its hash carried through them.
+// Plain data, released by `free`.
 private struct Survey {
 	Piece* pieces = null;
 	Child* children = null;
@@ -692,6 +756,7 @@ private struct Survey {
 }
 
 private void free(ref Survey s) {
+	foreach (ref child; fp.dynarray.slice(s.children)) assert(child.piece < fp.dynarray.length(s.pieces), "doir.source: an entry of a piece the survey does not have");
 	fp.dynarray.free(s.pieces);
 	fp.dynarray.free(s.children);
 	s.errors.finalize();
@@ -704,8 +769,19 @@ private immutable bool[256] structural = () {
 	return table;
 }();
 
-// Cuts `text` between `low` and `high` into `chunkBytes`-sized pieces at statement starts; a larger block-valued declaration is its own piece. False on refusal.
+// Cuts `text` between `low` and `high` into `chunkBytes`-sized pieces at statement starts; a larger block-valued declaration is its own piece.
+// False on refusal.
+// Whether the pieces from `first` on run without gap or overlap from `low` to `high`.
+private bool piecesCover(const(Piece)* pieces, size_t first, size_t low, size_t high) {
+	auto run = fp.dynarray.slice(pieces)[first .. $];
+	if (low == high) return true;
+	if (run.length == 0 || run[0].start != low || run[$ - 1].end != high) return false;
+	foreach (k; 1 .. run.length) if (run[k - 1].end != run[k].start) return false;
+	return true;
+}
+
 private bool cut(const(char)[] text, size_t low, size_t high, ref Piece* pieces) {
+	immutable before = fp.dynarray.length(pieces);
 	size_t from = low, statement = low, open = fp.pointer.notFound, close = fp.pointer.notFound;
 	size_t braces = 0, parens = 0;
 	// A statement starts at `at`, or the contents end there.
@@ -772,12 +848,15 @@ private bool cut(const(char)[] text, size_t low, size_t high, ref Piece* pieces)
 			++i;
 		}
 	}
-	return boundary(high);
+	immutable cutAll = boundary(high);
+	assert(!cutAll || piecesCover(pieces, before, low, high), "doir.source: pieces that do not cover the text cut, or overlap");
+	return cutAll;
 }
 
 // Whether a piece in `syntax` ends between statements: no unterminated token, no error at its end, and no statement closed there unless the file ends.
 private bool endsBetweenStatements(ref const doir.syntax.parser.Syntax syntax, bool atEnd) {
 	if (atEnd) return true;
+	assert(fp.dynarray.length(syntax.tokens) > 0, "doir.source: a skimmed piece without its end token");
 	immutable last = fp.dynarray.length(syntax.tokens) - 1;
 	foreach (t; fp.dynarray.slice(syntax.tokens)) if (t.kind == doir.syntax.lexer.TokenKind.unterminated) return false;
 	foreach (error; fp.dynarray.slice(syntax.errors)) if (error.token == last) return false;
@@ -786,11 +865,14 @@ private bool endsBetweenStatements(ref const doir.syntax.parser.Syntax syntax, b
 	return true;
 }
 
-// Skims `piece`, a large declaration, leaving out its contents: header, empty block and what follows, into `syntax` and caller-freed `text`. False on refusal.
+// Skims `piece`, a large declaration, leaving out its contents: header, empty block and what follows, into `syntax` and caller-freed `text`.
+// False on refusal.
 private bool skimHeader(ref Commit c, ref const Piece piece, uint depth, ref doir.syntax.parser.Syntax syntax, ref char* text) {
 	doir.syntax.parser.free(syntax);
 	fp.string.free(text);
+	assert(piece.large && piece.start <= piece.blockOpen && piece.blockOpen < piece.blockClose && piece.blockClose < piece.end, "doir.source: a header of a piece that is not a large declaration");
 	text = fp.string.joined(c.fileText[piece.start .. piece.blockOpen], "{}", c.fileText[piece.blockClose + 1 .. piece.end]).get(null);
+	assert(text is null || fp.string.length(text) == piece.end - piece.start - (piece.blockClose - piece.blockOpen - 1), "doir.source: a header that kept some of its contents");
 	return text !is null && doir.syntax.parser.skim(fp.string.slice(text), syntax, depth);
 }
 
@@ -823,10 +905,12 @@ private bool skimJob(ref doir.query.QueryEngine, ref SkimJob j) @trusted {
 		j.described[r] = doir.syntax.parser.Description.init;
 		if (!doir.syntax.parser.describe(j.syntax, j.text, r, *j.strings, j.described[r])) return j.skimmed = false;
 	}
+	assert(fp.dynarray.length(j.described) == n, "doir.source: a description per record, it is not");
 	return true;
 }
 
-// Pieces skimmed ahead, handed out in order. Plain data, released by `free`.
+// Pieces skimmed ahead, handed out in order.
+// Plain data, released by `free`.
 private struct SkimmedAhead {
 	SkimJob* jobs = null;
 	size_t next;
@@ -841,7 +925,8 @@ private void free(ref SkimmedAhead ahead) {
 	ahead = SkimmedAhead.init;
 }
 
-// Skims piece `p` into empty `syntax`, from `ahead` or a fresh batch on the workers; with `described`, describes records ahead for `rebuild`. False on refusal.
+// Skims piece `p` into empty `syntax`, from `ahead` or a fresh batch on the workers; with `described`, describes records ahead for `rebuild`.
+// False on refusal.
 private bool skimPiece(ref Commit c, ref SkimmedAhead ahead, const(Piece)[] pieces, const(bool)[] wanted, size_t p, uint depth, ref doir.syntax.parser.Syntax syntax, doir.syntax.parser.Description** described = null) @trusted {
 	if (ahead.next == fp.dynarray.length(ahead.jobs) || ahead.jobs[ahead.next].piece != p) {
 		free(ahead);
@@ -854,6 +939,7 @@ private bool skimPiece(ref Commit c, ref SkimmedAhead ahead, const(Piece)[] piec
 		cast(void) ecrs.schedules.parallel!skimJob(*c.engine, pool, fp.dynarray.slice(ahead.jobs));
 	}
 	auto job = &ahead.jobs[ahead.next++];
+	assert(job.piece == p, "doir.source: handed a piece skimmed for another");
 	if (!job.skimmed) return false;
 	syntax = job.syntax;
 	job.syntax = doir.syntax.parser.Syntax.init;
@@ -924,17 +1010,36 @@ private std.typecons.Nullable!bool survey(ref Commit c, size_t low, size_t high,
 		if (s.hashed) s.hash = doir.syntax.parser.hashTokens(s.hash, syntax, c.text, 0, fp.dynarray.length(syntax.tokens) - 1, records.length ? 0 : doir.syntax.parser.noToken);
 		++p;
 	}
+	foreach (k; 1 .. fp.dynarray.length(s.children)) assert(s.children[k - 1].end <= s.children[k].start, "doir.source: surveyed entries out of order or overlapping");
 	return typeof(return)(true);
 }
 
 // Whether `child`, matched to `e`, has its old text and order key `key`, so a commit only moves it; `oldBase` is its block's old start.
 private bool onlyMoved(ref Commit c, ref const Child child, EntityId e, Position key, size_t oldBase) {
 	if (e == invalidEntity || !c.hadText || ecrs.context.getComponent!(doir.components.source.LexicalPosition)(*c.store, e).at != key) return false;
-	immutable span = ecrs.context.getForWriting!(doir.components.source.SourceSpan)(*c.store, e);
+	immutable span = ecrs.context.getComponent!(doir.components.source.SourceSpan)(*c.store, e);
+	assert(child.start <= child.end && child.end <= c.fileText.length, "doir.source: an entry past the file");
 	return span.length == child.end - child.start && fp.rope.equalAt(c.oldText, oldBase + span.offset, c.fileText[child.start .. child.end]);
 }
 
-// Writes `piece`, a large declaration, into `e` (its match or `invalidEntity`) as `commitRecord` does: header, chunked contents and hash. False on refusal.
+// Writes `piece`, a large declaration whose contents cannot be cut between statements, into `e` as `commitRecord` does, skimmed in one piece.
+// False on refusal.
+private bool commitWhole(ref Commit c, EntityId block, ref const Piece piece, EntityId e, ulong path, Position key, uint depth, size_t parentStart, size_t oldBase, ref EntityId* entries) {
+	version(unittest) ++largeFallbacks;
+	doir.syntax.parser.Syntax whole;
+	scope(exit) doir.syntax.parser.free(whole);
+	c.text = c.fileText[piece.start .. piece.end];
+	c.base = piece.start;
+	if (!doir.syntax.parser.skim(c.text, whole, depth)) return false;
+	assert(fp.dynarray.length(whole.records) >= 1, "doir.source: a large declaration that skimmed to no record");
+	c.syntax = &whole;
+	fp.dynarray.free(c.owned);
+	scope(exit) fp.dynarray.free(c.owned);
+	return assignErrors(c) && commitRecord(c, block, 0, e, path, key, parentStart, oldBase, entries);
+}
+
+// Writes `piece`, a large declaration, into `e` (its match or `invalidEntity`) as `commitRecord` does: header, chunked contents and hash.
+// False on refusal.
 private bool commitLarge(ref Commit c, EntityId block, ref const Piece piece, ref const Child child, EntityId e, ulong path, Position key, uint depth, size_t parentStart, size_t oldBase, ref EntityId* entries) {
 	immutable span = doir.components.source.SourceSpan(cast(uint) (child.start - parentStart), cast(uint) (child.end - child.start));
 	if (onlyMoved(c, child, e, key, oldBase))
@@ -945,23 +1050,13 @@ private bool commitLarge(ref Commit c, EntityId block, ref const Piece piece, re
 	Survey inner;
 	scope(exit) { doir.syntax.parser.free(header); fp.string.free(headerText); free(inner); }
 	if (!skimHeader(c, piece, depth, header, headerText)) return false;
+	assert(fp.dynarray.length(header.records) == 1 && header.records[0].blockOpen != doir.syntax.parser.noBlock, "doir.source: a large declaration's header that is not one block-valued record");
 	immutable record = header.records[0];
 	inner.hashed = true;
 	inner.hash = doir.syntax.parser.hashTokens(doir.syntax.parser.hashStart, header, fp.string.slice(headerText), record.first, record.blockOpen + 1);
 	immutable surveyed = survey(c, piece.blockOpen + 1, piece.blockClose, depth + 1, false, child.start, inner);
 	if (surveyed.isNull) return false;
-	if (!surveyed.get) {
-		version(unittest) ++largeFallbacks;
-		doir.syntax.parser.Syntax whole;
-		scope(exit) doir.syntax.parser.free(whole);
-		c.text = c.fileText[piece.start .. piece.end];
-		c.base = piece.start;
-		if (!doir.syntax.parser.skim(c.text, whole, depth)) return false;
-		c.syntax = &whole;
-		fp.dynarray.free(c.owned);
-		scope(exit) fp.dynarray.free(c.owned);
-		return assignErrors(c) && commitRecord(c, block, 0, e, path, key, parentStart, oldBase, entries);
-	}
+	if (!surveyed.get) return commitWhole(c, block, piece, e, path, key, depth, parentStart, oldBase, entries);
 
 	version(unittest) ++largeCommits;
 	size_t oldStart = 0;
@@ -969,7 +1064,7 @@ private bool commitLarge(ref Commit c, EntityId block, ref const Piece piece, re
 	bool headerMoved = true;
 	ulong oldHash = 0;
 	if (e != invalidEntity) {
-		immutable oldSpan = ecrs.context.getForWriting!(doir.components.source.SourceSpan)(*c.store, e);
+		immutable oldSpan = ecrs.context.getComponent!(doir.components.source.SourceSpan)(*c.store, e);
 		oldStart = oldBase + oldSpan.offset;
 		if (auto inside = ecrs.context.findComponent!(doir.components.ast.Block)(*c.store, e)) oldChildren = fp.dynarray.slice(inside.related);
 		oldHash = ecrs.context.getComponent!(doir.components.source.SyntaxHash)(*c.store, e).value;
@@ -1007,13 +1102,16 @@ private bool commitLarge(ref Commit c, EntityId block, ref const Piece piece, re
 		if (!ecrs.context.setComponent!(doir.components.ast.Block)(*c.store, e, list)) return false;
 	}
 	if (!ecrs.context.setComponent!(doir.components.source.SyntaxHash)(*c.store, e, doir.components.source.SyntaxHash(hash))) return false;
+	assert(ecrs.context.getComponent!(doir.components.ast.Parent)(*c.store, e).parent == block || !(fresh || headerMoved || hash != oldHash), "doir.source: a rebuilt large declaration under another parent (WF-Par)");
 	return !(fresh || moved || hash != oldHash) || markChangedWithParts(c, e);
 }
 
-// Writes the entries `s` found into `block`, as `commitBlock` does: matched and keyed together, pieces re-skimmed only when changed, errors stored. False on refusal.
+// Writes the entries `s` found into `block`, as `commitBlock` does: matched and keyed together, pieces re-skimmed only when changed, errors stored.
+// False on refusal.
 private bool commitRegion(ref Commit c, EntityId block, const(EntityId)[] old, ref Survey s, uint depth, ulong parentPath, Position parentAt, size_t parentStart, size_t oldBase, bool rekey) {
 	auto children = fp.dynarray.slice(s.children);
 	immutable n = children.length;
+	assert(block != invalidEntity, "doir.source: committing a region into no block");
 	doir.strings.StringId* names = null;
 	ulong* hashes = null;
 	EntityId* matched = null, entries = null;
@@ -1045,7 +1143,7 @@ private bool commitRegion(ref Commit c, EntityId block, const(EntityId)[] old, r
 		size_t j = i;
 		while (j < n && children[j].piece == p) ++j;
 		if (piece.large) {
-			assert(j == i + 1);
+			assert(j == i + 1, "doir.source: a large piece holding other than one declaration");
 			if (!commitLarge(c, block, piece, children[i], matched[i], paths[i], keys[i], depth, parentStart, oldBase, entries)) return false;
 			i = j;
 			continue;
@@ -1075,15 +1173,18 @@ private bool commitRegion(ref Commit c, EntityId block, const(EntityId)[] old, r
 		auto records = fp.dynarray.slice(syntax.records);
 		for (size_t r = 0; r < records.length; r = records[r].end, ++i)
 			if (!commitRecord(c, block, r, matched[i], paths[i], keys[i], parentStart, oldBase, entries)) return false;
-		assert(i == j);
+		assert(i == j, "doir.source: a piece re-skimmed to another number of declarations than surveyed");
 		if (c.deferring && !flushDeferred(c)) return false;
 		fp.dynarray.free(c.owned);
 	}
+	assert(i == n, "doir.source: a region that committed another number of entries than it surveyed");
 	return finishBlock(c, block, old, fp.dynarray.slice(matched), entries) && setErrors(c, block, s.errors);
 }
 
-// Makes `made` `file`'s text, which the store takes over even on refusal, keeping the old version in `c` to compare against. False on refusal.
+// Makes `made` `file`'s text, which the store takes over even on refusal, keeping the old version in `c` to compare against.
+// False on refusal.
 private bool replaceText(ref Commit c, EntityId file, fp.rope.Rope made) {
+	assert(ecrs.context.inTransaction(*c.store), "doir.source: replacing a file's text outside the commit's transaction");
 	auto owned = ecrs.context.findForWriting!(doir.components.source.SourceText)(*c.store, file);
 	c.hadText = owned !is null;
 	if (c.hadText) c.oldText = owned.text;
@@ -1091,7 +1192,8 @@ private bool replaceText(ref Commit c, EntityId file, fp.rope.Rope made) {
 	return ecrs.context.setComponent!(doir.components.source.SourceText)(*c.store, file, doir.components.source.SourceText(c.path, made));
 }
 
-// Everything a whole-file commit writes to the store, inside its transaction. False on refusal.
+// Everything a whole-file commit writes to the store, inside its transaction.
+// False on refusal.
 private bool applyFile(ref Commit c, EntityId file, fp.rope.Rope made) {
 	auto store = c.store;
 	if (!replaceText(c, file, made)) return false;
@@ -1111,6 +1213,7 @@ private bool applyFile(ref Commit c, EntityId file, fp.rope.Rope made) {
 	}
 	if (!ecrs.context.setComponent!(doir.components.source.SourceSpan)(*store, root, doir.components.source.SourceSpan(0, cast(uint) c.fileText.length))) return false;
 
+	assert(ecrs.context.getComponent!(doir.components.source.InFile)(*store, root).file == file, "doir.source: a root of another file");
 	auto oldEntries = fp.dynarray.slice(ecrs.context.getComponent!(doir.components.ast.Block)(*store, root).related);
 	Survey contents;
 	scope(exit) free(contents);
@@ -1120,12 +1223,15 @@ private bool applyFile(ref Commit c, EntityId file, fp.rope.Rope made) {
 	return commitRegion(c, root, oldEntries, contents, 0, fp.algorithms.hashBytes(cast(const(ubyte)[]) c.path), doir.engine.positions.root, 0, 0, false);
 }
 
-// Everything a commit of the chain's last declaration writes, as `applyFile`: text `c.text` from `c.base`, later spans moved by `delta`. False on refusal.
+// Everything a commit of the chain's last declaration writes, as `applyFile`: text `c.text` from `c.base`, later spans moved by `delta`.
+// False on refusal.
 private bool applyBlock(ref Commit c, EntityId file, fp.rope.Rope made, const(EntityId)[] chain, ptrdiff_t delta, bool changed) {
 	auto store = c.store;
+	assert(chain.length > 0, "doir.source: committing a block at the end of no chain");
 	if (!replaceText(c, file, made) || !assignErrors(c)) return false;
 	if (changed && !doir.query.markChanged(*c.engine, file)) return false;
 	immutable root = rootOf(*c.engine, file);
+	assert(root != invalidEntity, "doir.source: committing a block of a file never committed whole");
 	immutable total = fp.rope.length(ecrs.context.getComponent!(doir.components.source.SourceText)(*store, file).text);
 	if (!ecrs.context.setComponent!(doir.components.source.SourceSpan)(*store, root, doir.components.source.SourceSpan(0, cast(uint) total))) return false;
 
@@ -1133,6 +1239,7 @@ private bool applyBlock(ref Commit c, EntityId file, fp.rope.Rope made, const(En
 	uint oldLength;
 	foreach (e; chain) {
 		auto entries = fp.dynarray.slice(ecrs.context.getComponent!(doir.components.ast.Block)(*store, parent).related);
+		assert(fp.algorithms.contains(entries, e), "doir.source: a chain entry missing from its parent's block (WF-Par)");
 		size_t i = 0;
 		while (entries[i] != e) ++i;
 		foreach (sibling; entries[i + 1 .. $]) {
@@ -1176,6 +1283,7 @@ private bool applyBlock(ref Commit c, EntityId file, fp.rope.Rope made, const(En
 
 // Where `holder`'s span starts in `file`, or `fp.pointer.notFound` if it is not in `file`.
 private size_t startIn(ref ecrs.context.Context store, EntityId holder, EntityId file) {
+	assert(holder != invalidEntity && file != invalidEntity, "doir.source: locating no holder, or in no file");
 	auto found = doir.engine.locations.fileRange(store, holder);
 	return found.isNull || found.get.file != file ? fp.pointer.notFound : found.get.bytes.startByte;
 }
@@ -1218,12 +1326,14 @@ private struct LocatedError {
 
 // Whether `a` reports before `b`: by offset, then by holder, then in the holder's own order.
 private bool foundBefore(ref const LocatedError a, ref const LocatedError b) {
+	assert(a.at >= a.start && b.at >= b.start, "doir.source: an error before the holder it belongs to");
 	if (a.at != b.at) return a.at < b.at;
 	if (a.start != b.start) return a.start < b.start;
 	return a.order < b.order;
 }
 
-// Diagnostic for `found` in `file`: its location, hint and fixes, plus the bracket a missing closer would close; `d` is left to free. False on refusal.
+// Diagnostic for `found` in `file`: its location, hint and fixes, plus the bracket a missing closer would close; `d` is left to free.
+// False on refusal.
 private bool describeFound(ref ecrs.context.Context store, EntityId file, const(char)[] path, ref const LocatedError found, ref diagnose.Diagnostic d) {
 	d.kind = diagnose.Kind.error;
 	immutable at = doir.engine.locations.lineColumnAt(store, file, found.at);
@@ -1250,7 +1360,9 @@ private bool describeFound(ref ecrs.context.Context store, EntityId file, const(
 			return false;
 		}
 	}
+	assert(fp.dynarray.length(d.fixes) == fixes.length, "doir.source: a diagnostic with another number of fixes than its error");
 	if (found.error.opening == doir.components.source.noOpening) return true;
+	assert(found.start + found.error.opening <= found.at, "doir.source: an opening bracket after the error it leaves unclosed");
 	immutable open = doir.engine.locations.lineColumnAt(store, file, found.start + found.error.opening);
 	if (open.isNull) return false;
 	auto opened = diagnose.Diagnostic.Annotation(open.get);
@@ -1306,6 +1418,7 @@ bool reportSyntaxErrors(ref doir.query.QueryEngine engine, EntityId file, ref di
 	immutable n = fp.dynarray.length(found);
 	if (n == 0) return true;
 	std.algorithm.sorting.sort!foundBefore(found[0 .. n]);
+	assert(n == syntaxErrorCount(engine, file), "doir.source: reporting another number of errors than the file holds");
 	const path = ecrs.context.getComponent!(doir.components.source.SourceText)(*store, file).path;
 	foreach (ref f; fp.dynarray.slice(found)) {
 		diagnose.Diagnostic d;
@@ -1316,12 +1429,61 @@ bool reportSyntaxErrors(ref doir.query.QueryEngine engine, EntityId file, ref di
 	}
 	// Pushing cannot be undone, so the room for every diagnostic is made first.
 	if (fp.dynarray.reserve(manager.diagnostics, fp.dynarray.length(manager.diagnostics) + n) is null) return false;
+	immutable before = fp.dynarray.length(manager.diagnostics);
 	foreach (d; fp.dynarray.slice(made)) cast(void) diagnose.push(manager, d); // reserved above
+	assert(fp.dynarray.length(manager.diagnostics) == before + n, "doir.source: a reserved push that was refused");
 	fp.dynarray.clear(made);
 	return true;
 }
 
 // Runs `apply` on `c` in a store transaction, or rolls it back on refusal; `commit` and `commitEdit` return what it does.
+// bounded: doir.syntax.parser.maxNesting, the deepest blocks a commit builds
+// Whether `block`'s entries, its span `length` bytes long, keep `auditTree`'s rules, and theirs.
+private bool auditBlock(ref const ecrs.context.Context store, EntityId block, size_t length) {
+	auto entries = ecrs.context.findComponent!(doir.components.ast.Block)(store, block);
+	if (entries is null) return true;
+	size_t previousEnd = 0;
+	foreach (child; fp.dynarray.slice(entries.related)) {
+		auto parent = ecrs.context.findComponent!(doir.components.ast.Parent)(store, child);
+		auto span = ecrs.context.findComponent!(doir.components.source.SourceSpan)(store, child);
+		if (parent is null || parent.related[0] != block || span is null || !ecrs.context.hasComponent!(doir.components.source.SyntaxHash)(store, child)) return false;
+		if (span.offset < previousEnd || span.offset + span.length > length) return false;
+		previousEnd = span.offset + span.length;
+		if (!auditBlock(store, child, span.length)) return false;
+	}
+	return true;
+}
+
+/// Whether `file`'s tree keeps the rules a commit writes it by: its root's span is the whole text; each block's entries name it as their `Parent` (`WF-Par`), have a `SyntaxHash`, and have spans inside the block's, in source order without overlapping.
+/// True for a file never committed.
+/// Every commit asserts it, refused ones included.
+///
+/// Examples:
+/// ---
+/// static import ecrs.context;
+/// static import doir.strings;
+/// static import doir.query;
+/// auto store = ecrs.context.create();
+/// scope(exit) ecrs.context.free(store);
+/// auto engine = doir.query.create(store);
+/// scope(exit) doir.query.free(engine);
+/// doir.strings.Strings strings;
+/// scope(exit) doir.strings.free(strings);
+/// immutable file = addFile(engine, strings, "a.doir");
+/// assert(auditTree(engine, file));
+/// assert(commit(engine, strings, file, "n : namespace = {\n\tx : T = 1\n}\n") == 0 && auditTree(engine, file));
+/// static import doir.components.source;
+/// ecrs.context.getForWriting!(doir.components.source.SourceSpan)(store, rootOf(engine, file)).length += 1;
+/// assert(!auditTree(engine, file));
+/// ---
+package(doir) bool auditTree(ref doir.query.QueryEngine engine, EntityId file) {
+	immutable root = rootOf(engine, file);
+	if (root == invalidEntity) return true;
+	auto span = ecrs.context.findComponent!(doir.components.source.SourceSpan)(*engine.store, root);
+	immutable length = fp.rope.length(textOf(engine, file));
+	return span !is null && span.offset == 0 && span.length == length && auditBlock(*engine.store, root, length);
+}
+
 private size_t transact(alias apply, Args...)(ref Commit c, EntityId file, Args args) {
 	scope(exit) {
 		fp.dynarray.free(c.owned);
@@ -1331,12 +1493,15 @@ private size_t transact(alias apply, Args...)(ref Commit c, EntityId file, Args 
 		}
 		fp.dynarray.free(c.deferred);
 	}
+	assert(c.engine !is null && c.store is c.engine.store && c.strings !is null, "doir.source: a commit missing its engine, store or strings");
 	ecrs.context.beginTransaction(*c.store);
 	if (!apply(c, file, args)) {
 		ecrs.context.rollbackTransaction(*c.store);
+		assert(auditTree(*c.engine, file), "doir.source: a rolled-back commit left a broken tree");
 		return fp.pointer.allocationRefused;
 	}
 	ecrs.context.commitTransaction(*c.store);
+	assert(auditTree(*c.engine, file), "doir.source: a commit wrote a broken tree (WF-Par)");
 	return syntaxErrorCount(*c.engine, file);
 }
 
@@ -1367,6 +1532,8 @@ private size_t transact(alias apply, Args...)(ref Commit c, EntityId file, Args 
 /// assert(fp.dynarray.length(ecrs.context.getComponent!(doir.components.ast.Block)(store, rootOf(engine, file)).related) == 2);
 /// ---
 size_t commit(ref doir.query.QueryEngine engine, ref doir.strings.Strings strings, EntityId file, const(char)[] text) {
+	assert(ecrs.context.hasComponent!(doir.components.source.SourceFile)(*engine.store, file), "doir.source.commit: committing into an entity that is not a file");
+	assert(text.length < uint.max, "doir.source.commit: a file longer than a span can hold");
 	doir.query.beginRevision(engine);
 	// The commit reads `text` while it runs; the store keeps a copy, and the transaction keeps the old one alive until it ends.
 	auto made = fp.rope.create(text);
@@ -1380,11 +1547,14 @@ size_t commit(ref doir.query.QueryEngine engine, ref doir.strings.Strings string
 	return transact!applyFile(c, file, made.get);
 }
 
-// The block-valued declarations whose braces may enclose bytes `start` to `end` of the committed text, outermost first, and where each starts. False on refusal.
+// The block-valued declarations whose braces may enclose bytes `start` to `end` of the committed text, outermost first, and where each starts.
+// False on refusal.
 private bool enclosing(ref ecrs.context.Context store, EntityId root, size_t start, size_t end, ref EntityId* chain, ref size_t* starts) {
+	assert(root != invalidEntity && start <= end, "doir.source: enclosing a range of no file, or one that ends before it starts");
 	EntityId parent = root;
 	size_t base = 0;
 	for (;;) {
+		assert(fp.dynarray.length(chain) <= doir.syntax.parser.maxNesting, "doir.source: a chain of blocks deeper than maxNesting (IL-Nest)");
 		auto entries = fp.dynarray.slice(ecrs.context.getComponent!(doir.components.ast.Block)(store, parent).related);
 		immutable after = fp.algorithms.lowerBound!((entry, key) => base + ecrs.context.getComponent!(doir.components.source.SourceSpan)(store, entry).offset <= key)(entries, start);
 		if (after == 0) return true;
@@ -1394,13 +1564,16 @@ private bool enclosing(ref ecrs.context.Context store, EntityId root, size_t sta
 		// Strictly inside, so the declaration still starts where it did and keeps its closing brace.
 		if (!ecrs.context.hasComponent!(doir.components.ast.Block)(store, e) || at >= start || end >= at + span.length) return true;
 		if (!fp.dynarray.pushBack(chain, e) || !fp.dynarray.pushBack(starts, at)) return false;
+		assert(fp.dynarray.length(chain) == fp.dynarray.length(starts), "doir.source: a chain and its starts that disagree in length");
 		parent = e;
 		base = at;
 	}
 }
 
-// Whether `syntax`, skimmed from `source`, is still all of `e`: one declaration with a block and no outside error. False on refusal.
+// Whether `syntax`, skimmed from `source`, is still all of `e`: one declaration with a block and no outside error.
+// False on refusal.
 private bool reparsesInPlace(ref Commit c, EntityId e, const(char)[] source) {
+	assert(e != invalidEntity && ecrs.context.hasComponent!(doir.components.ast.Block)(*c.store, e), "doir.source: reparsing in place what has no block");
 	auto records = fp.dynarray.slice(c.syntax.records);
 	if (records.length == 0) return false;
 	immutable r = records[0];
@@ -1455,6 +1628,17 @@ size_t commitEdit(ref doir.query.QueryEngine engine, ref doir.strings.Strings st
 	char* flat = null;
 	scope(exit) { fp.dynarray.free(chain); fp.dynarray.free(starts); fp.dynarray.free(flat); }
 	if (!enclosing(*store, rootOf(engine, file), start, end, chain, starts)) return fp.pointer.allocationRefused;
+	foreach (k; 1 .. fp.dynarray.length(starts)) assert(starts[k - 1] < starts[k], "doir.source: an enclosing declaration that starts no later than its parent");
+	// A raw string's end is searched for past any block, so a block holding `"""`, or an edit making or breaking one, is lexed with the whole file.
+	bool rawEdited = false;
+	foreach (edited; 0 .. 2) {
+		const around = edited ? text : source.text;
+		immutable last = edited ? start + replacement.length : end;
+		immutable from = start < 2 ? 0 : start - 2, to = last + 2 > fp.rope.length(around) ? fp.rope.length(around) : last + 2;
+		if (fp.dynarray.growToSize(flat, to - from + 1) is null) return fp.pointer.allocationRefused;
+		fp.rope.copy(around, from, to, flat[0 .. to - from]);
+		rawEdited = rawEdited || fp.string.contains(flat[0 .. to - from], `"""`);
+	}
 
 	doir.syntax.parser.Syntax syntax;
 	scope(exit) doir.syntax.parser.free(syntax);
@@ -1463,11 +1647,12 @@ size_t commitEdit(ref doir.query.QueryEngine engine, ref doir.strings.Strings st
 	c.store = store;
 	c.strings = &strings;
 	c.syntax = &syntax;
-	for (size_t depth = fp.dynarray.length(chain); depth > 0; --depth) {
+	for (size_t depth = rawEdited ? 0 : fp.dynarray.length(chain); depth > 0; --depth) {
 		immutable e = chain[depth - 1];
 		immutable length = ecrs.context.getComponent!(doir.components.source.SourceSpan)(*store, e).length + delta;
 		if (fp.dynarray.growToSize(flat, length) is null) return fp.pointer.allocationRefused;
 		fp.rope.copy(text, starts[depth - 1], starts[depth - 1] + length, flat[0 .. length]);
+		if (fp.string.contains(flat[0 .. length], `"""`)) break;
 		doir.syntax.parser.free(syntax);
 		if (!doir.syntax.parser.skim(flat[0 .. length], syntax, cast(uint) (depth - 1))) return fp.pointer.allocationRefused;
 		if (!reparsesInPlace(c, e, flat[0 .. length])) continue;
@@ -1526,6 +1711,7 @@ struct Committing {
 	/// assert(committing(strings, file, "a : T = 1\nb : = 2\n")(engine) && fp.dynarray.length(manager.diagnostics) == 1);
 	/// ---
 	bool opCall(ref doir.query.QueryEngine engine) {
+		assert(strings !is null && file != invalidEntity, "doir.source: committing with no strings or into no file");
 		if (commit(engine, *strings, file, text) == fp.pointer.allocationRefused) return false;
 		return engine.diagnostics is null || reportSyntaxErrors(engine, file, *engine.diagnostics);
 	}
@@ -2178,7 +2364,8 @@ unittest { // edits: an edit inside a block reparses that declaration alone and 
 		Case(nested, 50, 65, "", false), // across inner's end
 		Case(nested, 0, 5, "renamed", false), // outer's name: its hash changes
 		Case(nested, 73, 73, "q : T = 1\n", false), // at the top level
-		Case(nested, 55, 55, "r\"\"\"", true), // an unclosed raw string, which the lexer ends where it opens
+		Case(nested, 55, 55, "r\"\"\"", false), // a raw string's quotes, whose end is searched for past the block
+		Case(nested ~ "s : p = \"\"\"\n", 55, 55, "\"\"\"", false), // which pairs here with an unclosed one below it
 		Case(nested, 55, 56, "", true), // x loses its value: an error inside a block
 	];
 	foreach (k, test; cases) {
@@ -2189,7 +2376,8 @@ unittest { // edits: an edit inside a block reparses that declaration alone and 
 		doir.strings.Strings sa, sb;
 		scope(exit) { doir.strings.free(sa); doir.strings.free(sb); }
 		immutable fa = addFile(ea, sa, "a.doir"), fb = addFile(eb, sb, "a.doir");
-		assert(commit(ea, sa, fa, test.text) == 0 && commit(eb, sb, fb, test.text) == 0);
+		immutable errors = commit(ea, sa, fa, test.text);
+		assert(errors != fp.pointer.allocationRefused && commit(eb, sb, fb, test.text) == errors);
 		immutable z = named(ea, sa, rootOf(ea, fa), "z");
 		immutable before = blockCommits;
 		assert(commitEdit(ea, sa, fa, test.start, test.end, test.replacement) != fp.pointer.allocationRefused);
@@ -2207,9 +2395,9 @@ unittest { // edits: an edit inside a block reparses that declaration alone and 
 	size_t inBlock = 0, total = 0;
 	// Typing-like replacements, and ones that unbalance a block or swallow what follows, which are rarer since the file stays broken after them.
 	static immutable string[] replacements = ["", "x", "\n", " ", "1", "q : T = 1\n", "//c\n", "_ : T = 1\n", "n : namespace = {\n\ta : T = 1\n}\n", "f : (p: T) -> T\n"];
-	static immutable string[] breaking = ["}", "{", "/*", "*/", "\""];
-	uint seed = 7;
-	uint next() { seed = seed * 1103515245 + 12345; return seed >> 8; }
+	static immutable string[] breaking = ["}", "{", "/*", "*/", "\"", "\"\"\""];
+	auto random = fp.algorithms.createRandom(7);
+	size_t next() { return cast(size_t) fp.algorithms.nextRandom(random); }
 	foreach (path; ["standard.doir", "test.doir", "test_call.doir"]) {
 		auto read = fp.io.readFile(path).get;
 		scope(exit) fp.string.free(read);
@@ -2325,7 +2513,7 @@ unittest { // syntax errors are kept on the block that holds them: an edit repla
 	assert(fp.dynarray.length(ecrs.context.getComponent!(doir.components.source.SyntaxErrors)(store, b).errors) == 1);
 
 	// Errors at one offset report in their holders' order, then their own.
-	static immutable LocatedError[4] ties = [LocatedError(5, 2, 1), LocatedError(5, 2, 0), LocatedError(5, 0, 3), LocatedError(4, 9, 9)];
+	static immutable LocatedError[4] ties = [LocatedError(5, 2, 1), LocatedError(5, 2, 0), LocatedError(5, 0, 3), LocatedError(4, 3, 9)];
 	assert(foundBefore(ties[1], ties[0]) && !foundBefore(ties[0], ties[1]) && !foundBefore(ties[0], ties[0]));
 	assert(foundBefore(ties[2], ties[0]) && !foundBefore(ties[0], ties[2]) && foundBefore(ties[3], ties[2]));
 
@@ -2374,8 +2562,8 @@ unittest { // chunked whole-file commits write what unchunked ones do, large dec
 	// A block whose contents end mid-statement cannot be cut between statements, so its commit always falls back to one piece; seeded edits only sometimes make one.
 	static immutable unfinished = "n : namespace = {\n\ta : T = 1\n\tb : T = 2\n\tc : T =\n}\nafter : T = 3\n";
 	static immutable string[] replacements = ["", "x", "\n", "q : T = 1\n", "n : namespace = {\n\ta : T = 1\n}\n", "}", "{", "/*", "\"\"\"", "_ : T = 1\n"];
-	uint seed = 11;
-	uint next() { seed = seed * 1103515245 + 12345; return seed >> 8; }
+	auto random = fp.algorithms.createRandom(11);
+	size_t next() { return cast(size_t) fp.algorithms.nextRandom(random); }
 	// Half the chunked commits skim, describe and rebuild on workers, which must not change what they write.
 	auto pool = bc.threadpool.create(4);
 	assert(pool !is null);

@@ -1026,7 +1026,7 @@ where $\pi^{*}$ applies $\pi$ to every entity id inside a component value (`Pare
   $$
   > **In Plain English:** All three are host hooks and fold.
   > `get` hands back element `i` itself — no copy (`V-NoImplicitCopy`) — so its destination becomes another name for that element, keeping the element's stage (`A-Bind`), and the index must be comptime.
-  > A walk over a pack is therefore an inline recursion over a comptime index that unrolls (`C-Inline`, `C-Splice`), dispatching on `std.packs.type_of` per element.
+  > A walk over a pack is therefore an inline recursion over a comptime index that unrolls (`C-Inline`, `C-Splice`), dispatching on `std.packs.type_of` per element; a pack's length is bounded by `IL-Pack`.
 - **[F-Specialize] Variadic Functions Specialize per Pack Shape:**  
   $$
   f \text{ is generated once per distinct } \langle m, \text{TypeOf}(b_1), \dots, \text{TypeOf}(b_m) \rangle \text{ and comptime levels' values (C-Specialize)}
@@ -1201,7 +1201,7 @@ where $\pi^{*}$ applies $\pi$ to every entity id inside a component value (`Pare
   \frac{T \text{ deduced, unsolved by D-Deduce} \quad \text{the body opens with } \mathrm{std.diagnostics.assert}(\mathrm{std.types.is\_same\_type}(P, g(\dots T \dots)), m) \quad P \text{ solved} \quad P = g(\dots \tau \dots) \text{ (M-Ctor)}}{T := \tau}
   $$
   > **In Plain English:** A parameter line cannot write `std.types.pointer(T)` (`TF-Name`), so a function taking a pointer to its deduced `T` takes a deduced `Tptr` and opens its body by asserting `std.types.is_same_type(Tptr, std.types.pointer(T))`.
-  > Deduction reads those opening assertions: once `Tptr` is solved, the assertion runs as a match rather than a test, and if `Tptr` was built by the same type constructor (`std.types.pointer`, `std.types.array` or `std.types.function_pointer`), `T` is solved from what it was built from (its `Pointer` component), recursively for a constructor applied to a constructor.
+  > Deduction reads those opening assertions: once `Tptr` is solved, the assertion runs as a match rather than a test, and if `Tptr` was built by the same type constructor (`std.types.pointer`, `std.types.array` or `std.types.function_pointer`), `T` is solved from what it was built from (its `Pointer` component), recursively for a constructor applied to a constructor, to the depth `IL-Deduce` sets.
   > A `Tptr` the constructor did not build, a `distinct_copy` of one included (`M-Distinct`), solves nothing, and `T` is left to `D-Deduce`'s error; once every parameter is solved the assertion is an ordinary one (`DG-Assert`).
   > The opening is the body's leading run of such assertions and the bindings they name (the constructed type, the condition, the message); deduction reads nothing after it, so a caller's deduction depends on the callee's signature and those lines alone.
 - **[C-Splice] Comptime Block Selection:**  
@@ -1272,7 +1272,7 @@ where $\pi^{*}$ applies $\pi$ to every entity id inside a component value (`Pare
   \frac{\text{answering query } q \text{ requires the answer to } q}{\text{ill-formed, reported with the chain of queries that closes the cycle}}
   $$
   > **In Plain English:** Every question the compiler answers — what a name or alias resolves to, a type's layout, a deduced type, the value of a comptime call — is a query, and a query that needs its own answer is an error naming the loop: an alias chain back to itself, a struct that contains itself by value, a comptime call whose argument is its own result.
-  > A comptime evaluation that never terminates does not compile; an implementation may stop it at a limit with a diagnostic.
+  > A comptime evaluation that never terminates does not compile: it stops at the step limit (`IL-Steps`) with a diagnostic.
 
 ---
 
@@ -1649,6 +1649,21 @@ where $\pi^{*}$ applies $\pi$ to every entity id inside a component value (`Pare
   > **In Plain English:** These are host hooks a metaprogram calls to report problems in the code it inspects, typically at a location from `std.meta.source_location.get`.
   > All three are emitted in order as they run (`C-Order`); an `error` makes the build fail once the current level's comptime has finished, so later errors are still reported.
   > An empty help string means no help.
+- **[IL-Limit] Implementation Limits:**  
+  $$
+  \frac{\text{a program needs more of a resource below than the implementation allows} \quad \text{the allowance} \ge \text{its minimum}}{\text{ill-formed, reported at the item that crosses it, with a hint}}
+  $$
+  > **In Plain English:** An implementation may bound how deep a program nests and how much work one answer takes, but never below these minimums, and crossing a bound is a diagnostic like any other, never a crash or a hang.
+  > A program within every minimum compiles on every implementation; one past a minimum may be rejected by some.
+
+  | Tag | What is counted | Minimum |
+  | --- | --- | --- |
+  | `IL-Nest` | Blocks and function types written inside one another, a file's root not counted | 256 |
+  | `IL-Chain` | Answers one answer waits on in a chain, each needing the next: an alias, import, deduction or comptime call (`Q-Cycle`) | 1024 |
+  | `IL-Steps` | Calls and backward branches one comptime evaluation runs (`C-Interpret`) | 2^24 |
+  | `IL-Memory` | Bytes one comptime evaluation allocates and has not freed (`MEM-Comptime`) | 2^26 |
+  | `IL-Pack` | Elements of a pack, which bounds a recursion unrolled over one (`F-Access`) | 256 |
+  | `IL-Deduce` | Type constructors applied to one another that deduction peels (`D-Assert`) | 64 |
 
 ---
 

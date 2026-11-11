@@ -1,4 +1,6 @@
-/// The DOIR language server (`roadmap.md` Phase 3), `doir --lsp`: one server for every editor, speaking LSP over a pair of file descriptors. It keeps each open document as a file in the store, commits each edit with `doir.source.commitEdit`, so a keystroke costs in proportion to the block it is in, and publishes the file's diagnostics once a burst of edits has been drained. Each request beyond the lifecycle and document sync is answered by a module of `doir.lsp.features`.
+/// The DOIR language server (`roadmap.md` Phase 3), `doir --lsp`: one server for every editor, speaking LSP over a pair of file descriptors.
+/// It keeps each open document as a file in the store, commits each edit with `doir.source.commitEdit`, so a keystroke costs in proportion to the block it is in, and publishes the file's diagnostics once a burst of edits has been drained.
+/// Each request beyond the lifecycle and document sync is answered by a module of `doir.lsp.features`.
 ///
 /// Positions are UTF-8 when the client offers it, as Neovim does, since the store counts bytes, and UTF-16 otherwise, the only encoding VS Code speaks (`doir.lsp.positions`).
 ///
@@ -58,7 +60,8 @@ public import ecrs.registry : EntityId, invalidEntity;
 
 // --- documents ---------------------------------------------------------------
 
-// The path a `file://` URI names, percent-decoded, as a new fp string; any other URI is its own path. Null on refusal or for an empty URI.
+// The path a `file://` URI names, percent-decoded, as a new fp string; any other URI is its own path.
+// Null on refusal or for an empty URI.
 private char* pathOf(const(char)[] uri) {
 	static immutable scheme = "file://";
 	return bc.http.message.percentDecoded(fp.string.startsWith(uri, scheme) ? uri[scheme.length .. $] : uri).get(null);
@@ -317,7 +320,8 @@ private void handle(ref doir.lsp.session.Session s, const(char)[] message, ref b
 
 // --- running -----------------------------------------------------------------
 
-/// Serves LSP: reads messages from `input` and writes responses and notifications to `output` until the client sends `exit` or `input` ends. It keeps its own store, and skims large files on a thread pool if one can be started.
+/// Serves LSP: reads messages from `input` and writes responses and notifications to `output` until the client sends `exit` or `input` ends.
+/// It keeps its own store, and skims large files on a thread pool if one can be started.
 ///
 /// Returns 0 if the client asked to shut down before it exited, 1 otherwise, as LSP's `exit` asks.
 ///

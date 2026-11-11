@@ -17,6 +17,7 @@ public import ecrs.registry : EntityId;
 
 @nogc nothrow:
 
+// bounded: doir.syntax.parser.maxNesting, the deepest blocks a commit builds
 // Appends to `list` the symbols of `block`'s declarations, each with its own as children.
 private void symbols(ref doir.lsp.session.Session s, bc.json.Value list, const fp.rope.Rope text, EntityId block, size_t base) {
 	foreach (child; doir.lsp.store.childrenOf(s, block)) {

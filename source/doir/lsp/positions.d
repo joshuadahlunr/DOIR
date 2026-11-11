@@ -1,4 +1,5 @@
-/// LSP positions (`roadmap.md` Phase 3): a line and a character offset in the encoding the client and server agreed on, converted to and from the byte offsets the store keeps. Only the line in question is read, through the text's line index (`fp.rope`), so a conversion costs the length of one line, not the file.
+/// LSP positions (`roadmap.md` Phase 3): a line and a character offset in the encoding the client and server agreed on, converted to and from the byte offsets the store keeps.
+/// Only the line in question is read, through the text's line index (`fp.rope`), so a conversion costs the length of one line, not the file.
 ///
 /// VS Code counts characters in UTF-16 code units; Neovim offers UTF-8, which needs no conversion at all.
 ///
@@ -63,13 +64,16 @@ private size_t walk(alias f)(const fp.rope.Rope text, size_t start, size_t end) 
 size_t offsetOf(const fp.rope.Rope text, Encoding encoding, size_t line, size_t character) {
 	size_t start, end;
 	lineBounds(text, line, start, end);
+	assert(start <= end && end <= fp.rope.length(text), "doir.lsp.positions: a line outside the text");
 	if (encoding == Encoding.utf8) return character < end - start ? start + character : end;
 	size_t units = 0;
-	return walk!((at, width) {
+	immutable at = walk!((at, width) {
 		if (units + width > character) return false;
 		units += width;
 		return true;
 	})(text, start, end);
+	assert(at >= start && at <= end);
+	return at;
 }
 
 /// The line and character, counted in `encoding`, of byte `at` of `text`, which may be its length.
@@ -84,6 +88,7 @@ size_t offsetOf(const fp.rope.Rope text, Encoding encoding, size_t line, size_t 
 /// assert(line == 1 && character == 1);
 /// ---
 void positionOf(const fp.rope.Rope text, Encoding encoding, size_t at, out size_t line, out size_t character) {
+	assert(at <= fp.rope.length(text), "doir.lsp.positions: an offset past the text");
 	line = fp.rope.lineOf(text, at);
 	immutable start = fp.rope.lineStart(text, line);
 	if (encoding == Encoding.utf8) {
@@ -99,7 +104,8 @@ void positionOf(const fp.rope.Rope text, Encoding encoding, size_t at, out size_
 }
 
 
-/// What `positionOf` remembers of the line it last converted an offset on, and how far into it it has counted, so offsets met in increasing order on one line cost one line lookup and one pass over its bytes, as a response's many ranges do. It holds no memory; reset it to `LineCache.init` before the text it was used on changes.
+/// What `positionOf` remembers of the line it last converted an offset on, and how far into it it has counted, so offsets met in increasing order on one line cost one line lookup and one pass over its bytes, as a response's many ranges do.
+/// It holds no memory; reset it to `LineCache.init` before the text it was used on changes.
 struct LineCache {
 	fp.rope.Rope text; /// The text it describes.
 	size_t line = fp.pointer.notFound; /// The line, or `fp.pointer.notFound` for none.
@@ -124,6 +130,7 @@ struct LineCache {
 /// assert(line == 1 && character == 4);
 /// ---
 void positionOf(ref LineCache cache, const fp.rope.Rope text, Encoding encoding, size_t at, out size_t line, out size_t character) {
+	assert(at <= fp.rope.length(text), "doir.lsp.positions: an offset past the text");
 	if (cache.text != text || cache.line == fp.pointer.notFound || at < cache.start || at >= cache.next) {
 		// Kept only to compare with the next text, never read through.
 		cache = LineCache(cast(fp.rope.Rope) text, fp.rope.lineOf(text, at));

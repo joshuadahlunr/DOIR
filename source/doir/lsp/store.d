@@ -140,7 +140,8 @@ private Found entryNamed(ref doir.lsp.session.Session s, EntityId block, size_t 
 	return Found(child, base + span.offset, base + span.offset + span.length);
 }
 
-/// The declaration named `name` that a read at byte `at` of `file` finds: the first segment looked up outward through the enclosing blocks, the rest through each found block's own entries. A null `Found` if none is.
+/// The declaration named `name` that a read at byte `at` of `file` finds: the first segment looked up outward through the enclosing blocks, the rest through each found block's own entries.
+/// A null `Found` if none is.
 ///
 /// Examples:
 /// ---
@@ -250,7 +251,8 @@ package(doir) EntityId functionTypeOf(ref doir.lsp.session.Session s, EntityId f
 	return invalidEntity;
 }
 
-/// The index among `inputs`, a function type's parameters, of the one a call's argument `argument` binds: deduced parameters are never written at a call (`D-Deduce`), so it is the `argument`th of the rest. `inputs.length` if there is none.
+/// The index among `inputs`, a function type's parameters, of the one a call's argument `argument` binds: deduced parameters are never written at a call (`D-Deduce`), so it is the `argument`th of the rest.
+/// `inputs.length` if there is none.
 ///
 /// Examples:
 /// ---

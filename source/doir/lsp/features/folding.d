@@ -19,6 +19,7 @@ public import ecrs.registry : EntityId;
 
 @nogc nothrow:
 
+// bounded: doir.syntax.parser.maxNesting, the deepest blocks a commit builds
 // Appends to `ranges` the folding ranges of `block`'s blocks over several lines, and theirs.
 private void foldings(ref doir.lsp.session.Session s, bc.json.Value ranges, const fp.rope.Rope text, EntityId block, size_t base) {
 	foreach (child; doir.lsp.store.childrenOf(s, block)) {
@@ -46,7 +47,8 @@ private void commentFolding(bc.json.Value ranges, size_t first, size_t last) {
 	bc.json.set(range, "kind", "comment");
 }
 
-// Appends to `ranges` folds for `text`'s comments, which the store lacks: runs of line-comment lines and multi-line block comments. False on refusal.
+// Appends to `ranges` folds for `text`'s comments, which the store lacks: runs of line-comment lines and multi-line block comments.
+// False on refusal.
 private bool commentFoldings(bc.json.Value ranges, const fp.rope.Rope text) {
 	immutable length = fp.rope.length(text);
 	char* bytes = fp.rope.text(text, 0, length).get(null);

@@ -106,11 +106,15 @@ private struct TableEntry(Q) {
 
 // wrapper: the key hash an `fp.hashtable` config takes, over a slot's bytes
 private size_t hashTableEntry(Q)(inout(ubyte)[] bytes) @trusted {
+	assert(bytes.length == TableEntry!Q.sizeof, "doir.query: hashing a table entry of the wrong size");
 	return keyHash!Q((cast(const(TableEntry!Q)*) bytes.ptr).key);
 }
 
 private bool equalTableEntry(Q)(inout(ubyte)[] a, inout(ubyte)[] b) @trusted {
-	return keysEqual!Q((cast(const(TableEntry!Q)*) a.ptr).key, (cast(const(TableEntry!Q)*) b.ptr).key);
+	assert(a.length == TableEntry!Q.sizeof && b.length == TableEntry!Q.sizeof, "doir.query: comparing table entries of the wrong size");
+	immutable same = keysEqual!Q((cast(const(TableEntry!Q)*) a.ptr).key, (cast(const(TableEntry!Q)*) b.ptr).key);
+	assert(!same || hashTableEntry!Q(a) == hashTableEntry!Q(b), "doir.query: equal keys that hash differently");
+	return same;
 }
 
 // What a `QueryTable` keeps behind its lock.
@@ -164,6 +168,7 @@ struct QueryTable(Q) {
 		}
 		typeof(state.value.spareQueries).remapEntities(state.value.spareQueries, remap);
 		state.value.stale = true;
+		assert(state.value.table is null || fp.hashtable.valid(state.value.table), "doir.query: a query table that is not a table");
 	}
 
 	/// Releases the table when the component is removed.
@@ -182,6 +187,7 @@ struct QueryTable(Q) {
 		auto s = bc.monitor.write(state);
 		fp.hashtable.free(s.value.table);
 		s.value.spareQueries.finalize();
+		assert(s.value.table is null && s.value.spareQueries.related is null, "doir.query: a query table left holding memory");
 	}
 }
 
@@ -199,7 +205,7 @@ private struct Frame {
 	EntityId* reporting; // the queries this run demanded that hold diagnostics, or have one below them that does, in order, for `ReportingReads`
 }
 
-/// The depth of nested demands and re-validations a new engine allows before reporting `Q-Cycle`, well inside a default 8 MiB stack.
+/// The depth of nested demands and re-validations a new engine allows before reporting it (`IL-Chain`), well inside a default 8 MiB stack, and past the chain of answers that rule requires.
 enum size_t defaultDepthLimit = 4096;
 
 /// How many threads may demand on one engine over its life: each claims the queries it runs under an owner id of its own (`doir.components.query.Claim`).
@@ -228,7 +234,7 @@ package(doir) struct ChangeLog {
 struct QueryEngine {
 	ecrs.context.Context* store; /// The store, which must outlive the engine.
 	Revision revision = 1; /// The current revision.
-	size_t depthLimit = defaultDepthLimit; /// How deep demands may nest before `Q-Cycle` is reported instead of overflowing the stack.
+	size_t depthLimit = defaultDepthLimit; /// How deep demands may nest before `IL-Chain` is reported instead of overflowing the stack.
 	diagnose.Manager* diagnostics = null; /// Where reported diagnostics go, each once per revision; null discards them, though queries still record theirs.
 	/// Set when an allocation was refused: every query running at the time failed, keeping no value, or a diagnostic was lost on its way to `diagnostics`.
 	/// The engine never clears it.
@@ -254,6 +260,9 @@ struct QueryEngine {
 	/// Owner ids handed out, one per thread that demanded.
 	/// Accessed atomically.
 	package(doir) uint ownerIdsIssued;
+	/// The thread each owner id went to, by the address of its thread-local state, so a thread back from other engines takes its own id again.
+	/// Accessed atomically.
+	package(doir) size_t[maxThreads] ownerThreads;
 	/// The query each owner waits for, if any, which `waitForRunner` follows to find waits that loop.
 	/// Accessed atomically.
 	package(doir) EntityId[maxThreads + 1] waitingOn;
@@ -305,17 +314,31 @@ private void attach(ref QueryEngine engine) {
 	assert(fp.dynarray.length(local.stack) == 0, "doir.query: a demand on one engine inside a query of another");
 	uint self = 0;
 	foreach (id; ownerIds) if (id.serial == serial) self = id.self;
+	immutable cached = self != 0;
+	immutable thread = cast(size_t) &local;
+	if (self == 0) {
+		// Only the thread itself writes its slot, so one it took before is found whatever other threads add meanwhile.
+		immutable issued = core.atomic.atomicLoad(bc.platform.asShared(engine.ownerIdsIssued));
+		foreach (i; 0 .. issued < maxThreads ? issued : maxThreads)
+			if (core.atomic.atomicLoad(bc.platform.asShared(engine.ownerThreads[i])) == thread) self = cast(uint) (i + 1);
+	}
 	if (self == 0) {
 		self = core.atomic.atomicOp!"+="(bc.platform.asShared(engine.ownerIdsIssued), 1u);
 		// Checked in every build: past the bound, the id would index beyond `waitingOn`.
 		if (self > maxThreads) assert(0, "doir.query: more threads demanded on one engine than maxThreads");
+		core.atomic.atomicStore(bc.platform.asShared(engine.ownerThreads[self - 1]), thread);
+	}
+	if (!cached) {
 		ownerIds[nextOwnerId] = OwnerId(serial, self);
 		nextOwnerId = (nextOwnerId + 1) % ownerIds.length;
 	}
 	local = ThreadState(serial, self);
+	assert(self >= 1 && self <= maxThreads, "doir.query: an owner id outside 1 .. maxThreads");
+	assert(attached(engine), "doir.query: attached to an engine without matching its serial");
 }
 
 private bool attached(ref QueryEngine engine) {
+	assert(local.serial == 0 || local.self >= 1, "doir.query: a thread attached with no owner id");
 	return local.serial != 0 && local.serial == core.atomic.atomicLoad(bc.platform.asShared(engine.engineSerial));
 }
 
@@ -324,6 +347,7 @@ private bool attached(ref QueryEngine engine) {
 
 // Whether the calling thread shares `engine`'s gate: it is attached to `engine`, not only to an engine since freed or another one, and demanding.
 private bool sharing(ref QueryEngine engine) {
+	assert(!local.holding || local.serial != 0, "doir.query: holding the gate of no engine");
 	return attached(engine) && local.holding;
 }
 
@@ -354,6 +378,7 @@ package(doir) void beginExclusive(ref QueryEngine engine) {
 	exclusiveEngine = &engine;
 	bc.gate.beginExclusive(engine.gate, sharing(engine));
 	ecrs.context.beginExclusive(*engine.store);
+	assert(ecrs.context.inExclusive(*engine.store), "doir.query: an exclusive section the store does not know of");
 }
 
 /// Ditto
@@ -361,6 +386,7 @@ package(doir) void endExclusive(ref QueryEngine engine) {
 	assert(exclusiveDepth && exclusiveEngine is &engine, "doir.query: endExclusive without beginExclusive");
 	if (--exclusiveDepth) return;
 	exclusiveEngine = null;
+	assert(ecrs.context.inExclusive(*engine.store), "doir.query: ending an exclusive section the store does not know of");
 	ecrs.context.endExclusive(*engine.store);
 	bc.gate.endExclusive(engine.gate, sharing(engine));
 }
@@ -373,23 +399,27 @@ private bool tryRunAlone(ref QueryEngine engine) {
 }
 
 private void joinDemand(ref QueryEngine engine) {
+	assert(!local.holding, "doir.query: joining a demand this thread already makes");
 	attach(engine);
 	core.atomic.atomicOp!"+="(bc.platform.asShared(engine.demandingThreads), 1);
 	bc.gate.enterShared(engine.gate);
 	local.holding = true;
 	local.abandoned = false;
+	assert(sharing(engine), "doir.query: joined a demand without sharing the engine");
 }
 
 private void leaveDemand(ref QueryEngine engine) {
+	assert(sharing(engine), "doir.query: leaving a demand this thread does not make");
 	local.holding = false;
 	bc.gate.leaveShared(engine.gate);
 	core.atomic.atomicOp!"-="(bc.platform.asShared(engine.demandingThreads), 1);
-	assert(fp.dynarray.length(local.stack) == 0);
+	assert(fp.dynarray.length(local.stack) == 0, "doir.query: leaving a demand with queries still running");
 	fp.dynarray.free(local.stack);
 	local.stack = null;
 }
 
-// Brings stale queries up to date if no thread demands, keeping others out meanwhile. A failure is recorded in `edgesMissing`.
+// Brings stale queries up to date if no thread demands, keeping others out meanwhile.
+// A failure is recorded in `edgesMissing`.
 private void revalidateIfAlone(ref QueryEngine engine) {
 	if (core.atomic.atomicLoad(bc.platform.asShared(engine.staleQueued)) == 0 || !tryRunAlone(engine)) return;
 	joinDemand(engine);
@@ -401,15 +431,27 @@ private void revalidateIfAlone(ref QueryEngine engine) {
 
 // --- the running query -------------------------------------------------------
 
-// Whether the calling thread runs no query on `engine`.
-private bool runsNoQuery(ref QueryEngine engine) {
+/// Whether the calling thread runs no query on `engine`, as the entry points that must not run inside one assert.
+///
+/// Examples:
+/// ---
+/// static import ecrs.context;
+/// auto store = ecrs.context.create();
+/// scope(exit) ecrs.context.free(store);
+/// auto engine = create(store);
+/// scope(exit) free(engine);
+/// assert(runsNoQuery(engine));
+/// ---
+package(doir) bool runsNoQuery(ref QueryEngine engine) {
 	return !attached(engine) || fp.dynarray.length(local.stack) == 0;
 }
 
 private size_t frameOf(ref QueryEngine engine, EntityId q) {
+	assert(q != invalidEntity, "doir.query: the frame of no query");
 	if (runsNoQuery(engine)) return notRunning;
 	auto running = ecrs.context.findComponent!(doir.components.query.Claim)(*engine.store, q);
 	if (running is null || core.atomic.atomicLoad(bc.platform.asShared(running.owner)) != local.self) return notRunning;
+	assert(running.frame == notRunning || (running.frame < fp.dynarray.length(local.stack) && local.stack[running.frame].query == q), "doir.query: a claim naming a frame that runs another query");
 	return running.frame;
 }
 
@@ -444,12 +486,15 @@ void fail(ref QueryEngine engine) {
 
 // Gives up this thread's demand to break a wait cycle: its running queries fail without setting `engine.refused`, and it starts again.
 private void abandon(ref QueryEngine engine) {
+	assert(attached(engine) && local.holding, "doir.query: abandoning a demand this thread does not make");
 	local.abandoned = true;
 	foreach (ref frame; fp.dynarray.slice(local.stack)) frame.refused = true;
 }
 
 // Waits until no thread runs `q` (rustc's `QueryLatch`), outside the shared section; false if this thread gives up its demand to break a wait cycle.
 private bool waitForRunner(ref QueryEngine engine, EntityId q) {
+	assert(local.self >= 1 && local.self <= maxThreads, "doir.query: waiting with an owner id outside 1 .. maxThreads");
+	assert(core.atomic.atomicLoad(bc.platform.asShared(engine.waitingOn[local.self])) == invalidEntity, "doir.query: a thread waiting on two queries at once");
 	auto running = &ecrs.context.getComponent!(doir.components.query.Claim)(*engine.store, q);
 	core.atomic.atomicStore(bc.platform.asShared(engine.waitingOn[local.self]), q);
 	scope(exit) core.atomic.atomicStore(bc.platform.asShared(engine.waitingOn[local.self]), invalidEntity);
@@ -487,7 +532,10 @@ private bool waitForRunner(ref QueryEngine engine, EntityId q) {
 /// assert(currentQuery(engine) == invalidEntity);
 /// ---
 EntityId currentQuery(ref QueryEngine engine) {
-	return runsNoQuery(engine) ? invalidEntity : fp.dynarray.back(local.stack).query;
+	assert(runsNoQuery(engine) || local.holding, "doir.query: a query running on a thread that does not share the engine");
+	immutable q = runsNoQuery(engine) ? invalidEntity : fp.dynarray.back(local.stack).query;
+	assert(runsNoQuery(engine) || q != invalidEntity, "doir.query: a running frame for no query");
+	return q;
 }
 
 // How many of a query's latest reads `read` searches for a repeat.
@@ -529,8 +577,10 @@ bool read(ref QueryEngine engine, EntityId e) {
 	if (runsNoQuery(engine)) return true;
 	auto stack = local.stack;
 	immutable n = fp.dynarray.length(stack);
+	assert(n > 0 && n <= engine.depthLimit + 1, "doir.query: a stack deeper than the depth limit");
 	auto top = &stack[n - 1];
 	if (top.query == e) return true;
+	assert(e != invalidEntity, "doir.query: reading no entity");
 	for (;;) {
 		auto provisional = ecrs.context.findComponent!(doir.components.query.ProvisionalOn)(*engine.store, e);
 		if (provisional is null) break;
@@ -553,7 +603,10 @@ bool read(ref QueryEngine engine, EntityId e) {
 	auto recorded = fp.dynarray.slice(deps.related);
 	foreach (d; recorded[recorded.length > recentReads ? recorded.length - recentReads : 0 .. $])
 		if (d == e) return true;
-	if (fp.dynarray.pushBack(deps.related, e)) return true;
+	if (fp.dynarray.pushBack(deps.related, e)) {
+		assert(*fp.dynarray.back(deps.related) == e, "doir.query: a read recorded as another entity");
+		return true;
+	}
 	fail(engine);
 	return false;
 }
@@ -582,6 +635,7 @@ bool read(ref QueryEngine engine, EntityId e) {
 /// assert(*query!Get(engine, Get.Key([input]))); // checked again before it is reused
 /// ---
 void markReadersStale(ref QueryEngine engine, EntityId e) {
+	assert(e != invalidEntity, "doir.query: marking the readers of no entity");
 	auto lock = &bc.spinlock.striped.stripeFor(engine.entityLocks, e);
 	bc.spinlock.lockForReading(*lock);
 	scope(exit) bc.spinlock.unlockForReading(*lock);
@@ -589,13 +643,15 @@ void markReadersStale(ref QueryEngine engine, EntityId e) {
 	if (dependents is null) return;
 	foreach (q; fp.dynarray.slice(dependents.related)) {
 		auto verified = ecrs.context.findComponent!(doir.components.query.Verification)(*engine.store, q);
-		// One verified in this revision read its dependencies as they are now. Threads mark concurrently, so one claims each query.
+		// One verified in this revision read its dependencies as they are now.
+		// Threads mark concurrently, so one claims each query.
 		if (verified is null || core.atomic.atomicLoad(bc.platform.asShared(verified.revision)) == engine.revision || !core.atomic.cas(&bc.platform.asShared(verified.stale), false, true)) continue;
 		bool queued;
 		{
 			auto pending = bc.monitor.write(engine.staleQueue);
 			queued = fp.dynarray.pushBack(pending.value, q);
 			if (queued) core.atomic.atomicOp!"+="(bc.platform.asShared(engine.staleQueued), 1);
+			assert(!queued || *fp.dynarray.back(pending.value) == q, "doir.query: a stale query queued as another");
 		}
 		if (!queued) core.atomic.atomicStore(bc.platform.asShared(engine.edgesMissing), true);
 	}
@@ -633,6 +689,7 @@ void markReadersStale(ref QueryEngine engine, EntityId e) {
 bool recordOutput(ref QueryEngine engine, doir.components.query.Output item, bool unique) {
 	immutable q = currentQuery(engine);
 	assert(q != invalidEntity, "doir.query: writing a component outside a query");
+	assert(item.entity != invalidEntity && item.strip !is null && item.hash !is null, "doir.query: an output with no entity or no hooks");
 	auto produces = &ecrs.context.getForWriting!(doir.components.query.Outputs)(*engine.store, q);
 	if (!unique)
 		foreach (existing; fp.dynarray.slice(produces.items))
@@ -656,7 +713,9 @@ bool recordOutput(ref QueryEngine engine, doir.components.query.Output item, boo
 /// assert(!ecrs.context.hasComponent!int(store, e));
 /// ---
 package(doir) void removeOwnedComponent(ref ecrs.context.Context store, EntityId e, size_t component, EntityId owner) {
+	assert(!ecrs.context.inTransaction(store), "doir.query: stripping an output inside a transaction, where removal can fail");
 	if (ecrs.context.hasComponent(store, e, component)) cast(void) ecrs.context.removeComponent(store, e, component); // queries run outside transactions, where removal cannot fail
+	assert(!ecrs.context.hasComponent(store, e, component), "doir.query: an output that survived being stripped");
 }
 
 /// The `HashFunction` of a whole component `C`: `C.contentHash` if `C` declares one, its bytes otherwise, and 0 if `e` no longer has it.
@@ -689,11 +748,15 @@ private EntityId nextCreated(ref QueryEngine engine) {
 	auto frame = fp.dynarray.back(local.stack);
 	auto creates = &ecrs.context.getForWriting!(doir.components.query.CreatedEntities)(*engine.store, frame.query);
 	immutable sequence = frame.created++;
+	assert(sequence <= fp.dynarray.length(creates.related), "doir.query: a created entity skipped a sequence number");
 	if (sequence < fp.dynarray.length(creates.related)) return creates.related[sequence];
 	beginExclusive(engine);
 	immutable e = ecrs.context.addEntity(*engine.store);
 	endExclusive(engine);
-	if (e != invalidEntity && fp.dynarray.pushBack(creates.related, e)) return e;
+	if (e != invalidEntity && fp.dynarray.pushBack(creates.related, e)) {
+		assert(fp.dynarray.length(creates.related) == sequence + 1, "doir.query: a created entity recorded at the wrong sequence number");
+		return e;
+	}
 	if (e != invalidEntity) {
 		beginExclusive(engine);
 		cast(void) ecrs.context.removeEntity(*engine.store, e); // if refused, an orphan nothing reaches
@@ -703,9 +766,11 @@ private EntityId nextCreated(ref QueryEngine engine) {
 	return invalidEntity;
 }
 
-// Copies `d` to `engine.diagnostics`, the hint annotating `subject`, or as the closing note if unlocated. Refusal drops it and sets `engine.refused` without failing any query.
+// Copies `d` to `engine.diagnostics`, the hint annotating `subject`, or as the closing note if unlocated.
+// Refusal drops it and sets `engine.refused` without failing any query.
 private bool sendToManager(ref QueryEngine engine, ref const doir.components.query.QueryDiagnostic d) {
 	if (engine.diagnostics is null) return true;
+	assert(fp.string.length(d.message) > 0, "doir.query: a diagnostic with no message");
 	diagnose.Diagnostic out_;
 	out_.kind = d.kind;
 	auto location = doir.engine.locations.locate(*engine.store, d.subject);
@@ -737,6 +802,7 @@ private bool sendToManager(ref QueryEngine engine, ref const doir.components.que
 		if (!ok) fp.string.free(annotation.message);
 	}
 	if (ok) {
+		assert(location.isNull || d.hint is null || fp.dynarray.length(out_.annotations) >= 1, "doir.query: a located diagnostic that lost its hint's annotation");
 		bc.spinlock.lockForWriting(engine.diagnosticsLock);
 		immutable pushed = diagnose.push(*engine.diagnostics, out_) !is null;
 		bc.spinlock.unlockForWriting(engine.diagnosticsLock);
@@ -747,8 +813,10 @@ private bool sendToManager(ref QueryEngine engine, ref const doir.components.que
 	return false;
 }
 
-// Stores `d`, taken over, on the running query, or outside one reports and frees it. A refusal frees it and fails the running queries.
+// Stores `d`, taken over, on the running query, or outside one reports and frees it.
+// A refusal frees it and fails the running queries.
 private bool recordDiagnostic(ref QueryEngine engine, doir.components.query.QueryDiagnostic d) {
+	assert(d.message !is null, "doir.query: recording a diagnostic with no message");
 	immutable q = currentQuery(engine);
 	if (q == invalidEntity) {
 		immutable emitted = sendToManager(engine, d);
@@ -764,8 +832,10 @@ private bool recordDiagnostic(ref QueryEngine engine, doir.components.query.Quer
 
 // --- running and validating queries ------------------------------------------
 
-// Adds `q` to the `ReadBy` of `from` behind its lock, or drops it; a new list waits for the exclusive section. False on refusal.
+// Adds `q` to the `ReadBy` of `from` behind its lock, or drops it; a new list waits for the exclusive section.
+// False on refusal.
 private bool applyEdge(ref QueryEngine engine, EntityId from, EntityId q, bool added) {
+	assert(from != invalidEntity && q != invalidEntity, "doir.query: an edge to or from no entity");
 	if (added && !ecrs.context.hasComponent!(doir.components.query.ReadBy)(*engine.store, from)) {
 		beginExclusive(engine);
 		immutable made = ecrs.context.ensureComponent!(doir.components.query.ReadBy)(*engine.store, from) !is null;
@@ -776,6 +846,7 @@ private bool applyEdge(ref QueryEngine engine, EntityId from, EntityId q, bool a
 	bc.spinlock.lockForWriting(*lock);
 	scope(exit) bc.spinlock.unlockForWriting(*lock);
 	auto list = ecrs.context.findForWriting!(doir.components.query.ReadBy)(*engine.store, from);
+	assert(!added || list !is null, "doir.query: adding an edge to a list that was not made");
 	if (added) return fp.dynarray.pushBack(list.related, q);
 	if (list is null) return true;
 	auto items = fp.dynarray.slice(list.related);
@@ -802,9 +873,12 @@ private struct BuildShare {
 
 // Counts the share's edges per entity first, so each `ReadBy` is found and sized once rather than once per edge.
 private bool buildShare(ref QueryEngine engine, ref BuildShare share) @trusted {
+	assert(share.part < share.parts && share.queries.length == share.reads.length, "doir.query: a share past its partition count, or reads that miss queries");
+	assert(share.counts.length == share.lists.length, "doir.query: edge counts and lists that disagree");
+	// As in `recordEdges`, a read renumbered to `invalidEntity` needs no edge.
 	foreach (i; 0 .. share.queries.length)
 		foreach (d; share.reads[i])
-			if (d % share.parts == share.part) ++share.counts[d];
+			if (d != invalidEntity && d % share.parts == share.part) ++share.counts[d];
 	// Each list grows to its final length here; `counts` then holds where its next edge goes.
 	for (size_t d = share.part; d < share.counts.length; d += share.parts) {
 		if (share.counts[d] == 0) continue;
@@ -816,7 +890,9 @@ private bool buildShare(ref QueryEngine engine, ref BuildShare share) @trusted {
 	}
 	foreach (i, q; share.queries)
 		foreach (d; share.reads[i])
-			if (d % share.parts == share.part) share.lists[d].related[share.counts[d]++] = q;
+			if (d != invalidEntity && d % share.parts == share.part) share.lists[d].related[share.counts[d]++] = q;
+	for (size_t d = share.part; d < share.counts.length; d += share.parts)
+		assert(share.lists[d] is null || share.counts[d] == fp.dynarray.length(share.lists[d].related), "doir.query: an edge list not filled to the length it was sized for");
 	return true;
 }
 
@@ -875,8 +951,10 @@ bool buildDependents(ref QueryEngine engine) @trusted {
 	immutable workers = engine.workers is null ? 1 : bc.threadpool.workerCount(engine.workers);
 	immutable n = fp.dynarray.length(queries);
 	// The shares' partitions are disjoint, so `parallel` running them inline, as it does when the pool cannot take them, builds the same edges.
-	if (total >= parallelEdges && workers >= 2 && ecrs.context.reserveConcurrentAdds!(doir.components.query.ReadBy)(*store, total)
-		&& fp.dynarray.reserve(shares, workers) !is null) {
+	immutable reserved = total >= parallelEdges && workers >= 2 && ecrs.context.reserveConcurrentAdds!(doir.components.query.ReadBy)(*store, total);
+	// Building inline after a refused share list must not take the reserved slots, which only concurrent writes count.
+	if (reserved && fp.dynarray.reserve(shares, workers) is null) ecrs.context.cancelConcurrentAdds(*store);
+	else if (reserved) {
 		foreach (w; 0 .. workers)
 			cast(void) fp.dynarray.pushBack(shares, BuildShare(queries[0 .. n], reads[0 .. n], counts[0 .. bound], lists[0 .. bound], w, workers)); // reserved
 		immutable ok = ecrs.schedules.concurrentWrites(engine, ecrs.schedules.parallel!buildShare(engine.workers, fp.dynarray.slice(shares)));
@@ -889,13 +967,15 @@ bool buildDependents(ref QueryEngine engine) @trusted {
 	return ok;
 }
 
-// Updates `q`'s reverse edges from `before`, its previous run's reads, which this sorts, to its latest. Refusal sets `edgesMissing`.
+// Updates `q`'s reverse edges from `before`, its previous run's reads, which this sorts, to its latest.
+// Refusal sets `edgesMissing`.
 private void recordEdges(ref QueryEngine engine, EntityId q, EntityId[] before) @trusted {
 	if (core.atomic.atomicLoad(bc.platform.asShared(engine.edgesMissing))) return; // `buildDependents` builds them from scratch
 	auto now = fp.dynarray.slice(ecrs.context.getComponent!(doir.components.query.Reads)(*engine.store, q).related);
 	bool ok = true;
 	void edge(EntityId from, bool added) {
-		if (ok) ok = applyEdge(engine, from, q, added);
+		// A read of an entity compaction freed was renumbered to `invalidEntity`, which never changes, so needs no edge.
+		if (ok && from != invalidEntity) ok = applyEdge(engine, from, q, added);
 	}
 	EntityId* sorted = null;
 	scope(exit) fp.dynarray.free(sorted);
@@ -917,18 +997,24 @@ private void recordEdges(ref QueryEngine engine, EntityId q, EntityId[] before) 
 		}
 	}
 	if (!ok) core.atomic.atomicStore(bc.platform.asShared(engine.edgesMissing), true);
+	foreach (i; 1 .. before.length) assert(!ok || before[i - 1] <= before[i], "doir.query: previous reads left unsorted");
 }
 
 private void removeProduced(ref QueryEngine engine, EntityId q) {
 	auto produces = &ecrs.context.getForWriting!(doir.components.query.Outputs)(*engine.store, q);
 	if (fp.dynarray.length(produces.items) == 0) return;
 	beginExclusive(engine);
-	foreach (item; fp.dynarray.slice(produces.items)) item.strip(*engine.store, item.entity, item.component, q);
+	foreach (item; fp.dynarray.slice(produces.items)) {
+		assert(item.strip !is null, "doir.query: an output with no way to strip it");
+		item.strip(*engine.store, item.entity, item.component, q);
+	}
 	endExclusive(engine);
 	fp.dynarray.clear(produces.items);
+	assert(fp.dynarray.length(produces.items) == 0, "doir.query: outputs left after removing them");
 }
 
 private size_t hashProduced(ref QueryEngine engine, EntityId q) {
+	assert(q != invalidEntity, "doir.query: hashing the outputs of no query");
 	size_t h = 0xcbf29ce484222325;
 	foreach (item; fp.dynarray.slice(ecrs.context.getComponent!(doir.components.query.Outputs)(*engine.store, q).items)) {
 		h = fp.algorithms.combine(h, item.entity);
@@ -942,7 +1028,8 @@ private size_t hashProduced(ref QueryEngine engine, EntityId q) {
 	return h;
 }
 
-// Removes the entities past `keep`, which the latest run no longer created. One the store refuses to free stays listed for later reuse or removal.
+// Removes the entities past `keep`, which the latest run no longer created.
+// One the store refuses to free stays listed for later reuse or removal.
 private void removeCreated(ref QueryEngine engine, EntityId q, size_t keep) {
 	auto creates = &ecrs.context.getComponent!(doir.components.query.CreatedEntities)(*engine.store, q);
 	if (fp.dynarray.length(creates.related) <= keep) return;
@@ -950,23 +1037,29 @@ private void removeCreated(ref QueryEngine engine, EntityId q, size_t keep) {
 	while (fp.dynarray.length(creates.related) > keep && ecrs.context.removeEntity(*engine.store, *fp.dynarray.back(creates.related)))
 		cast(void) fp.dynarray.removeLast(creates.related);
 	endExclusive(engine);
+	assert(fp.dynarray.length(creates.related) >= keep, "doir.query: removed entities the latest run still created");
 }
 
 private void clearDiagnostics(ref QueryEngine engine, EntityId q) {
+	assert(q != invalidEntity, "doir.query: clearing the diagnostics of no query");
 	auto list = &ecrs.context.getForWriting!(doir.components.query.QueryDiagnostics)(*engine.store, q);
 	foreach (ref d; fp.dynarray.slice(list.items)) doir.components.query.freeDiagnostic(d);
 	if (list.items !is null) fp.dynarray.clear(list.items);
+	assert(fp.dynarray.length(list.items) == 0, "doir.query: diagnostics left after clearing them");
 }
 
 // Reports `q`'s diagnostics, or while withholding marks `q` withheld if it or one below it, as `below` says, has any.
 private void emitAll(ref QueryEngine engine, EntityId q, bool below) {
+	assert(q != invalidEntity, "doir.query: reporting the diagnostics of no query");
 	auto list = fp.dynarray.slice(ecrs.context.getComponent!(doir.components.query.QueryDiagnostics)(*engine.store, q).items);
 	immutable withhold = deferringReports || engine.settling;
 	core.atomic.atomicStore(bc.platform.asShared(ecrs.context.getComponent!(doir.components.query.Claim)(*engine.store, q).reportsDeferred), withhold && (below || list.length));
 	if (withhold) return;
+	assert(!core.atomic.atomicLoad(bc.platform.asShared(ecrs.context.getComponent!(doir.components.query.Claim)(*engine.store, q).reportsDeferred)), "doir.query: reporting diagnostics still marked withheld");
 	foreach (ref d; list) cast(void) sendToManager(engine, d); // a lost diagnostic is recorded in engine.refused
 }
 
+// bounded: `engine.depthLimit`, past which no query runs, so no chain of readers is longer
 // Reports in serial order what was withheld at `q` and below it; one thread takes each withheld query, so none repeats.
 private void flushWithheld(ref QueryEngine engine, EntityId q) {
 	auto running = ecrs.context.findComponent!(doir.components.query.Claim)(*engine.store, q);
@@ -977,11 +1070,13 @@ private void flushWithheld(ref QueryEngine engine, EntityId q) {
 	emitAll(engine, q, false);
 }
 
-// Rehashes a table a renumbering left stale. Returns false if the rehash was refused, leaving it stale.
+// Rehashes a table a renumbering left stale, keeping one entry of keys it mapped together, as those naming removed entities all are.
+// Returns false if the rehash was refused, leaving it stale.
 private bool rehashIfStale(Q)(ref TableState!Q table) {
 	if (!table.stale) return true;
-	if (!fp.hashtable.rehash(table.table, 0)) return false;
+	if (!fp.hashtable.rehash(table.table, 0, true)) return false;
 	table.stale = false;
+	assert(fp.hashtable.validate(table.table), "doir.query: a rehashed query table that breaks its invariants");
 	return true;
 }
 
@@ -1012,7 +1107,9 @@ package(doir) EntityId find(Q)(ref QueryEngine engine, const Q.Key key) @trusted
 	// A rehash refused leaves the table to be searched.
 	auto state = bc.monitor.write(table.state);
 	cast(void) rehashIfStale!Q(state.value);
-	return lookup!Q(state.value, key);
+	immutable q = lookup!Q(state.value, key);
+	assert(q == invalidEntity || ecrs.context.hasComponent!(doir.components.query.QueryKey!Q)(*engine.store, q), "doir.query: a table entry naming an entity that is not a query of its type");
+	return q;
 }
 
 // The query entity at `key` in `table`, whose lock the caller holds.
@@ -1027,11 +1124,15 @@ private EntityId lookup(Q)(ref const TableState!Q table, ref const Q.Key key) @t
 				found = stored;
 				break;
 			}
+	assert(found is null || keysEqual!Q(found.key, key), "doir.query: found an entry under another key");
 	return found is null ? invalidEntity : found.query;
 }
 
 private bool appendDescription(Q)(ref QueryEngine engine, EntityId q, ref char* out_) @trusted {
+	assert(ecrs.context.hasComponent!(doir.components.query.QueryKey!Q)(*engine.store, q), "doir.query: describing an entity that is not a query of this type");
+	immutable before = fp.string.length(out_);
 	if (!fp.string.concatenate(out_, __traits(identifier, Q))) return false;
+	assert(fp.string.length(out_) > before, "doir.query: a description that named nothing");
 	auto key = &ecrs.context.getComponent!(doir.components.query.QueryKey!Q)(*engine.store, q).key;
 	static if (__traits(hasMember, Q, "describeKey")) {
 		return Q.describeKey(*key, out_);
@@ -1045,7 +1146,8 @@ private bool appendDescription(Q)(ref QueryEngine engine, EntityId q, ref char* 
 	} else return true;
 }
 
-// The table of `Q`'s query entities, made in the exclusive section on its first use. Null on a refused allocation.
+// The table of `Q`'s query entities, made in the exclusive section on its first use.
+// Null on a refused allocation.
 private QueryTable!Q* tableFor(Q)(ref QueryEngine engine) @trusted {
 	if (auto table = ecrs.context.findSingletonForWriting!(QueryTable!Q)(*engine.store)) return table;
 	beginExclusive(engine);
@@ -1062,6 +1164,7 @@ private QueryTable!Q* tableFor(Q)(ref QueryEngine engine) @trusted {
 		return null;
 	}
 	bc.monitor.write(table.state).value.table = fresh;
+	assert(ecrs.context.findSingletonForWriting!(QueryTable!Q)(*engine.store) is table, "doir.query: a second table for one query type");
 	return table;
 }
 
@@ -1069,11 +1172,12 @@ private void noteStale(Q)(ref QueryEngine engine, EntityId q) {
 	Q.onStale(engine, ecrs.context.getComponent!(doir.components.query.QueryKey!Q)(*engine.store, q).key);
 }
 
-// Adds a query entity of `Q` with every component, its key left for the add taking it. Exclusive section only; `invalidEntity` on refusal.
-private EntityId addSpareQuery(Q)(ref QueryEngine engine) {
+// Makes new entity `q` a query entity of `Q` with every component, its key left for the add taking it.
+// Exclusive section only; on refusal removes `q` and returns false.
+private bool addSpareQuery(Q)(ref QueryEngine engine, EntityId q) {
+	assert(ecrs.context.inExclusive(*engine.store), "doir.query: making spare queries outside the exclusive section");
+	assert(q != invalidEntity && !ecrs.context.hasComponent!(doir.components.query.QueryKey!Q)(*engine.store, q), "doir.query: making a spare of no entity, or of a query already");
 	auto store = engine.store;
-	immutable q = ecrs.context.addEntity(*store);
-	if (q == invalidEntity) return invalidEntity;
 	auto info = ecrs.context.addComponent!(doir.components.query.QueryKey!Q)(*store, q) is null ? null : ecrs.context.addComponent!(doir.components.query.Hooks)(*store, q);
 	static if (__traits(hasMember, Q, "onStale")) enum stale = &noteStale!Q;
 	else enum doir.components.query.StaleFunction stale = null;
@@ -1088,15 +1192,16 @@ private EntityId addSpareQuery(Q)(ref QueryEngine engine) {
 		&& ecrs.context.addComponent!(doir.components.query.QueryDiagnostics)(*store, q) !is null
 		&& ecrs.context.addComponent!(doir.components.query.Claim)(*store, q) !is null
 		&& ecrs.context.addComponent!(doir.components.query.QueryValue!Q)(*store, q) !is null)
-		return q;
+		return true;
 	cast(void) ecrs.context.removeEntity(*store, q); // if refused, an orphan nothing reaches
-	return invalidEntity;
+	return false;
 }
 
 // The most spares one batch makes; each batch doubles the last, so adding n query entities of one type takes about log n exclusive sections.
 private enum size_t maxSpares = 4096;
 
-// The query entity of `Q` at `key`, or a spare taking it, a batch of spares being made when none is left. `invalidEntity` on refusal.
+// The query entity of `Q` at `key`, or a spare taking it, a batch of spares being made when none is left.
+// `invalidEntity` on refusal.
 private EntityId findOrAdd(Q)(ref QueryEngine engine, ref const Q.Key key) @trusted {
 	immutable found = find!Q(engine, key);
 	if (found != invalidEntity) return found;
@@ -1111,28 +1216,36 @@ private EntityId findOrAdd(Q)(ref QueryEngine engine, ref const Q.Key key) @trus
 			if (raced != invalidEntity) return raced;
 			if (fp.dynarray.length(state.value.spareQueries.related) != 0) {
 				immutable q = *fp.dynarray.back(state.value.spareQueries.related);
+				assert(q != invalidEntity, "doir.query: a spare query that was removed");
 				ecrs.context.getForWriting!(doir.components.query.QueryKey!Q)(*engine.store, q).key = key;
 				// An entry whose query a renumbering removed is reused.
 				if (auto dead = fp.hashtable.find(state.value.table, TableEntry!Q([invalidEntity], key))) dead.related[0] = q;
 				else if (fp.hashtable.insert(state.value.table, TableEntry!Q([q], key)) is null) return invalidEntity;
 				cast(void) fp.dynarray.removeLast(state.value.spareQueries.related);
+				assert(lookup!Q(state.value, key) == q, "doir.query: a query added that its key does not find");
 				return q;
 			}
 			immutable last = state.value.lastSpareBatch;
 			n = last == 0 ? 1 : (2 * last < maxSpares ? 2 * last : maxSpares);
+			assert(n >= 1 && n <= maxSpares, "doir.query: a spare batch outside 1 .. maxSpares");
 			state.value.lastSpareBatch = n;
 		}
 		// The table's lock is released first: a thread waiting on it would hold the shared section, which `beginExclusive` waits for.
 		beginExclusive(engine);
+		// Never a freed id: one a query read as an input may still be listed in its `Reads`, and must not answer as a query.
+		immutable first = ecrs.context.addEntities(*engine.store, n);
 		size_t made = 0;
-		for (; made < n; ++made) {
-			immutable q = addSpareQuery!Q(engine);
-			if (q == invalidEntity) break;
+		for (; first != invalidEntity && made < n; ++made) {
+			immutable q = cast(EntityId) (first + made);
+			if (!addSpareQuery!Q(engine, q)) break;
 			if (!fp.dynarray.pushBack(bc.monitor.write(table.state).value.spareQueries.related, q)) {
 				cast(void) ecrs.context.removeEntity(*engine.store, q); // if refused, an orphan nothing reaches
 				break;
 			}
 		}
+		// The batch's ids past the one that failed were never made into queries.
+		if (first != invalidEntity)
+			foreach (unused; made + 1 .. n) cast(void) ecrs.context.removeEntity(*engine.store, cast(EntityId) (first + unused)); // if refused, an orphan nothing reaches
 		endExclusive(engine);
 		if (made == 0) return invalidEntity;
 	}
@@ -1144,8 +1257,11 @@ package(doir) enum cycleHint = "each query in the chain needs the next; break th
 /// How to fix demands nested past the depth limit, the closing note of its report.
 package(doir) enum depthHint = "nest these declarations or imports less deeply, or raise the engine's depth limit";
 
-// Records a `Q-Cycle` error naming the frames from `from` up and back. On refusal returns false, failing the running queries so none memoizes without it.
+// Records a `Q-Cycle` error naming the frames from `from` up and back.
+// On refusal returns false, failing the running queries so none memoizes without it.
 private bool reportChain(ref QueryEngine engine, const(char)[] headline, size_t from) {
+	assert(from < fp.dynarray.length(local.stack), "doir.query: a chain starting past the running queries");
+	assert(headline.length > 0, "doir.query: a chain with no headline");
 	auto copiedHeadline = fp.string.clone(headline);
 	if (copiedHeadline.isNull) {
 		fail(engine);
@@ -1167,9 +1283,11 @@ private bool reportChain(ref QueryEngine engine, const(char)[] headline, size_t 
 	return false;
 }
 
-// Records a `Q-Cycle` error for demands nested past the depth limit at `q`, failing the running queries on a refused allocation as `reportChain` does.
+// Records an `IL-Chain` error for demands nested past the depth limit at `q`, failing the running queries on a refused allocation as `reportChain` does.
 private void reportDepth(ref QueryEngine engine, EntityId q) {
-	auto copiedMessage = fp.string.format("Q-Cycle: queries nest deeper than the limit of %llu at ", cast(ulong) engine.depthLimit);
+	assert(fp.dynarray.length(local.stack) >= engine.depthLimit, "doir.query: reporting the depth limit before it was reached");
+	assert(q != invalidEntity, "doir.query: the depth limit reached at no query");
+	auto copiedMessage = fp.string.format("IL-Chain: queries nest deeper than the limit of %llu at ", cast(ulong) engine.depthLimit);
 	if (copiedMessage.isNull) {
 		fail(engine);
 		return;
@@ -1225,7 +1343,8 @@ package(doir) bool running(ref QueryEngine engine, EntityId q) {
 /// ---
 package(doir) bool reportRunning(ref QueryEngine engine, EntityId q) {
 	immutable h = frameOf(engine, q);
-	assert(h != notRunning);
+	assert(h != notRunning, "doir.query: reporting a cycle through a query this thread does not run");
+	assert(h < fp.dynarray.length(local.stack), "doir.query: a cycle's frame past the running queries");
 	if (deferringReports) {
 		abandon(engine);
 		return false;
@@ -1234,9 +1353,11 @@ package(doir) bool reportRunning(ref QueryEngine engine, EntityId q) {
 	return reportChain(engine, "Q-Cycle: a read needs an effect of a query that is still running: ", h);
 }
 
-// True if no dependency changed since `q` was verified, refreshing dependencies first (early cutoff); sets `withheld` and appends deferred diagnostics to `reporting`. False on refusal.
+// True if no dependency changed since `q` was verified, refreshing dependencies first (early cutoff); sets `withheld` and appends deferred diagnostics to `reporting`.
+// False on refusal.
 private bool dependenciesUnchanged(ref QueryEngine engine, EntityId q, ref bool withheld, ref EntityId* reporting) {
 	immutable verified = ecrs.context.getComponent!(doir.components.query.Verification)(*engine.store, q).revision;
+	assert(verified != 0 && verified <= engine.revision, "doir.query: checking the dependencies of a query never verified, or verified in the future");
 	immutable n = fp.dynarray.length(ecrs.context.getComponent!(doir.components.query.Reads)(*engine.store, q).related);
 	foreach (i; 0 .. n) {
 		immutable d = ecrs.context.getComponent!(doir.components.query.Reads)(*engine.store, q).related[i];
@@ -1248,12 +1369,14 @@ private bool dependenciesUnchanged(ref QueryEngine engine, EntityId q, ref bool 
 		}
 		auto changed = ecrs.context.findComponent!(doir.components.query.ChangedAt)(*engine.store, d);
 		if (changed !is null && core.atomic.atomicLoad(bc.platform.asShared(changed.revision)) > verified) return false;
+		assert(changed is null || core.atomic.atomicLoad(bc.platform.asShared(changed.revision)) <= engine.revision, "doir.query: an entity changed in a revision not yet begun");
 	}
 	return true;
 }
 
 // Whether `q` is current without checking dependencies: run before, not stale, no edge missing, not in a cycle; reuse still walks its diagnostics (`ReportingReads`).
 private bool reusableUnchecked(ref QueryEngine engine, EntityId q) {
+	assert(q != invalidEntity, "doir.query: reusing no query");
 	auto verified = &ecrs.context.getComponent!(doir.components.query.Verification)(*engine.store, q);
 	return core.atomic.atomicLoad(bc.platform.asShared(verified.revision)) != 0 && !core.atomic.atomicLoad(bc.platform.asShared(verified.stale))
 		&& !core.atomic.atomicLoad(bc.platform.asShared(engine.edgesMissing)) && !ecrs.context.hasComponent!(doir.components.query.InCycle)(*engine.store, q);
@@ -1264,8 +1387,10 @@ private bool reusableSilently(ref QueryEngine engine, EntityId q) {
 	return reusableUnchecked(engine, q) && !core.atomic.atomicLoad(bc.platform.asShared(ecrs.context.getComponent!(doir.components.query.Verification)(*engine.store, q).reportsBelow));
 }
 
-// Records `q` current in this revision with `reporting` as its `ReportingReads`; the caller frees the list it replaced. The revision is released last.
+// Records `q` current in this revision with `reporting` as its `ReportingReads`; the caller frees the list it replaced.
+// The revision is released last.
 private void markVerified(ref QueryEngine engine, EntityId q, ref EntityId* reporting) {
+	assert(engine.revision != 0, "doir.query: verifying in revision 0, which reads as never verified");
 	auto verified = &ecrs.context.getComponent!(doir.components.query.Verification)(*engine.store, q);
 	auto list = &ecrs.context.getForWriting!(doir.components.query.ReportingReads)(*engine.store, q).related;
 	auto old = *list;
@@ -1280,6 +1405,7 @@ private void markVerified(ref QueryEngine engine, EntityId q, ref EntityId* repo
 	if (flipped) markReadersStale(engine, q);
 	core.atomic.atomicStore(bc.platform.asShared(verified.stale), false);
 	core.atomic.atomicStore(bc.platform.asShared(verified.revision), engine.revision);
+	assert(core.atomic.atomicLoad(bc.platform.asShared(verified.reports)) == reports, "doir.query: whether a query reports changed under its verification");
 }
 
 private void clearProvisional(ref QueryEngine engine, EntityId p) {
@@ -1287,11 +1413,14 @@ private void clearProvisional(ref QueryEngine engine, EntityId p) {
 	beginExclusive(engine);
 	cast(void) ecrs.context.removeComponent!(doir.components.query.ProvisionalOn)(*engine.store, p);
 	endExclusive(engine);
+	assert(!ecrs.context.hasComponent!(doir.components.query.ProvisionalOn)(*engine.store, p), "doir.query: a provisional mark that survived clearing");
 }
 
-// Settles queries resting on `self`'s fallback, moving those a lower fallback still holds up. Returns false on refusal, discarding any it could not move.
+// Settles queries resting on `self`'s fallback, moving those a lower fallback still holds up.
+// Returns false on refusal, discarding any it could not move.
 private bool settleProvisional(ref QueryEngine engine, ref Frame self, size_t index, bool fallbackHeld) {
 	if (!self.usedAsHead) return true;
+	assert(self.head == notRunning || self.head <= index, "doir.query: a frame whose head is above it");
 	bool moved = true;
 	immutable lower = self.head < index;
 	foreach (p; fp.dynarray.slice(self.provisional)) {
@@ -1307,8 +1436,10 @@ private bool settleProvisional(ref QueryEngine engine, ref Frame self, size_t in
 	return moved;
 }
 
-// Marks `q` provisional if it rests on a lower frame's fallback, and tags it if its run joined a cycle. Returns false on refusal.
+// Marks `q` provisional if it rests on a lower frame's fallback, and tags it if its run joined a cycle.
+// Returns false on refusal.
 private bool markCycle(ref QueryEngine engine, EntityId q, ref Frame self, size_t index) {
+	assert(self.query == q, "doir.query: marking a cycle on a frame of another query");
 	if (self.head < index) {
 		auto head = &local.stack[self.head];
 		beginExclusive(engine);
@@ -1330,9 +1461,29 @@ private bool markCycle(ref QueryEngine engine, EntityId q, ref Frame self, size_
 	return true;
 }
 
-// Runs `q`, claimed by this thread, and stores its value. False, leaving `q` reset, if a refused allocation failed the run.
+// Stores `value`, taken over, as `q`'s; if it or what `q` produced changed (early cutoff), records the revision and marks `q`'s readers stale.
+private void storeValue(Q)(ref QueryEngine engine, EntityId q, ref Q.Value value, bool fresh) {
+	auto store = engine.store;
+	auto stored = &ecrs.context.getForWriting!(doir.components.query.QueryValue!Q)(*store, q);
+	immutable hash = hashProduced(engine, q);
+	auto produces = &ecrs.context.getForWriting!(doir.components.query.Outputs)(*store, q);
+	bool changed = fresh || produces.hash != hash;
+	produces.hash = hash;
+	if (fresh || !valuesEqual!Q(stored.value, value)) {
+		fp.lifecycle.moveInto(stored.value, value);
+		changed = true;
+	} else fp.lifecycle.endLifetime(value);
+	if (!changed) return;
+	core.atomic.atomicStore(bc.platform.asShared(ecrs.context.getForWriting!(doir.components.query.ChangedAt)(*store, q).revision), engine.revision);
+	markReadersStale(engine, q);
+}
+
+// Runs `q`, claimed by this thread, and stores its value.
+// False, leaving `q` reset, if a refused allocation failed the run.
 private bool execute(Q)(ref QueryEngine engine, EntityId q) {
 	auto store = engine.store;
+	assert(frameOf(engine, q) == notRunning, "doir.query: running a query that is already running");
+	assert(core.atomic.atomicLoad(bc.platform.asShared(ecrs.context.getComponent!(doir.components.query.Claim)(*store, q).owner)) == local.self, "doir.query: running a query this thread has not claimed");
 	removeProduced(engine, q);
 	clearDiagnostics(engine, q);
 	clearProvisional(engine, q);
@@ -1351,9 +1502,11 @@ private bool execute(Q)(ref QueryEngine engine, EntityId q) {
 		return false;
 	}
 	auto running = &ecrs.context.getForWriting!(doir.components.query.Claim)(*store, q);
-	running.frame = fp.dynarray.length(local.stack) - 1;
+	immutable ownFrame = fp.dynarray.length(local.stack) - 1;
+	running.frame = ownFrame;
 	auto key = ecrs.context.getComponent!(doir.components.query.QueryKey!Q)(*store, q).key;
 	auto value = Q.compute(engine, key);
+	assert(fp.dynarray.length(local.stack) == ownFrame + 1 && fp.dynarray.back(local.stack).query == q, "doir.query: a query's frame was not on top when it returned");
 	auto frame = *fp.dynarray.back(local.stack);
 	scope(exit) fp.dynarray.free(frame.reporting); // or the list `markVerified` replaced with it
 	cast(void) fp.dynarray.removeLast(local.stack);
@@ -1372,22 +1525,12 @@ private bool execute(Q)(ref QueryEngine engine, EntityId q) {
 		reset!Q(engine, q);
 		return false;
 	}
+	assert(frame.query == q && index == ownFrame, "doir.query: a frame popped for another query, or at another depth");
 	removeCreated(engine, q, frame.created);
 	recordEdges(engine, q, fp.dynarray.slice(before));
-	auto stored = &ecrs.context.getForWriting!(doir.components.query.QueryValue!Q)(*store, q);
-	immutable hash = hashProduced(engine, q);
-	auto produces = &ecrs.context.getForWriting!(doir.components.query.Outputs)(*store, q);
-	bool changed = fresh || produces.hash != hash;
-	produces.hash = hash;
-	if (fresh || !valuesEqual!Q(stored.value, value)) {
-		fp.lifecycle.moveInto(stored.value, value);
-		changed = true;
-	} else fp.lifecycle.endLifetime(value);
-	if (changed) {
-		core.atomic.atomicStore(bc.platform.asShared(ecrs.context.getForWriting!(doir.components.query.ChangedAt)(*store, q).revision), engine.revision);
-		markReadersStale(engine, q);
-	}
+	storeValue!Q(engine, q, value, fresh);
 	markVerified(engine, q, frame.reporting);
+	assert(core.atomic.atomicLoad(bc.platform.asShared(ecrs.context.getComponent!(doir.components.query.Verification)(*store, q).revision)) == engine.revision, "doir.query: a run that left its query unverified");
 
 	bool fallbackHeld = true;
 	static if (__traits(hasMember, Q, "cycleFallback"))
@@ -1402,16 +1545,19 @@ private bool execute(Q)(ref QueryEngine engine, EntityId q) {
 		return false;
 	}
 	emitAll(engine, q, frame.reportsDeferredBelow);
+	assert(!ecrs.context.hasComponent!(doir.components.query.ProvisionalOn)(*store, q) || frame.head < index, "doir.query: a query marked provisional that rests on no lower fallback");
 	return true;
 }
 
 // A query verified in this revision is reused; one withholding nothing reports what other threads withheld below it.
 private bool flushReusedReports(ref QueryEngine engine, EntityId q) {
+	assert(core.atomic.atomicLoad(bc.platform.asShared(ecrs.context.getComponent!(doir.components.query.Verification)(*engine.store, q).revision)) == engine.revision, "doir.query: reusing a query not verified in this revision");
 	if (!deferringReports && !engine.settling) flushWithheld(engine, q);
 	return true;
 }
 
-// Brings `q` up to date, claiming it or waiting for its runner. False if this thread runs it, past the depth limit, or failing.
+// Brings `q` up to date, claiming it or waiting for its runner.
+// False if this thread runs it, past the depth limit, or failing.
 private bool bringUpToDate(Q)(ref QueryEngine engine, EntityId q) {
 	if (frameOf(engine, q) != notRunning) return false;
 	auto store = engine.store;
@@ -1448,6 +1594,7 @@ private bool bringUpToDate(Q)(ref QueryEngine engine, EntityId q) {
 		reportDepth(engine, q);
 		return false;
 	}
+	assert(local.depth < engine.depthLimit, "doir.query: validating past the depth limit");
 	++local.depth;
 	scope(exit) --local.depth;
 	// Current, so nothing it read changed: only the queries below it holding diagnostics are visited, to report them in order.
@@ -1468,13 +1615,15 @@ private bool bringUpToDate(Q)(ref QueryEngine engine, EntityId q) {
 	if (ecrs.context.getComponent!(doir.components.query.Verification)(*store, q).revision == 0 || ecrs.context.hasComponent!(doir.components.query.InCycle)(*store, q)
 		|| !dependenciesUnchanged(engine, q, withheld, reporting))
 		return execute!Q(engine, q);
+	assert(claimed || core.atomic.atomicLoad(bc.platform.asShared(running.owner)) == local.self, "doir.query: verifying a query this thread does not hold");
 	emitAll(engine, q, withheld);
 	markVerified(engine, q, reporting);
 	return true;
 }
 
 private void reset(Q)(ref QueryEngine engine, EntityId q) {
-	assert(frameOf(engine, q) == notRunning);
+	assert(frameOf(engine, q) == notRunning, "doir.query: resetting a query that is running");
+	assert(ecrs.context.hasComponent!(doir.components.query.QueryValue!Q)(*engine.store, q), "doir.query: resetting an entity that is not a query of this type");
 	removeProduced(engine, q);
 	removeCreated(engine, q, 0);
 	clearDiagnostics(engine, q);
@@ -1486,10 +1635,13 @@ private void reset(Q)(ref QueryEngine engine, EntityId q) {
 	core.atomic.atomicStore(bc.platform.asShared(ecrs.context.getComponent!(doir.components.query.Verification)(*engine.store, q).revision), Revision(0));
 	// Its next run may answer differently.
 	markReadersStale(engine, q);
+	assert(fp.dynarray.length(ecrs.context.getComponent!(doir.components.query.Outputs)(*engine.store, q).items) == 0, "doir.query: a reset query that kept its outputs");
 }
 
 // A demand for `q`, which is running in frame `h`: every frame from `h` up is part of the cycle.
 private const(Q.Value)* cycle(Q)(ref QueryEngine engine, EntityId q, size_t h) {
+	assert(fp.dynarray.length(local.stack) > 0 && h < fp.dynarray.length(local.stack), "doir.query: a cycle through a frame past the running queries");
+	assert(local.stack[h].query == q, "doir.query: a cycle's frame runs another query");
 	immutable top = fp.dynarray.length(local.stack) - 1;
 	foreach (ref frame; local.stack[h .. top + 1]) frame.cycle = true;
 	if (!read(engine, q)) return null;
@@ -1566,6 +1718,7 @@ private const(Q.Value)* demand(Q)(ref QueryEngine engine, ref const Q.Key key) {
 /// assert(*query!Loop(engine, 1)); // the inner demand saw the cycle
 /// ---
 const(Q.Value)* query(Q)(ref QueryEngine engine, Q.Key key) if (isQuery!Q) {
+	assert(engine.store !is null, "doir.query: demanding on an engine with no store");
 	if (!runsNoQuery(engine)) {
 		safepoint(engine);
 		return demand!Q(engine, key);
@@ -1579,6 +1732,7 @@ const(Q.Value)* query(Q)(ref QueryEngine engine, Q.Key key) if (isQuery!Q) {
 		auto value = demand!Q(engine, key);
 		immutable abandoned = local.abandoned;
 		if (!reading) endReading(engine);
+		assert(reading == sharing(engine), "doir.query: a demand that changed whether this thread shares the engine");
 		if (!abandoned || deferringReports) return value;
 		bc.thread.yield();
 	}
@@ -1607,7 +1761,10 @@ void beginReading(ref QueryEngine engine) {
 	for (;;) {
 		revalidateIfAlone(engine);
 		joinDemand(engine);
-		if (!core.atomic.atomicLoad(bc.platform.asShared(engine.demandsBlocked))) return;
+		if (!core.atomic.atomicLoad(bc.platform.asShared(engine.demandsBlocked))) {
+			assert(sharing(engine), "doir.query: reading without sharing the engine");
+			return;
+		}
 		leaveDemand(engine);
 		while (core.atomic.atomicLoad(bc.platform.asShared(engine.demandsBlocked))) bc.thread.yield();
 	}
@@ -1617,6 +1774,7 @@ void beginReading(ref QueryEngine engine) {
 void endReading(ref QueryEngine engine) {
 	assert(sharing(engine) && runsNoQuery(engine), "doir.query: endReading without beginReading");
 	leaveDemand(engine);
+	assert(!sharing(engine), "doir.query: still sharing the engine after endReading");
 }
 
 /// Brings every stale query that another query reads up to date (`markReadersStale`), so that afterwards a query that is not stale is current and is reused without visiting its dependencies.
@@ -1657,6 +1815,7 @@ package(doir) bool revalidateStale(ref QueryEngine engine) {
 			q = *fp.dynarray.back(pending.value);
 			cast(void) fp.dynarray.removeLast(pending.value);
 		}
+		assert(core.atomic.atomicLoad(bc.platform.asShared(engine.staleQueued)) > 0, "doir.query: more stale queries popped than were queued");
 		core.atomic.atomicOp!"-="(bc.platform.asShared(engine.staleQueued), 1);
 		auto verified = ecrs.context.findComponent!(doir.components.query.Verification)(*engine.store, q);
 		auto info = ecrs.context.findComponent!(doir.components.query.Hooks)(*engine.store, q);
@@ -1700,6 +1859,7 @@ void evict(Q)(ref QueryEngine engine, Q.Key key) if (isQuery!Q) {
 	immutable q = find!Q(engine, key);
 	if (q == invalidEntity) return;
 	reset!Q(engine, q);
+	assert(!reusableUnchecked(engine, q), "doir.query: an evicted query still reusable");
 }
 
 /// Whether `Q` at `key` holds a value a demand would reuse without running anything or checking its dependencies: nothing it depends on changed since it was last verified.
@@ -1736,6 +1896,7 @@ private struct Share(Q) {
 
 // A batch's share on a worker: its diagnostics withheld for the batch's order, its cycles left to the serial pass.
 private bool demandShare(Q)(ref QueryEngine engine, ref Share!Q share) {
+	assert(share.keys.length == share.gaveUp.length, "doir.query: a share whose keys and outcomes disagree");
 	immutable outer = deferringReports;
 	deferringReports = true;
 	scope(exit) deferringReports = outer;
@@ -1796,8 +1957,10 @@ bool demandEach(Q)(ref QueryEngine engine, const(Q.Key)[] keys) @trusted if (isQ
 	if (gaveUp is null) return serially();
 	foreach (i; 0 .. count) {
 		immutable from = keys.length * i / count, to = keys.length * (i + 1) / count;
+		assert(from <= to && to <= keys.length, "doir.query: a share past the batch");
 		shares[i] = Share!Q(keys[from .. to], gaveUp[from .. to]);
 	}
+	assert(count >= 1 && count <= workers * sharesPerWorker, "doir.query: more shares than the workers take");
 	gaveUp[0 .. keys.length] = true; // a share the pool never ran gave up every demand
 	cast(void) ecrs.schedules.parallel!(demandShare!Q)(engine, engine.workers, shares[0 .. count]);
 	// Each demand given up runs here, and every other reports what the workers withheld below it, in order.
@@ -1829,6 +1992,7 @@ bool demandEach(Q)(ref QueryEngine engine, const(Q.Key)[] keys) @trusted if (isQ
 QueryEngine create(ref ecrs.context.Context store) {
 	QueryEngine out_;
 	out_.store = &store;
+	assert(out_.revision >= 1 && out_.depthLimit == defaultDepthLimit, "doir.query: an engine that starts in revision 0, or with another depth limit");
 	return out_;
 }
 
@@ -1846,6 +2010,7 @@ QueryEngine create(ref ecrs.context.Context store) {
 /// ---
 void free(ref QueryEngine engine) {
 	assert(core.atomic.atomicLoad(bc.platform.asShared(engine.demandingThreads)) == 0, "doir.query: freeing an engine while threads demand");
+	assert(!attached(engine) || !local.holding, "doir.query: freeing an engine this thread still reads");
 	fp.dynarray.free(bc.monitor.write(engine.staleQueue).value);
 	fp.dynarray.free(bc.monitor.write(engine.changes).value.entries);
 	doir.engine.positions.free(engine.positions);
@@ -1854,11 +2019,14 @@ void free(ref QueryEngine engine) {
 
 // --- inputs ------------------------------------------------------------------
 
-// Empties the change log, so unread systems visit their whole domain next; with `lost`, read ones too. Takes the log's hold itself.
+// Empties the change log, so unread systems visit their whole domain next; with `lost`, read ones too.
+// Takes the log's hold itself.
 private void dropChanges(ref QueryEngine engine, bool lost) {
 	auto log = bc.monitor.write(engine.changes);
+	immutable base = log.value.base;
 	log.value.base += fp.dynarray.length(log.value.entries) + lost;
 	fp.dynarray.clear(log.value.entries);
+	assert(log.value.base >= base, "doir.query: the change log's base wrapped");
 }
 
 /// Starts a new revision.
@@ -1876,10 +2044,13 @@ private void dropChanges(ref QueryEngine engine, bool lost) {
 /// ---
 void beginRevision(ref QueryEngine engine) {
 	assert(core.atomic.atomicLoad(bc.platform.asShared(engine.demandingThreads)) == 0, "doir.query: a new revision while threads demand");
+	immutable before = engine.revision;
 	++engine.revision;
+	assert(engine.revision > before, "doir.query: revisions wrapped");
 	// Past one entry per entity, reading the log costs a system more than visiting its whole domain does.
 	immutable logged = fp.dynarray.length(bc.monitor.read(engine.changes).value.entries);
 	if (logged > ecrs.context.entityCount(*engine.store)) dropChanges(engine, false);
+	assert(fp.dynarray.length(bc.monitor.read(engine.changes).value.entries) <= ecrs.context.entityCount(*engine.store), "doir.query: a change log longer than the store");
 }
 
 /// Records that input entity `e` changed in the current revision, and marks every query that depends on it stale (`markReadersStale`), so the next demand of one checks it again; a query no change reaches is reused without visiting its dependencies.
@@ -1901,7 +2072,9 @@ void beginRevision(ref QueryEngine engine) {
 bool markChanged(ref QueryEngine engine, EntityId e) {
 	assert(core.atomic.atomicLoad(bc.platform.asShared(engine.demandingThreads)) == 0, "doir.query: an input changed while threads demand");
 	// Set rather than written in place, so a transaction around an input commit can undo it; a stale mark it leaves only costs a check.
+	assert(e != invalidEntity, "doir.query: marking no entity changed");
 	if (!ecrs.context.setComponent!(doir.components.query.ChangedAt)(*engine.store, e, doir.components.query.ChangedAt(engine.revision))) return false;
+	assert(changedAt(engine, e) == engine.revision, "doir.query: a change not recorded in this revision");
 	markReadersStale(engine, e);
 	immutable logged = fp.dynarray.pushBack(bc.monitor.write(engine.changes).value.entries, e);
 	if (!logged) dropChanges(engine, true); // the systems reading it visit everything instead
@@ -1935,8 +2108,11 @@ package(doir) Changes changesSince(ref QueryEngine engine, size_t cursor) {
 	auto log = bc.monitor.read(engine.changes);
 	auto entries = fp.dynarray.slice(log.value.entries);
 	immutable base = log.value.base, end = base + entries.length;
+	assert(end >= base, "doir.query: a change log whose end wrapped");
 	if (cursor < base || cursor > end) return Changes(null, end, false);
-	return Changes(entries[cursor - base .. $], end, true);
+	auto changes = Changes(entries[cursor - base .. $], end, true);
+	assert(changes.entities.length == end - cursor, "doir.query: changes that do not reach the cursor");
+	return changes;
 }
 
 /// The revision `e` last changed in; 0 if it never has.
@@ -1988,7 +2164,9 @@ Revision changedAt(ref QueryEngine engine, EntityId e) {
 /// assert(ecrs.context.getComponent!Size(store, e).value == 4);
 /// ---
 C* produce(C)(ref QueryEngine engine, EntityId e) {
+	assert(e != invalidEntity, "doir.query: producing a component on no entity");
 	immutable id = ecrs.registry.componentId!C();
+	assert(id != fp.pointer.notFound, "doir.query: producing a component the registry refused");
 	if (!recordOutput(engine, doir.components.query.Output([e], id, &removeOwnedComponent, &hashComponent!C), true)) return null;
 	beginExclusive(engine);
 	auto component = ecrs.context.addComponent!C(*engine.store, e);
@@ -2025,6 +2203,7 @@ EntityId createEntity(ref QueryEngine engine, EntityId origin) {
 	auto provenance = produce!(doir.components.query.Provenance)(engine, e);
 	if (provenance is null) return invalidEntity;
 	provenance.origin = origin;
+	assert(ecrs.context.getComponent!(doir.components.query.Provenance)(*engine.store, e).origin == origin, "doir.query: a created entity that forgot its origin");
 	return e;
 }
 
@@ -2065,6 +2244,8 @@ struct Related {
 /// ---
 bool report(ref QueryEngine engine, EntityId subject, diagnose.Kind kind, const(char)[] message, const(char)[] hint, const(Related)[] related = null) {
 	assert(hint.length, "every diagnostic says how to fix it");
+	assert(message.length, "doir.query.report: a diagnostic with no message");
+	foreach (r; related) assert(r.message.length && r.target != invalidEntity, "doir.query.report: a related item with no message or no target");
 	auto copiedMessage = fp.string.clone(message);
 	auto copiedHint = fp.string.clone(hint);
 	if (copiedMessage.isNull || copiedHint.isNull) {
@@ -2119,6 +2300,7 @@ bool renumber(ref QueryEngine engine, const(size_t)[] order) {
 	cast(void) revalidateStale(engine); // a failure is recorded in `edgesMissing`
 	// The change log holds ids too, and dropping it makes each system visit its whole domain (E-Remap).
 	dropChanges(engine, false);
+	assert(fp.dynarray.length(bc.monitor.read(engine.changes).value.entries) == 0, "doir.query: change log ids kept across a renumbering");
 	return ecrs.context.reorderEntities(*engine.store, order);
 }
 
@@ -2144,6 +2326,7 @@ bool compact(ref QueryEngine engine) {
 	// Pending stale queries are held by id, so they are brought up to date first.
 	cast(void) revalidateStale(engine); // a failure is recorded in `edgesMissing`
 	dropChanges(engine, false); // its ids, as `renumber` drops them (E-Remap)
+	assert(fp.dynarray.length(bc.monitor.read(engine.changes).value.entries) == 0, "doir.query: change log ids kept across a compaction");
 	return ecrs.context.compact(*engine.store);
 }
 
@@ -2728,6 +2911,16 @@ unittest { // a renumbering rewrites query entities, their keys and their depend
 	assert(query!Twin(engine, 5).related[0] == renamed && runs == 1);
 	assert(ecrs.context.getComponent!Amount(store, renamed).value == 5);
 
+	// A read of an entity a compaction freed becomes `invalidEntity`, which neither path that builds reverse edges gives a reader.
+	immutable doomed = doir.testing.addEntity(store);
+	doir.testing.addComponent!Amount(store, doomed).value = 3;
+	assert(markChanged(engine, doomed));
+	assert(*query!Sign(engine, Sign.Key([doomed])) == 1);
+	assert(ecrs.context.removeEntity(store, doomed));
+	assert(compact(engine));
+	assert(buildDependents(engine));
+	assert(!ecrs.context.hasComponent!(doir.components.query.ReadBy)(store, invalidEntity));
+
 	// A query entity removed before a compaction leaves a dead index entry, which the next demand at its key reuses.
 	assert(*query!Resolve(engine, 0) == 0);
 	assert(ecrs.context.removeEntity(store, find!Resolve(engine, 0)));
@@ -2735,9 +2928,42 @@ unittest { // a renumbering rewrites query entities, their keys and their depend
 	assert(find!Resolve(engine, 0) == invalidEntity);
 	assert(*query!Resolve(engine, 0) == 0);
 	assert(find!Resolve(engine, 0) != invalidEntity);
+
+	{
+		// A query entity never takes a removed input's id: a query that read the input still lists it, and checking that query would run whatever holds the id now.
+		auto other = ecrs.context.create();
+		scope(exit) ecrs.context.free(other);
+		auto engine2 = create(other);
+		scope(exit) free(engine2);
+		immutable input = doir.testing.addEntity(other);
+		doir.testing.addComponent!Amount(other, input).value = 1;
+		assert(markChanged(engine2, input));
+		assert(*query!Input(engine2, Input.Key([input])) == 1 && *query!Resolve(engine2, 0) == 0);
+		assert(ecrs.context.removeEntity(other, input));
+		assert(*query!Resolve(engine2, 1) == 0);
+		assert(!ecrs.context.hasComponent!(doir.components.query.Hooks)(other, input));
+	}
+}
+
+unittest { // a thread moving among more engines than it remembers takes its own owner id again on each, never running out
+	enum size_t engines = 6;
+	ecrs.context.Context[engines] stores;
+	QueryEngine[engines] each;
+	foreach (i; 0 .. engines) {
+		stores[i] = ecrs.context.create();
+		each[i] = create(stores[i]);
+	}
+	scope(exit) foreach (i; 0 .. engines) {
+		free(each[i]);
+		ecrs.context.free(stores[i]);
+	}
+	foreach (round; 0 .. 2 * maxThreads)
+		foreach (i; 0 .. engines) assert(*query!Resolve(each[i], 0) == 0);
+	foreach (i; 0 .. engines) assert(each[i].ownerIdsIssued == 1);
 }
 
 unittest { // cycles: reported chains, deep chains and the depth limit
+	static assert(defaultDepthLimit >= 1024, "IL-Chain: an implementation follows a chain of at least 1024 answers");
 	auto store = ecrs.context.create();
 	scope(exit) ecrs.context.free(store);
 	diagnose.Manager manager;
@@ -2777,7 +3003,7 @@ unittest { // cycles: reported chains, deep chains and the depth limit
 	engine.depthLimit = 64;
 	assert(*query!Resolve(engine, 2 * defaultDepthLimit) == -1);
 	assert(fp.dynarray.length(manager.diagnostics) == 1);
-	enum prefix = "Q-Cycle: queries nest deeper than the limit of 64 at Resolve(";
+	enum prefix = "IL-Chain: queries nest deeper than the limit of 64 at Resolve(";
 	assert(fp.string.slice(manager.diagnostics[0].message)[0 .. prefix.length] == prefix);
 	assert(fp.string.slice(manager.diagnostics[0].note) == depthHint);
 
@@ -2871,7 +3097,8 @@ unittest { // a refused allocation fails every running query, which memoizes not
 			return answered;
 		}
 
-		// Nested fallbacks: moving E, F down to the lower head can be refused too. It runs first, so every budget meets the same allocations.
+		// Nested fallbacks: moving E, F down to the lower head can be refused too.
+		// It runs first, so every budget meets the same allocations.
 		immutable a3 = doir.testing.addEntity(store), b3 = doir.testing.addEntity(store), c3 = doir.testing.addEntity(store);
 		immutable d3 = doir.testing.addEntity(store), e3 = doir.testing.addEntity(store), f3 = doir.testing.addEntity(store);
 		doir.testing.addComponent!Node(store, c3) = Node([e3, a3], 1, 2);

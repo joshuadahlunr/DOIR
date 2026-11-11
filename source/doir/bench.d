@@ -15,6 +15,7 @@ static import fp.string;
 static import bc.thread;
 static import bc.threadpool;
 static import ecrs.context;
+static import ecrs.registry;
 
 static import doir.checks;
 static import doir.query;
@@ -52,6 +53,37 @@ private Summary summarize(ulong[] times) {
 	return Summary(times[$ / 2] / 1000.0, times[$ - 1] / 1000.0);
 }
 
+// The bytes each timed edit inserts, then removes.
+private enum string benchLine = "bench_edit : T = 1\n";
+
+// Times the checks of `file` for `bench`: a first run, a re-run with nothing changed, and re-runs after one-line edits at `at`, each into `times`, and prints them. 0, or 1 on refusal.
+private int benchChecks(ref doir.query.QueryEngine engine, ref doir.strings.Strings strings, ecrs.registry.EntityId file, const(char)* path, size_t at, ulong[] times) {
+	engine.strings = &strings;
+	immutable checkStart = bc.thread.monotonicMicroseconds();
+	if (!doir.checks.check(engine, file)) return 1;
+	immutable firstCheck = bc.thread.monotonicMicroseconds() - checkStart;
+	immutable edgesStart = bc.thread.monotonicMicroseconds();
+	if (!doir.query.buildDependents(engine)) return 1;
+	immutable edges = bc.thread.monotonicMicroseconds() - edgesStart;
+	doir.query.beginRevision(engine);
+	immutable recheckStart = bc.thread.monotonicMicroseconds();
+	if (!doir.checks.check(engine, file)) return 1;
+	immutable recheck = bc.thread.monotonicMicroseconds() - recheckStart;
+	immutable checkRounds = times.length < 20 ? times.length : 20;
+	foreach (i; 0 .. checkRounds) {
+		immutable result = i % 2 ? doir.source.commitEdit(engine, strings, file, at, at + benchLine.length, "") : doir.source.commitEdit(engine, strings, file, at, at, benchLine);
+		if (result == fp.pointer.allocationRefused) return 1;
+		immutable t = bc.thread.monotonicMicroseconds();
+		if (!doir.checks.check(engine, file)) return 1;
+		times[i] = bc.thread.monotonicMicroseconds() - t;
+	}
+	immutable checks = summarize(times[0 .. checkRounds]);
+	auto checked = fp.string.format("%s: checks first %.3f ms, then edges built in %.3f ms; unchanged %.3f ms; after an edit: median %.3f ms, worst %.3f ms\n", path, firstCheck / 1000.0, edges / 1000.0, recheck / 1000.0, checks.median, checks.worst);
+	if (checked.isNull) return 1;
+	scope(exit) fp.string.free(checked.get);
+	return fp.io.writeAll(fp.io.Console.output, fp.string.slice(checked.get)) ? 0 : 1;
+}
+
 /// Times `rounds` one-line edits to the file at `path`, committed whole and as edits, and the checks before and after them, printing the median and worst of each (`roadmap.md` Phases 2-3); `doir --bench` runs it.
 /// Times are wall-clock, since the commit's workers make processor time overcount.
 ///
@@ -68,8 +100,7 @@ int bench(const(char)* path, size_t rounds) {
 	scope(exit) fp.string.free(text);
 	auto original = fp.string.slice(text);
 	immutable at = middleDeclaration(original);
-	static immutable line = "bench_edit : T = 1\n";
-	auto edited = fp.string.joined(original[0 .. at], line, original[at .. $]).get(null);
+	auto edited = fp.string.joined(original[0 .. at], benchLine, original[at .. $]).get(null);
 	if (edited is null) return 1;
 	scope(exit) fp.string.free(edited);
 
@@ -104,7 +135,7 @@ int bench(const(char)* path, size_t rounds) {
 	// The last whole commit left the original text; the edits start from it.
 	foreach (i; 0 .. rounds) {
 		immutable t = bc.thread.monotonicMicroseconds();
-		immutable result = i % 2 ? doir.source.commitEdit(engine, strings, file, at, at + line.length, "") : doir.source.commitEdit(engine, strings, file, at, at, line);
+		immutable result = i % 2 ? doir.source.commitEdit(engine, strings, file, at, at + benchLine.length, "") : doir.source.commitEdit(engine, strings, file, at, at, benchLine);
 		if (result == fp.pointer.allocationRefused) return 1;
 		times[i] = bc.thread.monotonicMicroseconds() - t;
 	}
@@ -115,31 +146,7 @@ int bench(const(char)* path, size_t rounds) {
 	scope(exit) fp.string.free(commits.get);
 	if (!fp.io.writeAll(fp.io.Console.output, fp.string.slice(commits.get))) return 1;
 
-	// The checks: a first run, a re-run with nothing changed, and re-runs after each one-line edit.
-	engine.strings = &strings;
-	immutable checkStart = bc.thread.monotonicMicroseconds();
-	if (!doir.checks.check(engine, file)) return 1;
-	immutable firstCheck = bc.thread.monotonicMicroseconds() - checkStart;
-	immutable edgesStart = bc.thread.monotonicMicroseconds();
-	if (!doir.query.buildDependents(engine)) return 1;
-	immutable edges = bc.thread.monotonicMicroseconds() - edgesStart;
-	doir.query.beginRevision(engine);
-	immutable recheckStart = bc.thread.monotonicMicroseconds();
-	if (!doir.checks.check(engine, file)) return 1;
-	immutable recheck = bc.thread.monotonicMicroseconds() - recheckStart;
-	immutable checkRounds = rounds < 20 ? rounds : 20;
-	foreach (i; 0 .. checkRounds) {
-		immutable result = i % 2 ? doir.source.commitEdit(engine, strings, file, at, at + line.length, "") : doir.source.commitEdit(engine, strings, file, at, at, line);
-		if (result == fp.pointer.allocationRefused) return 1;
-		immutable t = bc.thread.monotonicMicroseconds();
-		if (!doir.checks.check(engine, file)) return 1;
-		times[i] = bc.thread.monotonicMicroseconds() - t;
-	}
-	immutable checks = summarize(times[0 .. checkRounds]);
-	auto checked = fp.string.format("%s: checks first %.3f ms, then edges built in %.3f ms; unchanged %.3f ms; after an edit: median %.3f ms, worst %.3f ms\n", path, firstCheck / 1000.0, edges / 1000.0, recheck / 1000.0, checks.median, checks.worst);
-	if (checked.isNull) return 1;
-	scope(exit) fp.string.free(checked.get);
-	return fp.io.writeAll(fp.io.Console.output, fp.string.slice(checked.get)) ? 0 : 1;
+	return benchChecks(engine, strings, file, path, at, times[0 .. rounds]);
 }
 
 

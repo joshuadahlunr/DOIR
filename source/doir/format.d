@@ -1,4 +1,6 @@
-/// Formatting from the lexer's token stream (`roadmap.md` Phase 3) for the language server and `doir.printer`, so comments survive and a file with parse errors still formats: each line is indented with a tab per bracket open around it, its trailing whitespace dropped, and the spaces around punctuation made the corpus's (`x : T = v`, `(a: T, b: U) -> R`, `a ; b`). Only the whitespace between tokens changes, never a token or a newline, except that a blank line after another is removed and `Options` may move a line break; space between two words, or before a call's `(`, is kept as written, since removing it could change what the line lexes as. A multi-line token, such as a raw string, is copied as it is, and lines it spans are not reindented.
+/// Formatting from the lexer's token stream (`roadmap.md` Phase 3) for the language server and `doir.printer`, so comments survive and a file with parse errors still formats: each line is indented with a tab per bracket open around it, its trailing whitespace dropped, and the spaces around punctuation made the corpus's (`x : T = v`, `(a: T, b: U) -> R`, `a ; b`).
+/// Only the whitespace between tokens changes, never a token or a newline, except that a blank line after another is removed and `Options` may move a line break; space between two words, or before a call's `(`, is kept as written, since removing it could change what the line lexes as.
+/// A multi-line token, such as a raw string, is copied as it is, and lines it spans are not reindented.
 ///
 /// Examples:
 /// ---
@@ -51,6 +53,7 @@ struct Formatted {
 void free(ref Formatted f) {
 	fp.dynarray.free(f.text);
 	fp.dynarray.free(f.edits);
+	assert(f.text is null && f.edits is null, "doir.format: a formatting left holding memory");
 }
 
 
@@ -76,7 +79,9 @@ enum Braces : ubyte {
 
 /// How `format` lays a file out.
 struct Options {
-	bool minify; /// Writes the file on one line: comments, indentation and blank lines go, a newline that ends a statement becomes `;`, and a space stays only between two words. `depth` and the other options are then ignored.
+	/// Writes the file on one line: comments, indentation and blank lines go, a newline that ends a statement becomes `;`, and a space stays only between two words.
+	/// `depth` and the other options are then ignored.
+	bool minify;
 	Semicolons semicolons; /// What to do with a `;` that ends a statement.
 	Colons definitionColons; /// Whether a definition's `:` has a space before it.
 	Colons parameterColons = Colons.attached; /// Whether a parameter's `:` has a space before it.
@@ -107,7 +112,9 @@ private Space between(doir.syntax.lexer.TokenKind p, doir.syntax.lexer.TokenKind
 // The kind of the first token from `cursor` that is not whitespace, nor, with `lines`, a newline or comment; `end` at the text's end.
 private doir.syntax.lexer.TokenKind peek(doir.syntax.lexer.Cursor cursor, bool lines) {
 	while (cursor.at < cursor.source.length) {
+		immutable before = cursor.at;
 		immutable t = doir.syntax.lexer.next(cursor);
+		assert(cursor.at > before, "doir.format: a token that did not advance");
 		with (doir.syntax.lexer.TokenKind)
 			if (t.kind == whitespace || (lines && (t.kind == newline || t.kind == lineComment || t.kind == longComment))) continue;
 		return t.kind;
@@ -140,7 +147,18 @@ package(doir) bool wordByte(char c) {
 	return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_' || c == '.' || c == '%' || c >= 0x80;
 }
 
-// Writes `source` on one line into `out_`, as one edit, for `Options.minify`. False on refusal, leaving `out_` empty.
+// Writes `source` on one line into `out_`, as one edit, for `Options.minify`.
+// False on refusal, leaving `out_` empty.
+// Whether `f`'s edits lie within `source`, in order without overlapping, each replacement within `f.text`.
+private bool editsValid(ref const Formatted f, size_t source) {
+	size_t previousEnd = 0;
+	foreach (ref e; fp.dynarray.slice(f.edits)) {
+		if (e.start < previousEnd || e.start > e.end || e.end > source || e.from + e.length > fp.dynarray.length(f.text)) return false;
+		previousEnd = e.end;
+	}
+	return true;
+}
+
 private bool minify(const(char)[] source, ref Formatted out_) {
 	char* text = null;
 	scope(exit) fp.dynarray.free(text);
@@ -173,8 +191,10 @@ private bool minify(const(char)[] source, ref Formatted out_) {
 	}
 	immutable n = fp.dynarray.length(text);
 	const written = text is null ? "" : text[0 .. n];
+	assert(!kept || n <= source.length, "doir.format: minified text longer than its source");
 	if (kept && source != written) kept = (n == 0 || fp.dynarray.concatenate(out_.text, written)) && fp.dynarray.pushBack(out_.edits, Edit(0, source.length, 0, n));
 	if (!kept) free(out_);
+	assert(!kept || editsValid(out_, source.length), "doir.format: edits outside the source, or out of order");
 	return kept;
 }
 
@@ -192,15 +212,19 @@ private struct State {
 	bool atStart; // whether nothing is written since the current line, or a break `Semicolons` made, began
 }
 
-// Records that bytes `start` to `end` become `replacement`, unless they are it already. False on refusal.
+// Records that bytes `start` to `end` become `replacement`, unless they are it already.
+// False on refusal.
 private bool replace(ref State s, size_t start, size_t end, const(char)[] replacement) {
+	assert(start <= end && end <= s.source.length, "doir.format: replacing bytes past the source");
+	assert(fp.dynarray.length(s.out_.edits) == 0 || fp.dynarray.back(s.out_.edits).end <= start, "doir.format: an edit before or over the last one");
 	if (s.source[start .. end] == replacement) return true;
 	immutable from = fp.dynarray.length(s.out_.text);
 	if (replacement.length && !fp.dynarray.concatenate(s.out_.text, replacement)) return false;
 	return fp.dynarray.pushBack(s.out_.edits, Edit(start, end, from, replacement.length));
 }
 
-// Ends the current line at the newline from `newline` to `next`, the start of the next line. False on refusal.
+// Ends the current line at the newline from `newline` to `next`, the start of the next line.
+// False on refusal.
 private bool endLine(ref State s, size_t newline, size_t next) {
 	bool kept = true;
 	if (s.any) {
@@ -208,13 +232,48 @@ private bool endLine(ref State s, size_t newline, size_t next) {
 		kept = replace(s, s.lineStart, newline, s.line is null ? "" : s.line[0 .. fp.dynarray.length(s.line)]);
 	} else kept = s.blank++ ? replace(s, s.lineStart, next, "") : replace(s, s.lineStart, newline, "");
 	if (s.line !is null) fp.dynarray.clear(s.line);
+	assert(next >= newline && next >= s.lineStart, "doir.format: a line that ends before it starts");
 	s.lineStart = next;
 	s.any = false;
 	s.atStart = true;
 	return kept;
 }
 
-/// Formats `source`, whose first byte starts a line `depth` brackets deep, into `out_`, which must be empty, laid out as `options` says. On a token the lexer cannot finish or does not know, it makes no edits, since the file's brackets cannot be trusted, and sets `out_.unlexed` to where the token starts.
+// Appends what goes before a token of kind `kind` after one of kind `previous`: `levels` tabs, one fewer for a closer, at a line's start, or the space `between` asks for.
+// False on refusal.
+private bool appendSpacing(ref State s, size_t levels, bool closes, bool inParentheses, doir.syntax.lexer.TokenKind previous, doir.syntax.lexer.TokenKind kind, bool spaced, Options options) {
+	if (s.atStart) {
+		foreach (_; 0 .. closes && levels ? levels - 1 : levels)
+			if (!fp.dynarray.pushBack(s.line, '\t')) return false;
+		return true;
+	}
+	immutable space = between(previous, kind, inParentheses, options);
+	return !(space == Space.one || (space == Space.kept && spaced)) || fp.dynarray.pushBack(s.line, ' ');
+}
+
+// Appends token `t`, spelled `text`, to the line; a multi-line token's first line ends it, and its last line starts the next, which is not reindented.
+// False on refusal.
+private bool appendToken(ref State s, doir.syntax.lexer.Token t, const(char)[] text) {
+	assert(text.length > 0 && t.start + text.length <= s.source.length, "doir.format: an empty token, or one past the source");
+	if (t.kind == doir.syntax.lexer.TokenKind.lineComment)
+		text = fp.string.trimEnd(text, " \t");
+	s.any = true;
+	s.atStart = false;
+	immutable newline = fp.string.find(text, '\n');
+	immutable first = newline == fp.pointer.notFound ? text.length : newline;
+	if (first < text.length) {
+		size_t last = text.length;
+		while (text[last - 1] != '\n') --last;
+		if (!(first == 0 || fp.dynarray.concatenate(s.line, text[0 .. first])) || !endLine(s, t.start + first, t.start + last)) return false;
+		s.any = true;
+		s.atStart = false;
+		text = text[last .. $];
+	}
+	return text.length == 0 || fp.dynarray.concatenate(s.line, text);
+}
+
+/// Formats `source`, whose first byte starts a line `depth` brackets deep, into `out_`, which must be empty, laid out as `options` says.
+/// On a token the lexer cannot finish or does not know, it makes no edits, since the file's brackets cannot be trusted, and sets `out_.unlexed` to where the token starts.
 ///
 /// Returns false on a refused allocation, leaving `out_` empty.
 ///
@@ -230,6 +289,7 @@ private bool endLine(ref State s, size_t newline, size_t next) {
 /// assert(g.text[0 .. g.edits[0].length] == "x : T = 1\ny : T");
 /// ---
 bool format(const(char)[] source, uint depth, ref Formatted out_, Options options = Options.init) {
+	assert(fp.dynarray.length(out_.text) == 0 && fp.dynarray.length(out_.edits) == 0, "doir.format: formatting into a result that already holds edits; free it first");
 	if (options.minify) return minify(source, out_);
 	State s = State(&out_, source);
 	s.atStart = true;
@@ -279,29 +339,7 @@ bool format(const(char)[] source, uint depth, ref Formatted out_, Options option
 			kept = kept && fp.dynarray.pushBack(s.line, '\n');
 			s.atStart = true;
 		}
-		if (s.atStart) {
-			immutable levels = depth + open;
-			foreach (_; 0 .. closes && levels ? levels - 1 : levels) kept = kept && fp.dynarray.pushBack(s.line, '\t');
-		} else {
-			immutable space = between(previous, t.kind, open && s.brackets[open - 1], options);
-			if (space == Space.one || (space == Space.kept && spaced)) kept = kept && fp.dynarray.pushBack(s.line, ' ');
-		}
-		if (t.kind == doir.syntax.lexer.TokenKind.lineComment)
-			text = fp.string.trimEnd(text, " \t");
-		s.any = true;
-		s.atStart = false;
-		immutable newline = fp.string.find(text, '\n');
-		immutable first = newline == fp.pointer.notFound ? text.length : newline;
-		if (first < text.length) {
-			// A multi-line token: its first line ends this one, and its last line starts the next, which is not reindented.
-			size_t last = text.length;
-			while (text[last - 1] != '\n') --last;
-			kept = kept && (first == 0 || fp.dynarray.concatenate(s.line, text[0 .. first])) && endLine(s, t.start + first, t.start + last);
-			s.any = true;
-			s.atStart = false;
-			text = text[last .. $];
-		}
-		kept = kept && (text.length == 0 || fp.dynarray.concatenate(s.line, text));
+		kept = kept && appendSpacing(s, depth + open, closes, open && s.brackets[open - 1], previous, t.kind, spaced, options) && appendToken(s, t, text);
 		with (doir.syntax.lexer.TokenKind) {
 			if (t.kind == leftBrace || t.kind == leftParen) kept = kept && fp.dynarray.pushBack(s.brackets, t.kind == leftParen);
 			else if (closes && open) cast(void) fp.dynarray.removeLast(s.brackets);
@@ -318,6 +356,7 @@ bool format(const(char)[] source, uint depth, ref Formatted out_, Options option
 	}
 	kept = kept && endLine(s, source.length, source.length);
 	if (!kept) free(out_);
+	assert(!kept || editsValid(out_, source.length), "doir.format: edits outside the source, or out of order");
 	return kept;
 }
 
@@ -366,7 +405,8 @@ version(unittest) {
 		return doir.printer.print(store, strings, doir.source.rootOf(engine, file)).get;
 	}
 
-	// Checks that formatting `text` as `options` says changes only its layout, that formatting the result again changes nothing, and, with the default options, that the printer's output is already formatted. Returns the formatted text.
+	// Checks that formatting `text` as `options` says changes only its layout, that formatting the result again changes nothing, and, with the default options, that the printer's output is already formatted.
+	// Returns the formatted text.
 	private char* checkFormat(const(char)[] text, Options options = Options.init) {
 		Formatted f;
 		scope(exit) free(f);

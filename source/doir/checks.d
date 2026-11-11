@@ -49,6 +49,7 @@ static import doir.names;
 static import doir.schedules;
 static import doir.source;
 static import doir.strings;
+static import doir.syntax.parser;
 
 public import ecrs.registry : EntityId, invalidEntity;
 
@@ -90,6 +91,8 @@ private struct Decl {
 }
 
 private const(char)[] nameText(ref doir.query.QueryEngine engine, doir.strings.StringId id) {
+	assert(engine.strings !is null, "doir.checks: naming with no strings");
+	assert(id != doir.strings.refused, "doir.checks: the text of a name that was never interned");
 	return id == doir.strings.unnamed ? "_" : doir.strings.text(*engine.strings, id);
 }
 
@@ -99,6 +102,7 @@ private bool functionType(ref doir.query.QueryEngine engine, EntityId e) {
 
 // The function type `e` declares: written in place as its type, or its value.
 private EntityId ownFunctionType(ref doir.query.QueryEngine engine, EntityId e) {
+	assert(e != invalidEntity, "doir.checks: the function type of no declaration");
 	if (auto type = ecrs.context.findComponent!(doir.components.ast.TypeOf)(*engine.store, e))
 		if (functionType(engine, type.type)) return type.type;
 	return functionType(engine, e) ? e : invalidEntity;
@@ -125,6 +129,8 @@ private Decl declOf(ref doir.query.QueryEngine engine, EntityId e) {
 	immutable block = ecrs.context.hasComponent!(doir.components.ast.Block)(*store, e);
 	d.isFunction = ownFunctionType(engine, e) != invalidEntity || (block && !among(d.typeName, blockTypes[]));
 	d.isValue = !d.isFunction && !among(d.typeName, nonValueTypes[]);
+	assert(!(d.isFunction && d.isValue), "doir.checks: a declaration both a function and a plain value");
+	assert(!d.complete || d.typeName.length, "doir.checks: a complete declaration with no type");
 	return d;
 }
 
@@ -133,8 +139,10 @@ private const(EntityId)[] entriesOf(ref doir.query.QueryEngine engine, EntityId 
 	return b is null ? null : fp.dynarray.slice(b.related);
 }
 
-// The complete declarations of `block`, as an fp dynarray, reading each. Null with `refused` set on refusal.
+// The complete declarations of `block`, as an fp dynarray, reading each.
+// Null with `refused` set on refusal.
 private Decl* declarationsOf(ref doir.query.QueryEngine engine, EntityId block, out bool refused) {
+	assert(block != invalidEntity, "doir.checks: the declarations of no block");
 	Decl* out_ = null;
 	if (!doir.query.read(engine, block)) {
 		refused = true;
@@ -152,11 +160,13 @@ private Decl* declarationsOf(ref doir.query.QueryEngine engine, EntityId block, 
 		}
 	}
 	if (refused) fp.dynarray.free(out_);
+	assert(refused || fp.dynarray.length(out_) <= entriesOf(engine, block).length, "doir.checks: more declarations than the block has entries");
 	return refused ? null : out_;
 }
 
 // The index of the first complete declaration of `decls` named `name`, or `fp.pointer.notFound`.
 private size_t indexOf(const(Decl)[] decls, doir.strings.StringId name) {
+	assert(decls.length < fp.pointer.allocationRefused, "doir.checks: an index that could read as a sentinel");
 	if (name == doir.strings.unnamed) return fp.pointer.notFound;
 	foreach (i, ref d; decls) if (d.name == name) return i;
 	return fp.pointer.notFound;
@@ -224,6 +234,7 @@ private struct Use {
 }
 
 private size_t indexOfEntity(const(EntityId)[] entries, EntityId e) {
+	assert(e != invalidEntity, "doir.checks: the index of no entity");
 	foreach (i, entry; entries) if (entry == e) return i;
 	return fp.pointer.notFound;
 }
@@ -243,7 +254,9 @@ private size_t entryIndex(ref doir.query.QueryEngine engine, EntityId block, Ent
 		}
 		if (low < entries.length && entries[low] == e) return low;
 	}
-	return indexOfEntity(entries, e);
+	immutable found = indexOfEntity(entries, e);
+	assert(found == fp.pointer.notFound || entries[found] == e, "doir.checks: an entry index naming another entry");
+	return found;
 }
 
 // The contexts of every entry of a block, computed together so a block with many children reads its declarations once, not once per child.
@@ -299,6 +312,8 @@ private struct ChildContexts {
 			}
 			cast(void) fp.dynarray.pushBack(out_.items.p, placed); // reserved
 		}
+		assert(next == fp.dynarray.length(decls), "doir.checks: complete declarations out of their block's order");
+		assert(fp.dynarray.length(out_.items.p) == entriesOf(engine, parent).length, "doir.checks: a placement per entry, it is not");
 		return out_;
 	}
 }
@@ -312,6 +327,7 @@ private uint firstUse(const(Use)[] uses, doir.strings.StringId name) {
 		if (uses[middle].name.value < name.value) low = middle + 1;
 		else high = middle;
 	}
+	assert(low == 0 || uses[low - 1].name.value < name.value, "doir.checks: a search that stopped past its name; are the uses sorted?");
 	return low < uses.length && uses[low].name == name ? uses[low].index : uint.max;
 }
 
@@ -363,6 +379,7 @@ struct ContextOf {
 
 // The declaration `name`'s dotted segments reach from block `start`, through namespaces but the last; `invalidEntity` if none.
 private EntityId lookupPath(ref doir.query.QueryEngine engine, EntityId start, const(char)[] name) {
+	assert(start != invalidEntity && name.length > 0, "doir.checks: looking up nothing, or from no block");
 	EntityId at = start;
 	for (;;) {
 		size_t dot = 0;
@@ -382,7 +399,10 @@ private EntityId lookupPath(ref doir.query.QueryEngine engine, EntityId start, c
 // `name` looked up from block `from` in each enclosing namespace, innermost first, then the file's root (R-Unqual, as `doir_check` approximates it).
 private EntityId resolve(ref doir.query.QueryEngine engine, EntityId from, const(char)[] name) {
 	auto store = engine.store;
+	size_t climbed = 0;
 	for (EntityId at = from; at != invalidEntity;) {
+		// Parents nest no deeper than the parser builds, so a longer climb is a cycle of parents (WF-Par).
+		assert(++climbed <= doir.syntax.parser.maxNesting + 2, "doir.checks: a chain of parents deeper than any parse, or a cycle (WF-Par)");
 		auto flags = ecrs.context.findComponent!(doir.components.ast.Flags)(*store, at);
 		immutable scope_ = ecrs.context.hasComponent!(doir.components.source.InFile)(*store, at) || (flags !is null && (flags.flags & doir.components.ast.Flags.Namespace));
 		if (scope_) {
@@ -413,6 +433,7 @@ private EntityId signatureOf(ref doir.query.QueryEngine engine, EntityId from, c
 
 // Whether `block`'s last entry calls a terminator, or is a tail call (`WF-Term`, B-Tail).
 private bool endsWithTerminator(ref doir.query.QueryEngine engine, EntityId block) {
+	assert(ecrs.context.hasComponent!(doir.components.ast.Block)(*engine.store, block), "doir.checks: WF-Term asked of a declaration with no block");
 	auto entries = entriesOf(engine, block);
 	if (entries.length == 0 || !doir.query.read(engine, entries[$ - 1])) return false;
 	immutable last = entries[$ - 1];
@@ -429,8 +450,10 @@ struct BlockOrder {
 	doir.engine.positions.Position at; /// The block's position in the file: `positions.root` for the root block, `positions.none` for a declaration with none.
 }
 
-// Reports an error at `subject`, joining its message and hint from pieces and freeing them; a refused join fails the running queries. False on refusal.
+// Reports an error at `subject`, joining its message and hint from pieces and freeing them; a refused join fails the running queries.
+// False on refusal.
 private bool reportJoined(ref doir.query.QueryEngine engine, EntityId subject, std.typecons.Nullable!(char*) message, std.typecons.Nullable!(char*) hint, const(doir.query.Related)[] related = null) {
+	assert(subject != invalidEntity, "doir.checks: reporting at no declaration");
 	scope(exit) {
 		fp.string.free(message.get(null));
 		fp.string.free(hint.get(null));
@@ -440,6 +463,32 @@ private bool reportJoined(ref doir.query.QueryEngine engine, EntityId subject, s
 		return false;
 	}
 	return doir.query.report(engine, subject, diagnose.Kind.error, fp.string.slice(message.get), fp.string.slice(hint.get), related);
+}
+
+// `WF-Order` for the names declaration `decls[i]` reads: each bound in its block or the enclosing one, `outer`, before it runs.
+// Clears `passed` for each it reports; false on refusal.
+private bool checkOrder(ref doir.query.QueryEngine engine, const(Decl)[] decls, const(Decl)[] outer, size_t i, Context context, bool inNamespace, ref bool passed) {
+	assert(i < decls.length && (context.flags & ordered), "doir.checks: WF-Order asked of a declaration past its block, or a block that does not run in order");
+	assert(context.deadline <= outer.length || context.outer == invalidEntity || context.deadline == uint.max, "doir.checks: a deadline past the enclosing block's declarations");
+	const d = &decls[i];
+	return forEachRead!((id) {
+		immutable j = indexOf(decls, id);
+		if (j != fp.pointer.notFound) {
+			if (j <= i || !decls[j].isValue) return true;
+			const name = nameText(engine, id);
+			const doir.query.Related[1] bound = [doir.query.Related([decls[j].e], "it gets its value here, after it is used")];
+			passed = false;
+			return reportJoined(engine, d.e, fp.string.joined("WF-Order: '", name, "' is used before the declaration that gives it a value"), fp.string.joined("a block runs from top to bottom, so move the declaration of '", name, "' above this statement"), bound[]);
+		}
+		immutable k = indexOf(outer, id);
+		if (k == fp.pointer.notFound || !outer[k].isValue || k <= context.deadline) return true;
+		const name = nameText(engine, id);
+		const doir.query.Related[1] bound = [doir.query.Related([outer[k].e], inNamespace ? "it gets its value here, after the namespace" : "it gets its value here, after the block runs")];
+		passed = false;
+		return reportJoined(engine, d.e,
+			fp.string.joined("WF-Order: '", name, inNamespace ? "' is used in a namespace before the enclosing block gives it a value" : "' is used in a block that runs before the enclosing block gives it a value"),
+			fp.string.joined(inNamespace ? "a namespace binds in source order, so move the declaration of '" : "a spliced block runs where it is called, so move the declaration of '", name, inNamespace ? "' above the namespace" : "' above the statement that runs the block"), bound[]);
+	})(engine, d.e);
 }
 
 /// The checks of each block, as a system the engine runs as one memoized query per block (`doir.schedules.Memo`), in no order (`L-Sema`): `WF-Term` for the blocks its declarations hold, `WF-Order` for the names they read, and `D-Return`, `B-Tail`, `L-Scan`, `L-Sema` and `L-Bind` for their calls.
@@ -473,7 +522,9 @@ struct BlockChecks {
 	static BlockOrder orderOf(ref doir.query.QueryEngine engine, EntityId block) @nogc nothrow {
 		auto store = engine.store;
 		EntityId root = block;
+		size_t climbed = 0;
 		while (!ecrs.context.hasComponent!(doir.components.source.InFile)(*store, root)) {
+			assert(++climbed <= doir.syntax.parser.maxNesting + 2, "doir.checks: a chain of parents deeper than any parse, or a cycle (WF-Par)");
 			auto parent = ecrs.context.findComponent!(doir.components.ast.Parent)(*store, root);
 			if (parent is null) break;
 			root = parent.parent;
@@ -497,6 +548,7 @@ struct BlockChecks {
 	/// assert(BlockChecks.compare(engine, a, b) < 0 && BlockChecks.compare(engine, a, a) == 0);
 	/// ---
 	static int compare(ref doir.query.QueryEngine engine, ref const BlockOrder a, ref const BlockOrder b) @nogc nothrow {
+		assert(a.root != invalidEntity && b.root != invalidEntity, "doir.checks: ordering a block of no file");
 		if (a.root != b.root) return a.root < b.root ? -1 : 1;
 		return doir.engine.positions.compare(engine.positions, a.at, b.at);
 	}
@@ -570,27 +622,7 @@ struct BlockChecks {
 					if (!doir.query.report(engine, d.e, diagnose.Kind.error, "B-Tail: this tail call ends its block, but statements follow it", "make the tail call the block's last statement, or drop `tail` to make it a plain call", after[])) return false;
 				}
 			}
-			if (context.flags & ordered) {
-				bool ok = forEachRead!((id) {
-					immutable j = indexOf(decls, id);
-					if (j != fp.pointer.notFound) {
-						if (j <= i || !decls[j].isValue) return true;
-						const name = nameText(engine, id);
-						const doir.query.Related[1] bound = [doir.query.Related([decls[j].e], "it gets its value here, after it is used")];
-						passed = false;
-						return reportJoined(engine, d.e, fp.string.joined("WF-Order: '", name, "' is used before the declaration that gives it a value"), fp.string.joined("a block runs from top to bottom, so move the declaration of '", name, "' above this statement"), bound[]);
-					}
-					immutable k = indexOf(fp.dynarray.slice(outer), id);
-					if (k == fp.pointer.notFound || !outer[k].isValue || k <= context.deadline) return true;
-					const name = nameText(engine, id);
-					const doir.query.Related[1] bound = [doir.query.Related([outer[k].e], inNamespace ? "it gets its value here, after the namespace" : "it gets its value here, after the block runs")];
-					passed = false;
-					return reportJoined(engine, d.e,
-						fp.string.joined("WF-Order: '", name, inNamespace ? "' is used in a namespace before the enclosing block gives it a value" : "' is used in a block that runs before the enclosing block gives it a value"),
-						fp.string.joined(inNamespace ? "a namespace binds in source order, so move the declaration of '" : "a spliced block runs where it is called, so move the declaration of '", name, inNamespace ? "' above the namespace" : "' above the statement that runs the block"), bound[]);
-				})(engine, d.e);
-				if (!ok) return false;
-			}
+			if ((context.flags & ordered) && !checkOrder(engine, decls, fp.dynarray.slice(outer), i, context, inNamespace, passed)) return false;
 			// D-Return: a `_` destination receiving a `_` return leaves the return type unsolved, control flow included (B-If).
 			if (called !is null && d.typeName == "_") {
 				const callee = nameText(engine, called.name);
@@ -613,6 +645,7 @@ private struct ProgramEnd {
 
 	@nogc nothrow:
 	bool opCall(ref doir.query.QueryEngine engine) {
+		assert(root != invalidEntity, "doir.checks: L-Entry asked of no root");
 		if (!program || endsWithTerminator(engine, root)) return true;
 		auto entries = entriesOf(engine, root);
 		return doir.query.report(engine, entries.length ? entries[$ - 1] : invalidEntity, diagnose.Kind.error, "WF-Term: the program's last statement does not say where control goes next (L-Entry)", terminatorHint);
@@ -623,6 +656,8 @@ private struct ProgramEnd {
 /// After an edit it visits only the blocks the edit reached and those whose checks report diagnostics (`doir.schedules.runSystem`).
 /// With `program`, it also checks that the root ends with a terminator (`L-Entry`).
 /// `engine.strings` must be set.
+///
+/// A revision reports its diagnostics once: to report them again, as after a refused check, call `doir.query.beginRevision` first.
 ///
 /// Returns false if an allocation was refused, which loses some diagnostics.
 ///
@@ -846,6 +881,7 @@ unittest { // the corpus cases for these rules: each reject case reports its rul
 	assert(fp.string.slice(reports[0]) == fp.string.slice(reports[1]));
 
 	// Edits that add, move and remove diagnostics: checking after each reports what checking the same text afresh does.
+	static import doir.simulation;
 	static struct Edit { string find, replacement; }
 	static immutable Edit[] edits = [
 		Edit("std.copy(std.u8, v)", "std.copy(std.u8, 5)"),
@@ -891,13 +927,7 @@ unittest { // the corpus cases for these rules: each reject case reports its rul
 		fresh.diagnostics = &expected;
 		immutable freshFile = doir.source.addFile(fresh, strings, "all.doir");
 		assert(doir.source.commit(fresh, strings, freshFile, fp.string.slice(text)) != fp.pointer.allocationRefused && check(fresh, freshFile));
-		assert(fp.dynarray.length(manager.diagnostics) == fp.dynarray.length(expected.diagnostics));
-		foreach (i, ref d; fp.dynarray.slice(manager.diagnostics)) {
-			assert(fp.string.slice(d.message) == fp.string.slice(expected.diagnostics[i].message));
-			assert(d.location.start.line == expected.diagnostics[i].location.start.line);
-			assert(fp.dynarray.length(d.annotations) == fp.dynarray.length(expected.diagnostics[i].annotations));
-			foreach (a, ref annotation; fp.dynarray.slice(d.annotations)) assert(annotation.position == expected.diagnostics[i].annotations[a].position);
-		}
+		assert(doir.simulation.sameDiagnostics(manager, expected));
 	}
 }
 

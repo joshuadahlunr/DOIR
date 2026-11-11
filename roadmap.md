@@ -312,6 +312,8 @@ Legacy behavior reference: [doir-lang/DOIR/tree/D](https://github.com/doir-lang/
   - Bidirectional type deduction (`D-Deduce`), solving a constructed parameter type from the body's opening assertions (`D-Assert`), and in-place modifiers (`M-Flag`, `M-Freeze`) over the positioned effect logs.
     `standard.doir` cannot load without them: its first lines apply modifiers, and `std.meta.entity_of` has a deduced parameter.
   - Ascent query `evaluate_comptime(EntityId, Position)`, keyed by ⟨entity, lexical position⟩ inside a level and by entity alone once it is frozen (`L-Freeze`, `M-Lexical`).
+    Each evaluation runs under a step budget and a memory budget at or above the minimums `IL-Steps` and `IL-Memory` set, counting calls and backward branches on Mizu's side so its dispatch loop stays fast; running out is an `IL-Steps` or `IL-Memory` diagnostic at the call that started the evaluation, never a hang.
+    Deduction peels constructors to the `IL-Deduce` depth, and a pack's length is bounded by `IL-Pack`.
   - Level freeze transition `freeze_level(Level)`: an engine state change and an input commit, not a memoized query, that makes cross-level queries defined (`L-Freeze`).
     An edit to a frozen level marks it and every level above it unfrozen, a per-level flag that walks no dependency edge; re-freezing writes the folded components as inputs and sets `ChangedAt` only where a folded value changed, so early cutoff reaches across levels.
   - Lowering query `lower_level(EntityId, Level, Target)` from level 1 to 0.
@@ -331,7 +333,7 @@ Legacy behavior reference: [doir-lang/DOIR/tree/D](https://github.com/doir-lang/
     Phase 10 extends it to the full `T-Legal` verifier.
   - The comptime-aware LSP features Phase 3 deferred: hover with deduced types, and references and rename over the `std.meta` entity queries.
     Hover at a position reads the comptime state at that position (`L-Freeze`).
-- **Verification:** `standard.doir` loads over the mizu level; fold compile-time expressions; after lowering, every Level 1 entity's `Lowered` relation holds the target, still answers queries, and is read by no level-0 rewrite or emission; editing a machine-level constant re-runs only the `std` queries that read it; hovering a type on a line above a modifier applied to it shows the type unmodified.
+- **Verification:** `standard.doir` loads over the mizu level; fold compile-time expressions; a comptime loop that never ends, and one that allocates without freeing, each stop with their `IL-` diagnostic, and accept cases at each limit's minimum compile (`IL-Limit`); after lowering, every Level 1 entity's `Lowered` relation holds the target, still answers queries, and is read by no level-0 rewrite or emission; editing a machine-level constant re-runs only the `std` queries that read it; hovering a type on a line above a modifier applied to it shows the type unmodified.
 
 ### Phase 6: Internal Virtual & Physical Register Allocation
 - **Goal:** Manage internal virtual registers (temporaries), support explicit virtual register aliasing, and map virtual registers to physical registers.

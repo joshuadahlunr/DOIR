@@ -140,7 +140,8 @@ def expected_terminals(message):
 
 
 def error_position(src, exc):
-	"""The offset in `src` of `exc`, a `pe.ParseError` from parsing it, or `len(src)` if pe gave no line. pe counts lines by `\n` alone, so its line is not `line_at`'s where `src` has a lone `\r`."""
+	"""The offset in `src` of `exc`, a `pe.ParseError` from parsing it, or `len(src)` if pe gave no line.
+	pe counts lines by `\n` alone, so its line is not `line_at`'s where `src` has a lone `\r`."""
 	if exc.lineno is None:
 		return len(src)
 	return ([0] + [m.end() for m in re.finditer("\n", src)])[exc.lineno] + exc.offset

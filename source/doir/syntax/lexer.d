@@ -139,6 +139,7 @@ private enum size_t failed = size_t.max;
 
 // The code point at `i` and the index after it; an invalid byte decodes as one code point no class contains.
 private uint decode(const(char)[] s, ref size_t i) {
+	assert(i < s.length, "doir.syntax.lexer: decoding past the source");
 	if (s[i] < 0x80) return s[i++];
 	bool valid;
 	immutable start = i;
@@ -147,6 +148,7 @@ private uint decode(const(char)[] s, ref size_t i) {
 		i = start + 1;
 		return uint.max;
 	}
+	assert(i > start + 1 && i <= s.length && i - start <= 4, "doir.syntax.lexer: a sequence that did not advance by its length");
 	return c;
 }
 
@@ -184,10 +186,13 @@ size_t integerEnd(const(char)[] s, size_t i) {
 
 // `[pP][-+]? [0-9]+` or `[eE][-+]? [0-9]+`, or `i` itself when it is absent, as `?` makes it.
 private size_t exponentEnd(const(char)[] s, size_t i, char lower, char upper) {
+	assert(i <= s.length, "doir.syntax.lexer: an exponent past the source");
 	if (!charAt(s, i, lower) && !charAt(s, i, upper)) return i;
 	size_t j = i + 1;
 	if (charAt(s, j, '+') || charAt(s, j, '-')) ++j;
-	return digitAt(s, j) ? skipDigits(s, j) : i;
+	immutable end = digitAt(s, j) ? skipDigits(s, j) : i;
+	assert(end == i || (end > j && end <= s.length), "doir.syntax.lexer: an exponent with no digits");
+	return end;
 }
 
 /// `FloatConstant`, hexadecimal or decimal: the index after the float at `i`, or `size_t.max`.
@@ -199,7 +204,7 @@ private size_t exponentEnd(const(char)[] s, size_t i, char lower, char upper) {
 size_t floatEnd(const(char)[] s, size_t i) {
 	if (fp.string.startsWith(s, "0x", i)) {
 		immutable m = i + 2;
-		// HexDigit* '.' HexDigit+ / HexDigit+ '.' HexDigit*
+		// `HexDigit* '.' HexDigit+ / HexDigit+ '.' HexDigit*`
 		immutable lead = skipHex(s, m);
 		if (charAt(s, lead, '.') && (hexDigitAt(s, lead + 1) || lead > m))
 			return exponentEnd(s, skipHex(s, lead + 1), 'p', 'P');
@@ -250,10 +255,12 @@ size_t stringCharEnd(const(char)[] s, size_t i) {
 
 // `'"' StringChar* '"'` from `i`, at its opening quote: its end, or the negated position it failed at.
 private size_t quotedEnd(const(char)[] s, size_t i, ref size_t failedAt) {
+	assert(charAt(s, i, '"'), "doir.syntax.lexer: a quoted string that does not open with a quote");
 	size_t j = i + 1;
 	for (;;) {
 		immutable next = stringCharEnd(s, j);
 		if (next == failed) break;
+		assert(next > j, "doir.syntax.lexer: a string character that did not advance");
 		j = next;
 	}
 	if (charAt(s, j, '"')) return j + 1;
@@ -263,6 +270,7 @@ private size_t quotedEnd(const(char)[] s, size_t i, ref size_t failedAt) {
 
 // RawString: an opening run of n >= 3 quotes, closed by the first run of n quotes not followed by another.
 private size_t rawStringEnd(const(char)[] s, size_t i) {
+	assert(i < s.length, "doir.syntax.lexer: a raw string past the source");
 	size_t n = 0;
 	while (charAt(s, i + n, '"')) ++n;
 	if (n < 3) return failed;
@@ -270,6 +278,7 @@ private size_t rawStringEnd(const(char)[] s, size_t i) {
 		if (s[j] != '"') continue;
 		size_t run = 0;
 		while (charAt(s, j + run, '"')) ++run;
+		assert(run >= 1 && j + run <= s.length, "doir.syntax.lexer: a run of quotes past the source");
 		if (run >= n) return j + run;
 		j += run - 1;
 	}
@@ -311,22 +320,27 @@ private size_t sourceInfoEnd(const(char)[] s, size_t i, ref size_t failedAt) {
 		}
 		++p;
 	}
+	assert(p > i && p <= s.length && s[p - 1] == '>', "doir.syntax.lexer: source info that does not end at its `>`");
 	return p;
 }
 
 // `matching_braces` from `i`, at its `{`; braces inside it count whatever surrounds them.
 private size_t matchingBracesEnd(const(char)[] s, size_t i) {
+	assert(charAt(s, i, '{'), "doir.syntax.lexer: matching braces from something that is not a `{`");
 	size_t depth = 0;
 	foreach (j; i .. s.length) {
 		if (s[j] == '{') ++depth;
 		else if (s[j] == '}' && --depth == 0) return j + 1;
+		assert(depth > 0, "doir.syntax.lexer: a brace count that fell to zero without closing");
 	}
 	return failed;
 }
 
 // The end of the identifier characters from `i`, whose first qualifies: `.` is not one, so `tail.x` starts with the keyword `tail`.
 private size_t wordEnd(const(char)[] s, size_t i) {
+	immutable start = i;
 	cast(void) decode(s, i);
+	assert(i > start, "doir.syntax.lexer: a word of no characters");
 	while (i < s.length) {
 		immutable b = s[i];
 		if (b < 0x80) {
@@ -343,6 +357,7 @@ private size_t wordEnd(const(char)[] s, size_t i) {
 
 // `([.] / UnicodeIdentifierContinue)*` from `i`.
 private size_t dottedEnd(const(char)[] s, size_t i) {
+	assert(i <= s.length, "doir.syntax.lexer: a dotted name past the source");
 	while (i < s.length) {
 		immutable b = s[i];
 		if (b < 0x80) {
@@ -383,6 +398,68 @@ struct Cursor {
 	private int language; // `language` _ string _ `{`: 1 after the keyword, 2 after the name, so the next `{` opens a body
 }
 
+// The end of a number whose digits start at `digits`, the token at `start`, setting `kind` to `float_` or `integer`; one byte, left `invalid`, if neither fits.
+pragma(inline, true)
+private size_t numberEnd(const(char)[] source, size_t start, size_t digits, ref TokenKind kind) {
+	immutable f = floatEnd(source, digits);
+	if (f != failed) {
+		kind = TokenKind.float_;
+		return f;
+	}
+	immutable n = integerEnd(source, digits);
+	if (n == failed) return start + 1;
+	kind = TokenKind.integer;
+	return n;
+}
+
+// The end of the string, raw string or character at `i`, setting `kind`, and `unterminated` if it does not close.
+pragma(inline, true)
+private size_t quotedTokenEnd(const(char)[] source, size_t i, ref TokenKind kind, ref bool unterminated) {
+	if (source[i] == '"') {
+		immutable raw = rawStringEnd(source, i);
+		if (raw != failed) {
+			kind = TokenKind.rawString;
+			return raw;
+		}
+		kind = TokenKind.string_;
+		size_t at;
+		immutable e = quotedEnd(source, i, at);
+		if (e != failed) return e;
+		unterminated = true;
+		return at;
+	}
+	kind = TokenKind.character;
+	immutable e = stringCharEnd(source, i + 1);
+	if (e != failed && charAt(source, e, '\'')) return e + 1;
+	unterminated = true;
+	return e == failed ? i + 1 : e;
+}
+
+// The end of the token at `i` that no ASCII rule took, setting `kind`: Unicode whitespace, a keyword, an identifier, or one character left `invalid`.
+pragma(inline, true)
+private size_t wordOrSpaceEnd(const(char)[] source, size_t i, ref TokenKind kind) {
+	size_t j = i;
+	immutable codepoint = decode(source, j);
+	if (isWhitespace(codepoint)) {
+		kind = TokenKind.whitespace;
+		while (j < source.length) {
+			size_t k = j;
+			if (!isWhitespace(decode(source, k))) break;
+			j = k;
+		}
+		return j;
+	}
+	if (!isIdentifierStart(codepoint)) return j;
+	immutable end = wordEnd(source, i);
+	// Keywords are 4 to 8 bytes; anything else is an identifier without comparing.
+	if (end - i >= 4 && end - i <= 8 && isKeyword(source[i .. end])) {
+		kind = TokenKind.keyword;
+		return end;
+	}
+	kind = TokenKind.identifier;
+	return dottedEnd(source, end);
+}
+
 /// The token at `cursor.at`, trivia included, advancing past it; `cursor.at` must be below the text's length.
 /// It cannot fail.
 ///
@@ -397,6 +474,7 @@ Token next(ref Cursor cursor) @trusted {
 	const source = cursor.source;
 	int language = cursor.language;
 	size_t i = cursor.at;
+	assert(i < source.length, "doir.lexer: lexing past the end of the source");
 	immutable start = i;
 	TokenKind kind = TokenKind.invalid, attempted;
 	bool unterminated = false;
@@ -430,40 +508,16 @@ Token next(ref Cursor cursor) @trusted {
 	else if (c == '}') { kind = TokenKind.rightBrace; ++i; }
 	else if (c == ';') { kind = TokenKind.semicolon; ++i; }
 	else if (c == '-' && charAt(source, i + 1, '>')) { kind = TokenKind.arrow; i += 2; }
-	else if (c == '-' && (digitAt(source, i + 1) || charAt(source, i + 1, '.'))) {
-		immutable f = floatEnd(source, i + 1);
-		immutable n = f == failed ? integerEnd(source, i + 1) : failed;
-		if (f != failed) { kind = TokenKind.float_; i = f; }
-		else if (n != failed) { kind = TokenKind.integer; i = n; }
-		else ++i;
-	} else if (c == '<') {
+	else if (c == '-' && (digitAt(source, i + 1) || charAt(source, i + 1, '.'))) i = numberEnd(source, i, i + 1, kind);
+	else if (c == '<') {
 		kind = TokenKind.sourceInfo;
 		size_t at;
 		immutable e = sourceInfoEnd(source, i, at);
 		if (e == failed) { i = at; unterminated = true; }
 		else i = e;
-	} else if (fp.string.ascii.isDigit(c) || c == '.') {
-		immutable f = floatEnd(source, i);
-		immutable n = f == failed ? integerEnd(source, i) : failed;
-		if (f != failed) { kind = TokenKind.float_; i = f; }
-		else if (n != failed) { kind = TokenKind.integer; i = n; }
-		else ++i;
-	} else if (c == '"') {
-		immutable raw = rawStringEnd(source, i);
-		size_t at;
-		if (raw != failed) { kind = TokenKind.rawString; i = raw; }
-		else {
-			kind = TokenKind.string_;
-			immutable e = quotedEnd(source, i, at);
-			if (e == failed) { i = at; unterminated = true; }
-			else i = e;
-		}
-	} else if (c == '\'') {
-		kind = TokenKind.character;
-		immutable e = stringCharEnd(source, i + 1);
-		if (e != failed && charAt(source, e, '\'')) i = e + 1;
-		else { i = e == failed ? i + 1 : e; unterminated = true; }
-	} else if (c == '%') {
+	} else if (fp.string.ascii.isDigit(c) || c == '.') i = numberEnd(source, i, i, kind);
+	else if (c == '"' || c == '\'') i = quotedTokenEnd(source, i, kind, unterminated);
+	else if (c == '%') {
 		kind = TokenKind.identifier;
 		size_t at;
 		immutable quoted = charAt(source, i + 1, '"') ? quotedEnd(source, i + 1, at) : failed;
@@ -473,30 +527,9 @@ Token next(ref Cursor cursor) @trusted {
 			cast(void) decode(source, i);
 			i = dottedEnd(source, i);
 		}
-	} else {
-		size_t j = i;
-		immutable codepoint = decode(source, j);
-		if (isWhitespace(codepoint)) {
-			kind = TokenKind.whitespace;
-			i = j;
-			while (i < source.length) {
-				size_t k = i;
-				if (!isWhitespace(decode(source, k))) break;
-				i = k;
-			}
-		} else if (isIdentifierStart(codepoint)) {
-			immutable end = wordEnd(source, i);
-			// Keywords are 4 to 8 bytes; anything else is an identifier without comparing.
-			if (end - i >= 4 && end - i <= 8 && isKeyword(source[i .. end])) {
-				kind = TokenKind.keyword;
-				i = end;
-			} else {
-				kind = TokenKind.identifier;
-				i = dottedEnd(source, end);
-			}
-		} else i = j;
-	}
+	} else i = wordOrSpaceEnd(source, i, kind);
 
+	assert(i > start && i <= source.length, "doir.lexer: a token that consumed nothing, or ran past the source");
 	attempted = kind;
 	if (unterminated) kind = TokenKind.unterminated;
 
