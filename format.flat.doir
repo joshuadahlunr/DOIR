@@ -1,0 +1,29 @@
+// The flat format: the image itself, with no header, loaded at address 0 unless the backends file fixes another (rules O-Format, O-Section).
+// It is what `res.bin` holds and what a boot loader or an emulator takes, and it pairs with any machine and operating system that needs no loader (rule OS-Target).
+// Every role is one section, so code, constants, data and zeros sit in the order they were placed, and zeros are written out rather than reserved.
+// It has no symbol table, so it cannot hold an import, and placement resolves every relocation before the writer runs.
+// It writes the image to `output_path`, which the backends file defines beside the paste (rule O-Artifact).
+
+export object : namespace = {
+	image_name : compiler.byte_pointer = "image"
+	image_flags : compiler.pointer_sized = 3	// executable | writable
+	image_alignment : compiler.pointer_sized = 16
+	image : compiler.section = compiler.sections.make(image_name, image_flags, image_alignment)
+
+	// The roles of `reference/format.doir`, all the one image.
+	code : alias = image
+	read_only : alias = image
+	data : alias = image
+	zero : alias = image
+
+	dynamic_imports : compiler.pointer_sized = 0
+}
+
+export compiler_impl : namespace = {
+	// Writes the image as it was placed, needing no header.
+	write_object : () -> compiler.pointer_sized = {
+		_ : compiler.section = compiler.emit_artifact(object.image, output_path)
+		files : compiler.pointer_sized = 1
+		_ : _ = std.return(files)
+	}
+}

@@ -1,0 +1,3 @@
+// O-Bits: a target has one bit order, so a second `compiler.assembler.bit_order` under it is ill-formed, even one that agrees.
+_ : compiler.pointer_sized = compiler.assembler.bit_order(compiler.assembler.most_significant_first)
+_ : compiler.pointer_sized = compiler.assembler.bit_order(compiler.assembler.most_significant_first)

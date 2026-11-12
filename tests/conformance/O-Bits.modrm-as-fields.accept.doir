@@ -1,0 +1,14 @@
+// O-Bits: x86's ModRM for `mov rax, rcx` (`mod 11, reg 001, rm 000`) written as fields, most significant first, is the byte 0xC8.
+scratch_name : compiler.byte_pointer = "scratch"
+scratch_flags : compiler.pointer_sized = 0
+scratch_alignment : compiler.pointer_sized = 1
+scratch : compiler.section = compiler.sections.make(scratch_name, scratch_flags, scratch_alignment)
+_ : compiler.pointer_sized = compiler.assembler.bit_order(compiler.assembler.most_significant_first)
+mod_bits : compiler.pointer_sized = 3
+mod_width : compiler.pointer_sized = 2
+reg_bits : compiler.pointer_sized = 1
+rm_bits : compiler.pointer_sized = 0
+field_width : compiler.pointer_sized = 3
+_ : compiler.pointer_sized = compiler.emit_bits(scratch, mod_bits, mod_width)
+_ : compiler.pointer_sized = compiler.emit_bits(scratch, reg_bits, field_width)
+_ : compiler.pointer_sized = compiler.emit_bits(scratch, rm_bits, field_width)

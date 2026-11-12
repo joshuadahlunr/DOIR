@@ -53,11 +53,114 @@ compiler : namespace = {
 	set_symbol_name_t : type = (T: deduced type, function: T, new_name: byte_pointer) -> T	// Comptime
 	set_symbol_name : set_symbol_name_t
 
-	// Emission.
-	emit_t : type = (b: byte) -> byte	// Comptime
+	// Output sections (O-Section): AlwaysComptime handles, like `level`, to byte buffers the compiler keeps per emitted function and places per target.
+	// A format file makes them and names their roles; a machine writes to the roles, so neither names the other (OS-Target, O-Format).
+	section : type = comptime_base_type(%64, %64)
+	// Writes section `s`, whole bytes, to the file `path` under the build's output directory, once the build succeeds (O-Artifact); returns `s`.
+	// A build writes as many files as it emits, such as a C backend's `.c` and `.h`; under a bundled target the file is a thin artifact for the bundle instead (O-Bundle).
+	emit_artifact_t : type = (s: section, path: byte_pointer) -> section	// Comptime
+	emit_artifact : emit_artifact_t
+	sections : namespace = {
+		// Flag bits for `make`.
+		executable : pointer_sized = 1
+		writable : pointer_sized = 2
+		zero_filled : pointer_sized = 4
+		// Makes a section named `name` in the object, with `flags` and an alignment in bytes, which must be a power of two.
+		make_t : type = (name: byte_pointer, flags: pointer_sized, alignment: pointer_sized) -> section	// Comptime
+		make : make_t
+		// Fixes the address a section is placed at, for images that load where they are put (hex, a freestanding ELF).
+		set_address_t : type = (s: section, address: pointer_sized) -> section	// Comptime
+		set_address : set_address_t
+
+		// What a writer reads once `place_sections` has run (O-Format): floor names, since a format cannot name `std.meta` (H-Boot, L-Mono).
+		count_t : type = () -> pointer_sized	// Comptime
+		count : count_t
+		at_t : type = (i: pointer_sized) -> section	// Comptime
+		at : at_t
+		name_t : type = (s: section) -> byte_pointer	// Comptime
+		name : name_t
+		word_t : type = (s: section) -> pointer_sized	// Comptime
+		flags : word_t
+		address : word_t
+		size : word_t
+		byte_at_t : type = (s: section, offset: pointer_sized) -> byte	// Comptime
+		byte_at : byte_at_t
+		// Appends every placed byte of `from` to `to`, so a writer copies a section without a loop over its bytes; a zero-filled `from` appends its size in zeros.
+		copy_t : type = (to: section, from: section) -> section	// Comptime
+		copy : copy_t
+	}
+
+	// Emission (O-Bits): every write appends bits at the section's cursor, in the target's bit order.
+	emit_t : type = (s: section, b: byte) -> byte	// Comptime
 	emit : emit_t
-	emit_bytes_t : type = (bytes: byte_pointer) -> byte	// Comptime
+	emit_bytes_t : type = (s: section, bytes: byte_pointer) -> byte	// Comptime
 	emit_bytes : emit_bytes_t
+	// Appends the low `count` bits of `value`, `count` from 1 to 64.
+	emit_bits_t : type = (s: section, value: pointer_sized, count: pointer_sized) -> pointer_sized	// Comptime
+	emit_bits : emit_bits_t
+	// Appends `size` zero bytes; the only write a zero-filled section accepts, which stores its size and no bytes.
+	reserve_t : type = (s: section, size: pointer_sized) -> pointer_sized	// Comptime
+	reserve : reserve_t
+
+	// Fixups (O-Fixup), in bytes from the start of the current function's contribution to a section, at a byte boundary.
+	position_t : type = (s: section) -> pointer_sized	// Comptime
+	position : position_t
+	patch_t : type = (s: section, offset: pointer_sized, b: byte) -> byte	// Comptime
+	patch : patch_t
+	// Records that the bytes at `offset` hold `target`'s address, written as `kind` plus `addend` (two's complement).
+	relocate_t : type = (s: section, offset: pointer_sized, target: entity, kind: pointer_sized, addend: pointer_sized) -> pointer_sized	// Comptime
+	relocate : relocate_t
+	relocations : namespace = {
+		// The kinds, neutral of format: a writer maps each onto its own (`R_X86_64_PC32`, `IMAGE_REL_AMD64_REL32`).
+		absolute_64 : pointer_sized = 0
+		absolute_32 : pointer_sized = 1
+		pc_relative_32 : pointer_sized = 2
+		// The relocations placement left to the writer, indexed from 0: imports, and every one when the format writes a relocatable object.
+		count : sections.count_t
+		index_t : type = (i: pointer_sized) -> pointer_sized	// Comptime
+		section_t : type = (i: pointer_sized) -> compiler.section	// Comptime
+		section : section_t
+		offset : index_t
+		kind : index_t
+		addend : index_t
+		target_t : type = (i: pointer_sized) -> entity	// Comptime
+		target : target_t
+	}
+
+	// The object's symbols, for a writer (O-Format): each defined function and static, and each library prototype it calls.
+	symbols : namespace = {
+		count : sections.count_t
+		at : relocations.target_t
+		// The symbol name (R-Mangle, M-SymbolName).
+		name_t : type = (symbol: entity) -> byte_pointer	// Comptime
+		name : name_t
+		section_t : type = (symbol: entity) -> compiler.section	// Comptime
+		section : section_t
+		word_t : type = (symbol: entity) -> pointer_sized	// Comptime
+		offset : word_t
+		// 1 for a prototype bound by `load_from_library` (FP-Load), 0 for a definition in this object.
+		is_imported : word_t
+		// The path `load_library` bound an imported symbol's library through.
+		library_path : name_t
+		// The host root's entry (L-Entry), which a writer makes the image's entry point.
+		entry_t : type = () -> entity	// Comptime
+		entry : entry_t
+	}
+
+	// The thin artifacts the bundle's targets emitted (O-Bundle), slice by slice in the order `levels.bundle` names them, for its `write_bundle`.
+	artifacts : namespace = {
+		count : sections.count_t
+		size : relocations.index_t
+		// The index in the bundle of the target that emitted artifact `i`.
+		slice : relocations.index_t
+		path_t : type = (i: pointer_sized) -> byte_pointer	// Comptime
+		path : path_t
+		byte_at_t : type = (i: pointer_sized, offset: pointer_sized) -> byte	// Comptime
+		byte_at : byte_at_t
+		// Appends all of artifact `i` to `to`.
+		copy_t : type = (to: section, i: pointer_sized) -> section	// Comptime
+		copy : copy_t
+	}
 
 	// Levels (T-Value): the nodes of the tower, joined by `lower_to` edges whose passes lower one onto another (L-Lower). AlwaysComptime like `entity`, since a level value holds an entity id (MEM-Escape). Floor names (H-Boot): a build without std builds its tower with these too. The scan reads `make`, `this_file` and `lower_to` before ascent, so they are written only at level scope (L-Scan).
 	level : type = comptime_base_type(%64, %64)
@@ -80,9 +183,12 @@ compiler : namespace = {
 		// Marks the target that runs the program's root as a script (L-Entry).
 		set_host_t : type = (t: level) -> level	// Comptime
 		set_host : set_host_t
+		// Makes `targets` alternatives, each the host of its own thin artifact, and `from` the level whose `compiler_impl.write_bundle` joins them into one file; returns `from` (O-Bundle).
+		bundle_t : type = (from: level, targets: pack) -> level	// Comptime
+		bundle : bundle_t
 	}
 
-	// The two layout operations the encoders need. `truncate_to_byte` is the one narrowing conversion: arithmetic is pointer_sized end to end and `emit` writes a byte.
+	// The two layout operations the encoders need. `truncate_to_byte` is the one narrowing conversion: arithmetic is pointer_sized end to end, and `emit` writes a byte and `emit_bits` the low bits of a word.
 	shift_right_t : type = (value: pointer_sized, arg: pointer_sized) -> pointer_sized	// Comptime
 	shift_right : shift_right_t
 	truncate_to_byte_t : type = (value: pointer_sized) -> byte	// Comptime
@@ -132,5 +238,12 @@ compiler : namespace = {
 
 		begin_register_allocation_t : type = () -> register
 		begin_register_allocation : begin_register_allocation_t
+
+		// The order `emit_bits` fills each byte in (O-Bits), declared once by a machine that writes partial bytes.
+		// x86 writes ModRM fields as its manual draws them, most significant first; ARM and RISC-V write a word's fields from bit 0, least significant first, which lays the word out little-endian.
+		most_significant_first : pointer_sized = 0
+		least_significant_first : pointer_sized = 1
+		bit_order_t : type = (order: pointer_sized) -> pointer_sized	// Comptime
+		bit_order : bit_order_t
 	}
 }

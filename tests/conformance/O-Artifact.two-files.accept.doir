@@ -1,0 +1,15 @@
+// O-Artifact: one build writes several files, as a C backend writes a source file and its header, each from a section of its own.
+alignment : compiler.pointer_sized = 1
+plain : compiler.pointer_sized = 0
+source_name : compiler.byte_pointer = "source"
+source : compiler.section = compiler.sections.make(source_name, plain, alignment)
+header_name : compiler.byte_pointer = "header"
+header : compiler.section = compiler.sections.make(header_name, plain, alignment)
+declaration : compiler.byte_pointer = "int add(int a, int b);\n"
+definition : compiler.byte_pointer = "int add(int a, int b) { return a + b; }\n"
+_ : compiler.byte = compiler.emit_bytes(header, declaration)
+_ : compiler.byte = compiler.emit_bytes(source, definition)
+header_path : compiler.byte_pointer = "add.h"
+source_path : compiler.byte_pointer = "add.c"
+_ : compiler.section = compiler.emit_artifact(header, header_path)
+_ : compiler.section = compiler.emit_artifact(source, source_path)

@@ -1,0 +1,7 @@
+// O-Artifact: a path is relative to the build's output directory, so the absolute `/tmp/image.bin` is ill-formed.
+name : compiler.byte_pointer = "image"
+flags : compiler.pointer_sized = 0
+alignment : compiler.pointer_sized = 1
+image : compiler.section = compiler.sections.make(name, flags, alignment)
+path : compiler.byte_pointer = "/tmp/image.bin"
+_ : compiler.section = compiler.emit_artifact(image, path)

@@ -1,0 +1,8 @@
+// O-Bits: `compiler.emit_bits` writes from 1 to 64 bits, so a count of 0 is ill-formed.
+scratch_name : compiler.byte_pointer = "scratch"
+scratch_flags : compiler.pointer_sized = 0
+scratch_alignment : compiler.pointer_sized = 1
+scratch : compiler.section = compiler.sections.make(scratch_name, scratch_flags, scratch_alignment)
+value : compiler.pointer_sized = 1
+none : compiler.pointer_sized = 0
+_ : compiler.pointer_sized = compiler.emit_bits(scratch, value, none)

@@ -199,9 +199,11 @@ DOIR types are structural (`S-Struct`): two types convert implicitly exactly whe
 
 A program is a set of files, arranged into a tower of levels that the compiler reads from the files themselves before it evaluates anything (`L-Tower`, `L-Scan`). The levels of the tower are each file's root, the builtin block, and each namespace that `compiler.levels.make` makes into a `compiler.level`. `compiler.levels.lower_to(from, to, passes)` says that one level is lowered onto another by `passes` (`L-Lower`), and may be written in any file, so `std` never has to name the backends it runs on. `compiler.levels.check(t, name)` adds a check to the semantic analysis a level runs over its own entities (`L-Sema`): a level defines its analysis with `check` and its lowering with `lower_to`, and neither needs a change to the compiler. A level that writes no edge lowers onto the levels it names, so a program over `std` writes none. A backend lowers onto `compiler.levels.builtin`, the builtin block, and the levels that do are the build's targets: the levels above them are evaluated and lowered once for each. With more than one, `compiler.levels.set_host` marks the one that runs the program. One file is the program: on the host its top-level declarations run top to bottom, starting from its first (`L-Entry`). A build with no target gets one by default: the backend native to the machine the compiler runs on, or Mizu if that cannot be determined (`T-Value`). There is no `main`.
 
-A backend is a machine and an operating system together.
-Its namespace pastes both a machine file (`reference/machine.doir`, or x86 or RISC-V) and an operating-system file (`os.linux.doir`, `os.windows.doir` or `os.freestanding.doir`), and their `std` namespaces merge (`OS-Target`).
+A backend is a machine, an operating system and an executable format together.
+Its namespace pastes a machine file (`reference/machine.doir`, or x86 or RISC-V), an operating-system file (`os.linux.doir`, `os.windows.doir` or `os.freestanding.doir`) and a format file (`format.flat.doir`, or ELF, Intel HEX, PE or Mach-O), and their `std` and `compiler_impl` namespaces merge (`OS-Target`).
 The machine supplies `std`'s primitives, and the operating system supplies `std.os`: files, directories, processes, memory, time, threads and the heap (Part II §19).
+The format supplies the sections the machine's encoders write to and the writer that turns them into files (Part II §20), so freestanding code can be a flat image, a hex file or an ELF, and none of the three files names another.
+Several targets can also be bundled into one file whose slices are alternatives, as a macOS universal binary holds an x86_64 and an arm64 image (`O-Bundle`).
 
 ```rust
 x86_backend : namespace = { ... }      // machine, compiler_impl and the std bodies for x86
@@ -249,8 +251,19 @@ Level 0 is the `compiler` level: the builtin block, the root of the last scope e
 | `compiler.comptime_base_type`                                                                 | as `base_type`                                                  | As `base_type`, carrying `AlwaysComptime` and a fresh discriminator; defines `compiler.entity` and `compiler.assembler.register`. |
 | `compiler.signed_base_type`                                                                   | as `base_type`                                                  | As `base_type`, carrying `Signed` and the reserved signed discriminator (`S-Numeric`); defines `machine.pointer_difference` and the optional `machine.i*`. |
 | `compiler.float_base_type`                                                                    | as `base_type`                                                  | As `base_type`, carrying `Float` and the reserved float discriminator (`S-Numeric`); defines the optional `machine.f32` and `machine.f64` (`T-Optional`). |
-| `compiler.emit`                                                                               | `(b: byte) -> byte`                                             | Appends one byte to the output.                                                                            |
-| `compiler.emit_bytes`                                                                         | `(bytes: byte_pointer) -> byte`                                 | Appends a string of bytes to the output.                                                                   |
+| `compiler.sections.make`                                                                      | `(name: byte_pointer, flags: pointer_sized, alignment: pointer_sized) -> section` | Makes an output section; the flags are `sections.executable`, `writable` and `zero_filled` (`O-Section`). |
+| `compiler.sections.set_address`                                                               | `(s: section, address: pointer_sized) -> section`               | Fixes the address a section is placed at (`O-Format`).                                                     |
+| `compiler.emit`                                                                               | `(s: section, b: byte) -> byte`                                 | Appends one byte to a section (`O-Section`).                                                               |
+| `compiler.emit_bytes`                                                                         | `(s: section, bytes: byte_pointer) -> byte`                     | Appends a string of bytes to a section.                                                                    |
+| `compiler.emit_bits`                                                                          | `(s: section, value: pointer_sized, count: pointer_sized) -> pointer_sized` | Appends the low `count` bits of `value`, in the target's bit order (`O-Bits`).                 |
+| `compiler.emit_artifact`                                                                      | `(s: section, path: byte_pointer) -> section`                   | Writes section `s` to the file `path` under the build's output directory, once the build succeeds (`O-Artifact`). |
+| `compiler.reserve`                                                                            | `(s: section, size: pointer_sized) -> pointer_sized`            | Appends `size` zero bytes; the only write a zero-filled section accepts (`O-Section`).                     |
+| `compiler.position`                                                                           | `(s: section) -> pointer_sized`                                 | Offset of the cursor in the current contribution to `s` (`O-Fixup`).                                       |
+| `compiler.patch`                                                                              | `(s: section, offset: pointer_sized, b: byte) -> byte`          | Overwrites a byte already in the current contribution to `s` (`O-Fixup`).                                  |
+| `compiler.relocate`                                                                           | `(s: section, offset: pointer_sized, target: entity, kind: pointer_sized, addend: pointer_sized) -> pointer_sized` | Records that the bytes at `offset` hold `target`'s address (`O-Fixup`). |
+| `compiler.assembler.bit_order`                                                                | `(order: pointer_sized) -> pointer_sized`                       | Declares the order `emit_bits` fills a byte in: `most_significant_first` or `least_significant_first` (`O-Bits`). |
+| `compiler.levels.bundle`                                                                      | `(from: level, targets: pack) -> level`                         | Makes `targets` the alternative slices of one file that `from` writes, and returns `from` (`O-Bundle`).    |
+| `compiler.sections.*`, `compiler.symbols.*`, `compiler.relocations.*`, `compiler.artifacts.*` | see [`reference/compiler.doir`](reference/compiler.doir)        | What a format's writer reads of the placed object, and a bundle's of its slices (`O-Format`, `O-Bundle`).  |
 | `compiler.levels.make`                                                                        | `(implementation: namespace) -> level`                          | Makes a namespace a level of the tower (`T-Value`, `L-Scan`).                                              |
 | `compiler.levels.this_file`                                                                   | `() -> level`                                                   | The root of the file it is written in, as a level (`T-Value`).                                             |
 | `compiler.levels.lower_to`                                                                    | `(from: level, to: level, passes: byte_pointer) -> level`       | Lowers `from` onto `to` by `passes`, and returns `from` (`L-Lower`).                                       |
@@ -267,7 +280,8 @@ Level 0 is the `compiler` level: the builtin block, the root of the last scope e
 | `compiler.argument_count`                                                                     | `(call: entity) -> pointer_sized`                               | Number of arguments passed to `call`; allows `compiler_impl` hooks to marshal arguments without violating `L-Mono`. |
 | `compiler.argument`                                                                           | `(call: entity, i: pointer_sized) -> entity`                    | Returns the binding entity handle of argument `i` of `call` (`L-Mono`, `T-Bridge`).                        |
 
-**Other builtins** (runtime or marker functions): `compiler.indicate_return` marks what a body hands back; `compiler.return` and `compiler.block_result` (`(T: deduced type, value: T) -> T`) say which register it is handed back in; `compiler.assembler.pin_register(T: type, value: T, register)`; `compiler.assembler.share_register` (`std.unsafe.share_register` above level 0); `compiler.assembler.begin_register_allocation`. Constants and types: `compiler.pointer_sized` (host word), `compiler.byte`, `compiler.byte_pointer`, `compiler.entity` (the entity handle, `E-Remap`), `compiler.level` (a level of the tower, always-comptime, `T-Value`), `compiler.levels.builtin` (the builtin block as a level, `L-Lower`).
+**Other builtins** (runtime or marker functions): `compiler.indicate_return` marks what a body hands back; `compiler.return` and `compiler.block_result` (`(T: deduced type, value: T) -> T`) say which register it is handed back in; `compiler.assembler.pin_register(T: type, value: T, register)`; `compiler.assembler.share_register` (`std.unsafe.share_register` above level 0); `compiler.assembler.begin_register_allocation`.
+Constants and types: `compiler.pointer_sized` (host word), `compiler.byte`, `compiler.byte_pointer`, `compiler.entity` (the entity handle, `E-Remap`), `compiler.level` (a level of the tower, always-comptime, `T-Value`), `compiler.levels.builtin` (the builtin block as a level, `L-Lower`), `compiler.section` (an output section, always-comptime, `O-Section`), and the relocation kinds `compiler.relocations.absolute_64`, `absolute_32` and `pc_relative_32`.
 
 ---
 
@@ -375,9 +389,9 @@ where $\pi^{*}$ applies $\pi$ to every entity id inside a component value (`Pare
   > **In Plain English:** A comptime binding exists only in the compiler. An emitted call to a function with a body binds its comptime arguments into a specialization (`C-Specialize`), so they never become operands. The arguments left are those that are not keys: every argument of a prototype without a body (a machine primitive or a linked symbol) or of an indirect call (`FP-Call`), and an argument whose parameter type is marked `std.types.share_body_across_values` (`C-SharedBody`). They are runtime operands, so a comptime binding of an ordinary value type cannot be passed as one without first being converted to runtime by `std.comptime_to_runtime` (`C-ToRuntime`). Literals are the commonest case: a number, string or character is comptime by `C-Constant`, so every constant a primitive such as `std.add` needs has to be named and converted to runtime first. Values of always-comptime types (types, blocks, packs, entities) are exempt: a primitive such as `std.copy(T, v)` consumes its type in the compiler when the instruction is selected, not as an operand. A body cannot consume one without a copy of its own, so passing one through a function pointer is ill-formed (`FP-Call`), and no type is both always-comptime and `SharedBody` (`M-Flag`). A folded or inlined call is not emitted, so it is not subject to the rule; the transition primitive is exempt, since converting to runtime is exactly what it does. An emitted terminator is a call like any other (`C-Term`).
 - **[WF-Term] Explicit Terminators:**  
   $$
-  \text{Every function body, every block binding (of type } \mathtt{block}\text{, or the direct value of a declaration not of type } \mathtt{type} \text{ or } \mathtt{namespace}\text{, B-Result), and the program's root on the host target, where it executes as a script (L-Entry) must end with a call to a terminator } (\mathtt{std.return}, \mathtt{std.block_result}, \mathtt{std.halt}\text{, or a } \mathtt{tail} \text{ call, B-Tail}).
+  \text{Every function body, every block binding (of type } \mathtt{block}\text{, or the direct value of a declaration not of type } \mathtt{type} \text{ or } \mathtt{namespace}\text{, B-Result), and the program's root on the host target, where it executes as a script (L-Entry) must end with a call to a terminator } (\mathtt{std.return}, \mathtt{std.block_result}, \mathtt{std.halt}\text{, their level-0 forms } \mathtt{compiler.return} \text{ and } \mathtt{compiler.block\_result}\text{, or a } \mathtt{tail} \text{ call, B-Tail}).
   $$
-  > **In Plain English:** Execution can never "fall off the edge" of a block. This applies to every block that runs, including the blocks spliced in by `std.if` and `B-Loop` bodies: an empty branch still has to say how it ends, so a do-nothing branch is `skip : block = { _ : _ = std.block_result(std.nothing) ; }` (`WF-Void`). The rule is syntactic, so a `block` binding must end properly even if nothing ever runs it. Bodies that are never executed — a type definition, a namespace, the root of a file that is not the program, or the root of an accelerator/compute target where the file contributes only exported entry points (`L-Entry`) — are not held to it.
+  > **In Plain English:** Execution can never "fall off the edge" of a block. This applies to every block that runs, including the blocks spliced in by `std.if` and `B-Loop` bodies: an empty branch still has to say how it ends, so a do-nothing branch is `skip : block = { _ : _ = std.block_result(std.nothing) ; }` (`WF-Void`). The rule is syntactic, so a `block` binding must end properly even if nothing ever runs it. Code that sees no machine, such as a bundle's writer (`O-Bundle`), has no `std` to name and ends its bodies with `compiler.return` and `compiler.block_result`. Bodies that are never executed — a type definition, a namespace, the root of a file that is not the program, or the root of an accelerator/compute target where the file contributes only exported entry points (`L-Entry`) — are not held to it.
 - **[WF-Void] Returning and Yielding Nothing:**  
   $$
   \frac{f : (\dots) \to \mathtt{void} \;\lor\; \text{the value of block } B \text{ is unused}}{\mathrm{std.return}(\mathrm{std.nothing}) \text{ in } f \quad\text{and}\quad \mathrm{std.block\_result}(\mathrm{std.nothing}) \text{ in } B \text{ are the terminators that hand back no value}}
@@ -1018,6 +1032,7 @@ where $\pi^{*}$ applies $\pi$ to every entity id inside a component value (`Pare
 
   Some names are floor rather than debt.
   `compiler.library`, `compiler.load_library`, `compiler.load_from_library` and `compiler.set_symbol_name` are floor because the operating system pasted into a backend binds its C library below `std` (`OS-Target`); they are the same `HostServices` entries as `std.load_library`, `std.functions.load_from_library` and `std.functions.set_symbol_name`, under a second name, and `std.library` aliases `compiler.library`.
+  The output builtins are floor too: sections, emission, fixups, `compiler.emit_artifact`, `compiler.assembler.bit_order`, `compiler.levels.bundle` and the `compiler.sections`, `compiler.symbols`, `compiler.relocations` and `compiler.artifacts` accessors, because the machine encoders and the format writers that use them are written below `std` (`O-Format`).
   `compiler.entity` lives at level 0 because the `compiler_impl` hooks need it below `std`, and `compiler.argument_count` and `compiler.argument` let `compiler_impl.pass_arguments` and bridge calls (`T-Bridge`) inspect call arguments without violating `L-Mono`; `compiler.paste_file` is how a build without `std` brings in files, by pasting them; `std.import`, which compiles a file separately, is not its twin but a different operation above level 0.
   One debt is visible: `compiler.entity` pins the entity type to the host word the bootstrap invented.
   And every name in Part I §7 is still called, by this repository or by the Mizu level Phase 5 ports (`mizu.doir`, `tree/D`); the legacy names nothing called (`always_comptime`, `indicate_yield`, `debug_print`, `current_entity`, `assembler.yield_register`) are retired, and a port that meets one replaces it with its `std` counterpart.
@@ -1373,9 +1388,9 @@ where $\pi^{*}$ applies $\pi$ to every entity id inside a component value (`Pare
   > **In Plain English:** Lowering rewrites a level's program into entities of the level below it on the way to a target $\tau$ (`L-Lower`). The original entities are not deleted: they keep their ids and level and still answer queries (types, flags, source locations, attributes). They are retired under $\tau$, which adds $\tau$ to their `Lowered` relation: `L-Mono` already forbids lower entities from referencing them, and from now on nothing that runs below the level for $\tau$ reads them, so they can no longer affect lower levels on that target. Because retirement is tracked per target, lowering for $\tau_1$ leaves entities unretired and readable for $\tau_2$'s descent. A level handed down by an edge with no passes is retired with the head it was handed to.
 - **[L-Entry] A Program Is a Script:**  
   $$
-  \text{The root block of the program file (the file the build names as the program, L-Tower) runs in lexical order from its first declaration to its terminator on the build's host target (T-Value).}
+  \text{The root block of the program file (the file the build names as the program, L-Tower) runs in lexical order from its first declaration to its terminator on each of the build's host targets (T-Value).}
   $$
-  > **In Plain English:** A DOIR program needs no `main`. On the build's host target (`compiler.levels.set_host`), its outermost block is executed like any other block, so it ends with `std.halt()` (`WF-Term`). Its comptime lines fold as they are reached (`C-Order`); the rest is the program's entry code. For every other target (such as SPIR-V or shader targets, `T-Device`), the program file contributes exported functions and entry points (`compiler_impl.export_entry`, `T-Bridge`) rather than an executable top-level script, so their roots need no terminator (`WF-Term`). Files below the program and files it imports contribute names, not code: every top-level line in them must fold or be a declaration, and their roots are never executed.
+  > **In Plain English:** A DOIR program needs no `main`. On the build's host target (`compiler.levels.set_host`), its outermost block is executed like any other block, so it ends with `std.halt()` (`WF-Term`). Its comptime lines fold as they are reached (`C-Order`); the rest is the program's entry code. A build has one host, or one per slice of a bundle (`O-Bundle`): the slices are alternatives, so each runs the whole script, and only one of them runs on a given machine. For every other target (such as SPIR-V or shader targets, `T-Device`), the program file contributes exported functions and entry points (`compiler_impl.export_entry`, `T-Bridge`) rather than an executable top-level script, so their roots need no terminator (`WF-Term`). Files below the program and files it imports contribute names, not code: every top-level line in them must fold or be a declaration, and their roots are never executed.
 
 ---
 
@@ -1389,13 +1404,14 @@ where $\pi^{*}$ applies $\pi$ to every entity id inside a component value (`Pare
   \tau_1, \dots, \tau_n = \text{the targets (L-Lower)} \quad (n \ge 0); \qquad n = 0 \implies \text{the compiler adds its default backend } D \text{ with } D \xrightarrow{\pi_D} \varepsilon\text{, and every edge onto } \varepsilon \text{ goes onto } D \text{ instead}
   $$
   $$
-  \text{host} = \begin{cases} \tau_1 & n \le 1 \\ \text{the one target passed to } \mathrm{compiler.levels.set\_host} & n > 1 \end{cases} \qquad n > 1 \land \text{no or several targets passed to } \mathrm{compiler.levels.set\_host} \implies \text{ill-formed}
+  \text{hosts} = \begin{cases} \{\tau_1\} & n \le 1 \\ \text{the targets of the bundle (O-Bundle)} & n > 1 \land \text{a bundle exists} \\ \{\text{the one target passed to } \mathrm{compiler.levels.set\_host}\} & n > 1 \land \text{no bundle exists} \end{cases} \qquad n > 1 \land \text{no bundle} \land \text{no or several targets passed to } \mathrm{compiler.levels.set\_host} \implies \text{ill-formed}
   $$
   > **In Plain English:** A `compiler.level` is a value naming a level of the tower: `compiler.levels.make` makes a namespace one, `this_file` names the root of its own file, and `lower_to` joins levels with edges.
   > A backend's namespace provides the `machine` types, `compiler_impl` hooks and `std` bodies; it becomes a target by lowering onto `compiler.levels.builtin` with its passes, and descent and emission run once per target.
   > There is no build-wide fallback schedule: every pass belongs to an edge.
   > One build can have x86 and SPIR-V targets at once.
   > With one target it is the host; with several, `compiler.levels.set_host` marks the one that runs the program's root (`L-Entry`), and leaving it out or marking two is an error.
+  > A bundle makes each of its targets a host of its own slice instead (`O-Bundle`), so a build with one needs no `set_host`.
   > The host mark is read by descent, not by the scan, so it may be written in any level.
   > A build with no target gets one by default, supplied by the compiler with that backend's own passes: the backend native to the machine the compiler runs on, paired with the operating system the compiler runs on (`OS-Target`), or Mizu with the freestanding one if the compiler cannot tell what they are.
   > Whatever would have lowered straight onto `builtin` lowers onto it instead, and it is the host.
@@ -1426,9 +1442,9 @@ where $\pi^{*}$ applies $\pi$ to every entity id inside a component value (`Pare
   \frac{c : \text{Call} \quad \tau = \text{the target being lowered} \quad \tau \notin \text{Live}(f) \quad \text{Live}(f) = \{\sigma\} \quad f = \alpha(\text{Call}(c))}{\tau \text{ lowers } c \text{ through its hook } \mathtt{compiler\_impl.bridges.}\sigma\mathtt{.call}(f, c) \text{, and } \sigma \text{ emits } f \text{ through its hook } \mathtt{compiler\_impl.export\_entry}(f)}
   $$
   $$
-  \tau \notin \text{Live}(f) \;\land\; |\text{Live}(f)| > 1 \implies \text{ill-formed}
+  \tau \notin \text{Live}(f) \;\land\; |\text{Live}(f)| > 1 \implies \text{ill-formed}; \qquad \tau, \sigma \text{ slices of one bundle (O-Bundle)} \implies \text{a call from } \tau \text{ to } f \text{ live only on } \sigma \text{ is ill-formed}
   $$
-  > **In Plain English:** Calling code that lives on another target is not a branch. Each backend declares its own half of every crossing. The callee's backend supplies `compiler_impl.export_entry`, which emits a function as an entry point other targets can reach. The caller's backend supplies, for each target $\sigma$ it can call, a namespace `compiler_impl.bridges.`$\sigma$ whose `call` hook marshals the arguments and the result — a register shuffle, a copy to a buffer, a kernel launch — and invokes that entry point; the compiler uses it in place of `compiler_impl.call`. The hook inspects call arguments using the level-0 builtins `compiler.argument_count` and `compiler.argument`, since a backend cannot reference `std.meta` (`L-Mono`). The namespace is named after the declaration that holds $\sigma$ (`targets.spirv` gives `bridges.spirv`), so a backend needs no reference to its peer to declare it. A pair with no such namespace cannot call across: the hook is a name resolved where it is used, so the absent one is reported there, naming both targets (`A-Res`). An argument the hook cannot marshal makes the hook ill-formed for that call, and that diagnostic names both targets too. A callee live for several targets other than the caller's is ill-formed to call across, rather than the compiler picking one: restrict it with `std.targets.compile_for`, or call a wrapper that is.
+  > **In Plain English:** Calling code that lives on another target is not a branch. Each backend declares its own half of every crossing. The callee's backend supplies `compiler_impl.export_entry`, which emits a function as an entry point other targets can reach. The caller's backend supplies, for each target $\sigma$ it can call, a namespace `compiler_impl.bridges.`$\sigma$ whose `call` hook marshals the arguments and the result — a register shuffle, a copy to a buffer, a kernel launch — and invokes that entry point; the compiler uses it in place of `compiler_impl.call`. The hook inspects call arguments using the level-0 builtins `compiler.argument_count` and `compiler.argument`, since a backend cannot reference `std.meta` (`L-Mono`). The namespace is named after the declaration that holds $\sigma$ (`targets.spirv` gives `bridges.spirv`), so a backend needs no reference to its peer to declare it. A pair with no such namespace cannot call across: the hook is a name resolved where it is used, so the absent one is reported there, naming both targets (`A-Res`). An argument the hook cannot marshal makes the hook ill-formed for that call, and that diagnostic names both targets too. A callee live for several targets other than the caller's is ill-formed to call across, rather than the compiler picking one: restrict it with `std.targets.compile_for`, or call a wrapper that is. Two slices of a bundle never call each other, since only one of them runs; the diagnostic annotates the call and names both slices, with a hint to make the callee live on the caller's slice too. A slice may still bridge to a target outside the bundle, such as a GPU.
 - **[T-Order] Effects Across Targets Have No Implicit Order:**  
   $$
   \text{order}(a, b) \text{ defined} \iff \tau(a) = \tau(b) \;\lor\; \text{a bridge call (T-Bridge) establishes a synchronization edge from } a \text{ to } b
@@ -1475,7 +1491,7 @@ where $\pi^{*}$ applies $\pi$ to every entity id inside a component value (`Pare
   It may define an emulated one too, and its definition then replaces the software body for every operand type that operation takes; the operations over both integers and floats have one prototype per kind (`N-Kind`), so a backend replaces the integer and float bodies separately.
   Its descent passes are not in the namespace: they are the passes of its edge onto `compiler.levels.builtin` (`L-Lower`).
   `reference/machine.doir` states the whole contract as declarations.
-  The same namespace also holds an operating system, which supplies `std.os` and the heap; that half of the signature is `OS-Sig`'s.
+  The same namespace also holds an operating system, which supplies `std.os` and the heap, and a format, which supplies the sections and the writer; those parts of the signature are `OS-Sig`'s and `O-Format`'s.
 - **[T-Optional] Optional Target Features:**  
   $$
   \frac{n \in \text{opt}(\mathtt{std}) \quad S \text{ does not provide } n}{\text{every alias of } n \text{ is absent: declaring it is well-formed, using it is ill-formed (A-Res)}}
@@ -1517,16 +1533,17 @@ Both registers are components on the binding's own entity, indexed per target $\
 `std` is to RISC-V what `std.os` is to POSIX: a small portable core that a target supplies, with software bodies for what can be written over it.
 `standard.os.doir` declares it and `standard.doir` pastes it into `std` (`I-Paste`); [`reference/operating_system.doir`](reference/operating_system.doir) states what an operating system must supply, as `reference/machine.doir` does for a machine.
 
-- **[OS-Target] A Target Is a Machine and an Operating System:**  
+- **[OS-Target] A Target Is a Machine, an Operating System and a Format:**  
   $$
-  \text{a backend namespace } N \text{ that pastes a machine file and an operating-system file supplies } \mathrm{sig}(\mathtt{std}) \cup \mathrm{sig}(\mathtt{std.os})\text{; their } \mathtt{std} \text{ namespaces merge (R-Merge)}
+  \text{a backend namespace } N \text{ that pastes a machine file, an operating-system file and a format file supplies } \mathrm{sig}(\mathtt{std}) \cup \mathrm{sig}(\mathtt{std.os}) \cup \mathrm{sig}(\text{format})\text{; their } \mathtt{std} \text{ and } \mathtt{compiler\_impl} \text{ namespaces merge (R-Merge)}
   $$
   > **In Plain English:** A target is not a machine alone: x86 with Linux, RISC-V with Linux, x86 with Windows and Mizu with nothing are four targets.
+  > Nor is the file it writes part of the operating system: freestanding x86 can be a flat image, an Intel HEX file or an ELF, so the format is a third file, chosen apart from the other two (`O-Format`).
   > The backend namespace pastes both files, so the machine's `std` (its primitives) and the operating system's `std` (its `std.os` bodies) are one namespace, and `std`'s prototypes bind to both through `I-Extern`, with no new mechanism: a namespace made a level adds no prefix (`R-Mangle`), so the operating system's `open` in `std.os.files` has the symbol `std.os.files.open`.
   > An operating system is written at level 1, beside the machine, so it names the machine's `std` and the floor but not `std`'s own declarations (`L-Mono`); it restates the values of `std.os.errors` and `std.os.files.flags` it returns.
   > It is written over the system's C library, which it loads with the floor's `compiler.load_library`, renaming each C prototype to its C symbol (`compiler.set_symbol_name`, `M-SymbolName`) and binding it with `compiler.load_from_library` (`FP-Library`, `FP-Load`, `H-Boot`).
   > The C library's namespace sits at the backend's root, so the levels above see it like any backend member (`R-Unqual`), as a platform extension.
-  > A target pastes one operating system; two would define each `std.os` name twice (`WF-Unique`).
+  > A target pastes one operating system and one format; two would define each `std.os` or `object` name twice (`WF-Unique`).
 - **[OS-Sig] Operating-System Signature Satisfaction:**  
   $$
   \frac{\text{target } S \quad n \in \mathrm{sig}(\mathtt{std.os})}{S \text{ provides } n}
@@ -1557,6 +1574,97 @@ Both registers are components on the binding's own entity, indexed per target $\
   > Their C libraries are loaded into the compiler (`FP-Library`), so a metaprogram can read a file or the clock on the build machine.
   > When the native operating system is not the target's, the host evaluates its file for comptime alone: it is never lowered, and its libraries are no dependency of the program, so a Windows program builds on Linux.
   > Comptime answers then depend on the build machine, so `H-Det` holds only as far as its operating system answers alike, as `FP-Library` already says of native libraries.
+
+---
+
+## 20. Object Output
+
+What descent emits is not one stream of bytes but a set of sections, which a format then writes as a file.
+The three parts of a target each own one step: the machine encodes instructions into sections by role, the compiler keeps each function's contribution and places them, and the format writes the container, in DOIR, at comptime.
+[`reference/format.doir`](reference/format.doir) states what a format must supply, as `reference/machine.doir` does for a machine.
+
+- **[O-Section] Output Goes to Sections:**  
+  $$
+  \frac{e \vdash n \Downarrow \nu \quad e \vdash f \Downarrow \phi \quad e \vdash a \Downarrow \alpha \quad \alpha = 2^k}{\langle s : \mathtt{compiler.section} = \mathrm{compiler.sections.make}(n, f, a) \rangle \rightsquigarrow s \text{ names a fresh section } \nu \text{ with flags } \phi \text{ and alignment } \alpha} \qquad \frac{\mathtt{zero\_filled} \in \phi(s) \quad w \text{ is a write to } s \text{ other than } \mathrm{compiler.reserve}}{\text{ill-formed}}
+  $$
+  > **In Plain English:** A section is an always-comptime handle, like a level, so it never reaches runtime (`MEM-Escape`).
+  > `compiler.emit`, `emit_bytes`, `emit_bits` and `reserve` append to the section they are given; there is no output without one.
+  > A format makes its sections under its own names (`.text`, `.rdata`, an address range) and gives each of four roles one of them: `object.code`, `object.read_only`, `object.data` and `object.zero`.
+  > A machine's encoders write only to the roles, which resolve to the format's sections because the three files share one backend namespace (`R-Merge`), so the same encoder serves every format.
+  > Static storage is placed the same way: a slot comptime stored to goes in `object.data` with those contents, one never stored to in `object.zero` (`MEM-Static`), and string literals in `object.read_only` (`MEM-String`).
+  > A zero-filled section holds a size and no bytes: `reserve` grows it, and any other write is ill-formed, with a diagnostic that annotates the write and the section's `make` and a hint to use `reserve`.
+  > Placement places the sections made before it runs; a section a writer makes is scratch space for a file it is building, never placed, and reaches disk only through `compiler.emit_artifact` (`O-Artifact`).
+- **[O-Bits] Emission Is Bit-Granular:**  
+  $$
+  \frac{1 \le c \le \mathrm{size\_bits}(\mathtt{compiler.pointer\_sized}) \quad \beta = \text{the target's bit order}}{\mathrm{compiler.emit\_bits}(s, v, c) \rightsquigarrow \text{appends bits } v_{c-1} \dots v_0 \text{ (most significant first) or } v_0 \dots v_{c-1} \text{ (least significant first) at } s\text{'s cursor, filling each byte from its most or least significant bit}}
+  $$
+  $$
+  c = 0 \lor c > \mathrm{size\_bits}(\mathtt{compiler.pointer\_sized}) \implies \text{ill-formed}; \qquad \text{two calls of } \mathrm{compiler.assembler.bit\_order} \text{ under one target} \implies \text{ill-formed}
+  $$
+  > **In Plain English:** Instructions are made of fields narrower than a byte: x86's ModRM is `mod:2 reg:3 rm:3`, its REX prefix `0100 W R X B`, and ARM and RISC-V pack registers and immediates into a 32-bit word.
+  > `emit_bits` writes the low `count` bits of a word, so an encoder writes each field as it is drawn, with no shifting and masking of its own; `emit_bit` and `emit_nibble` are counts 1 and 4, and a machine that wants the names writes them as functions of its own.
+  > `emit` is `emit_bits` of 8, and `emit_bytes` of 8 per byte, so there is one write path.
+  > The order the bits fill a byte in is the machine's, declared once with `compiler.assembler.bit_order`: x86 reads naturally most significant first, writing `mod`, then `reg`, then `rm`; ARM and RISC-V least significant first, writing a word's fields from bit 0 upward, which lays the word out little-endian with no further work.
+  > A machine that writes only whole bytes needs no declaration; one that writes a partial byte without it gets a diagnostic annotating the write, with a hint naming `bit_order`.
+  > A second declaration under one target is ill-formed, annotating both.
+  > Positions, patches, relocations and the end of a function's contribution are at byte boundaries (`O-Fixup`), so a section is always whole bytes by the time anything reads it.
+- **[O-Fixup] Positions, Patches and Relocations:**  
+  $$
+  \frac{\text{the cursor of } s \text{ is at a byte boundary} \quad 0 \le o \quad o + 1 \le \mathrm{compiler.position}(s)}{\mathrm{compiler.patch}(s, o, b) \rightsquigarrow \text{byte } o \text{ of the current contribution to } s \text{ becomes } b} \qquad \frac{\text{a call of position, patch or relocate on } s\text{, or the end of a contribution, with } s\text{'s cursor inside a byte}}{\text{ill-formed}}
+  $$
+  $$
+  \mathrm{compiler.relocate}(s, o, t, k, a) \rightsquigarrow \text{at placement, the bytes at } o \text{ hold } \mathrm{address}(t) + a \text{ encoded as } k\text{; resolved by the compiler if } t \text{ is defined in the object, else left to the writer}
+  $$
+  > **In Plain English:** A **contribution** is what one emission unit writes to one section: a function's body, the program's static data, or a writer's file.
+  > `position` is the offset of the cursor within the current contribution, and `patch` overwrites a byte already in it, which is how a backend resolves a forward jump to a label (`B-Label`): emit a placeholder, remember its position, and patch it when the label is placed.
+  > Patching outside the contribution is ill-formed, since another function's bytes are another query's value; the diagnostic annotates the patch and gives the contribution's size.
+  > An address that is not known until placement is a relocation: `relocate` records that the bytes at `offset` must hold `target`'s address plus `addend`, where `target` is a function, a static or a library prototype (`FP-Load`).
+  > The kinds are neutral (`absolute_64`, `absolute_32`, `pc_relative_32`), so the encoder never names a format's own relocation types.
+  > Placement resolves every relocation whose target the object defines; the rest, the imports, go to the writer, which encodes each as its format does (an ELF dynamic relocation through the PLT, an entry in PE's import table).
+  > A partial byte at any of these points is reported at the call that left it, with the number of bits still missing.
+- **[O-Artifact] Sections Become Files:**  
+  $$
+  \frac{e \vdash s \Downarrow \sigma \quad e \vdash p \Downarrow \pi \quad \pi \text{ is a relative path with no } \mathtt{..} \text{ component} \quad \text{the cursor of } \sigma \text{ is at a byte boundary}}{\mathrm{compiler.emit\_artifact}(s, p) \rightsquigarrow \text{once the build succeeds, the file } \pi \text{ under the output directory holds the bytes of } \sigma \text{ as they are then}}
+  $$
+  $$
+  \text{two calls with one } \pi \text{ in one build} \lor \pi \text{ absolute} \lor \pi \text{ has a } \mathtt{..} \text{ component} \implies \text{ill-formed}
+  $$
+  > **In Plain English:** There is no built-in output file.
+  > Any section can be written out, under a path of the caller's choosing, as many times as there are files: a native backend writes one executable, a C backend a `.c` and a `.h`, a shader target its module beside a host binary.
+  > The path is relative to the build's output directory, which the command line names, and may not leave it, so a build never writes outside the place it was told to.
+  > Each path is written once in a build; the diagnostic for a second annotates both calls, with a hint to name one of them differently.
+  > The file holds the section as it is when the build ends, a placed section's placed bytes, or a writer's scratch section once it has finished filling it, so a call may come before the last write.
+  > Nothing is written by a build that fails, so a failed build never leaves half its files behind.
+  > With no backend at all, as in Phase 4, comptime makes a section, emits into it and writes it out itself (`test_string.doir`).
+  > Under a bundled target the file is not written but kept as a thin artifact of its slice, for the bundle's writer to read (`O-Bundle`).
+- **[O-Format] The Format Writes the Files:**  
+  $$
+  \text{output}(\tau) = \text{the files } \tau\text{'s } \mathtt{compiler\_impl.write\_object}() \text{ emits (O-Artifact), run over } \mathrm{place\_sections}(\tau) \qquad \text{an import} \land \mathtt{object.dynamic\_imports} = 0 \implies \text{ill-formed}
+  $$
+  > **In Plain English:** Each function's bytes per section, with its patches and relocations, are the value of its own query (`emit_function`), so an edit re-emits only the functions it changes.
+  > `place_sections` then joins the contributions of each section in declaration order, aligns them, gives every section an address (its own, if the format fixed one with `compiler.sections.set_address`), and resolves the relocations it can.
+  > Last, the compiler calls the format's `compiler_impl.write_object`, a DOIR function whose arguments are all comptime, so it runs in the compiler and is never emitted (`C-Call`).
+  > It reads the placed object through the floor's `compiler.sections`, `compiler.symbols` and `compiler.relocations` (`H-Boot`), since it cannot name `std.meta` (`L-Mono`).
+  > It builds each file in a scratch section of its own, the headers emitted and the placed sections appended with `compiler.sections.copy`, which needs no loop over their bytes, and writes it with `compiler.emit_artifact`; a format with no header, such as flat, writes its placed section directly.
+  > The format names no machine and no operating system, and neither names it.
+  > What it needs from them, such as ELF's `e_machine`, `EI_OSABI` and interpreter path, PE's machine and subsystem, and the path of each file, is a name the format reads but does not declare, which the backends file defines beside the three pastes, so a missing one fails where it is used (`A-Res`).
+  > A pairing the format cannot write is a diagnostic, not a new rule: a format with `object.dynamic_imports` of 0 (flat, hex) cannot hold a symbol imported from a library, so an object with one is ill-formed, and the diagnostic annotates the `load_from_library` that made the import and the format's `dynamic_imports`, with a hint to choose a format that links dynamically.
+- **[O-Bundle] Alternative Targets Share One File:**  
+  $$
+  \frac{e \vdash f \Downarrow F \quad e \vdash t_i \Downarrow \tau_i \quad \tau_i \text{ are targets (L-Lower)}}{\langle \_ : \mathtt{compiler.level} = \mathrm{compiler.levels.bundle}(f, t_1, \dots, t_k) \rangle \rightsquigarrow \text{each } \tau_i \text{ is a host whose files are thin artifacts, and the build's files are those } F\text{'s } \mathtt{compiler\_impl.write\_bundle}() \text{ emits over them}}
+  $$
+  $$
+  \text{a target in two bundles} \lor \text{two bundles in one build} \lor k < 2 \implies \text{ill-formed}
+  $$
+  > **In Plain English:** A macOS universal binary holds a complete x86_64 Mach-O and a complete arm64 one, and the system runs whichever matches the machine.
+  > Two targets, x86_64 with macOS and Mach-O and arm64 with the same, already give two thin artifacts (`T-Value`, `T-Split`); what a bundle adds is saying that they are alternatives.
+  > The targets of an ordinary multi-target build cooperate: one is the host, and the others are reached through bridges (`T-Bridge`).
+  > The slices of a bundle do not: each is the host of its own slice (`L-Entry`), so the build needs no `set_host`, and a call from one slice to code live only on another is ill-formed (`T-Bridge`).
+  > `bundle` is read by the scan, like `lower_to` (`L-Scan`), and `from` is a level that lowers onto no target, made from a namespace holding the writer.
+  > A slice's writer runs as it would alone, but what it passes to `compiler.emit_artifact` is kept as a thin artifact instead of written (`O-Artifact`), so a slice's path never collides with another's.
+  > The bundle's `compiler_impl.write_bundle` reads the thin artifacts through `compiler.artifacts`, slice by slice in the order the bundle names them, with each one's slice and path, builds the file in a scratch section and writes it with `compiler.emit_artifact`.
+  > It names no target: a universal writer takes each slice's `cputype` and `cpusubtype` from bytes 4 to 11 of the slice's own Mach-O header, and its alignment from the `cputype` (2^14 for arm64, 2^12 for x86_64), then writes `fat_header`, one `fat_arch` per slice and the slices.
+  > The same mechanism serves any container of several thin images; an image that holds code for two architectures inside it, such as an ELF with a GPU binary embedded, is one target bridging to another instead.
 
 ---
 

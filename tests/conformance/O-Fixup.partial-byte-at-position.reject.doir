@@ -1,0 +1,10 @@
+// O-Fixup: positions are in bytes, so `compiler.position` with three bits of a byte written is ill-formed.
+scratch_name : compiler.byte_pointer = "scratch"
+scratch_flags : compiler.pointer_sized = 0
+scratch_alignment : compiler.pointer_sized = 1
+scratch : compiler.section = compiler.sections.make(scratch_name, scratch_flags, scratch_alignment)
+_ : compiler.pointer_sized = compiler.assembler.bit_order(compiler.assembler.most_significant_first)
+value : compiler.pointer_sized = 5
+width : compiler.pointer_sized = 3
+_ : compiler.pointer_sized = compiler.emit_bits(scratch, value, width)
+_ : compiler.pointer_sized = compiler.position(scratch)

@@ -1,0 +1,27 @@
+// An executable format's contract, everything the compiler and a machine require of one, written as the declarations a format makes (`O-Format`): sig(format), as `machine.doir` is sig(std) and `operating_system.doir` is sig(std.os).
+// A target is a backend namespace into which a machine, an operating system and a format are pasted (`OS-Target`), so any machine and operating system pair with any format: freestanding with flat, hex or ELF, Linux with ELF.
+// `format.flat.doir` is the format this repository has; ELF, Intel HEX, PE and Mach-O follow the roadmap.
+// The format names no machine and no operating system, and neither names it; what its headers need from them (an ELF `e_machine`, a PE subsystem, an interpreter path) and the path of each file it writes, it reads from names the backends file defines beside the pastes, so a missing one fails where it is used (`A-Res`, `reference/backends.doir`).
+// Its signatures name only level-0 entities (`L-Mono`).
+
+// The sections a machine writes to, by role (`O-Section`).
+// A format makes its sections with `compiler.sections.make`, under its own names, and gives each role one of them, as a section or an alias of one; several roles may share a section.
+export object : namespace = {
+	// Instructions.
+	code : compiler.section
+	// Constants, string literals and other storage the program never writes.
+	read_only : compiler.section
+	// Static storage with an initial value (`MEM-Static`).
+	data : compiler.section
+	// Static storage that starts as zeros, written only with `compiler.reserve`.
+	zero : compiler.section
+	// 1 if the writer can encode a symbol imported from a library (`FP-Load`), 0 if it cannot, which makes an object with one ill-formed (`O-Format`).
+	dynamic_imports : compiler.pointer_sized
+}
+
+// The writer (`O-Format`): the compiler calls it once per target, after `place_sections`, and it builds each file in a section of its own and writes it with `compiler.emit_artifact` (`O-Artifact`).
+// It reads the placed sections, the symbols and the relocations placement left through the floor's `compiler.sections`, `compiler.symbols` and `compiler.relocations`, and returns how many files it wrote.
+// Every argument is comptime, so it folds: it runs in the compiler and is never emitted (`C-Call`).
+export compiler_impl : namespace = {
+	write_object : () -> compiler.pointer_sized
+}

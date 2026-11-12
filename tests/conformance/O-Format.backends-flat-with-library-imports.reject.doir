@@ -1,0 +1,15 @@
+// O-Format: the flat format has no symbol table, so pairing it with Linux, whose libc calls are imports, is ill-formed.
+linux_flat_backend : namespace = {
+	machine_path : compiler.byte_pointer = "../../reference/machine.doir"
+	_ : compiler.pointer_sized = compiler.paste_file(machine_path)
+	os_path : compiler.byte_pointer = "../../os.linux.doir"
+	_ : compiler.pointer_sized = compiler.paste_file(os_path)
+	format_path : compiler.byte_pointer = "../../format.flat.doir"
+	output_path : compiler.byte_pointer = "linux.bin"
+	_ : compiler.pointer_sized = compiler.paste_file(format_path)
+}
+export targets : namespace = {
+	export linux : compiler.level = compiler.levels.make(linux_flat_backend)
+	_ : compiler.level = compiler.levels.lower_to(linux, compiler.levels.builtin, linux_flat_backend.machine.schedule)
+	_ : compiler.level = compiler.levels.lower_to(std.level, linux, linux_flat_backend.machine.schedule)
+}

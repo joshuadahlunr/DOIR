@@ -1,0 +1,10 @@
+// O-Fixup: `compiler.patch` overwrites a byte already written, so patching offset 1 of a one-byte contribution is ill-formed.
+scratch_name : compiler.byte_pointer = "scratch"
+scratch_flags : compiler.pointer_sized = 0
+scratch_alignment : compiler.pointer_sized = 1
+scratch : compiler.section = compiler.sections.make(scratch_name, scratch_flags, scratch_alignment)
+placeholder : compiler.byte = 0
+_ : compiler.byte = compiler.emit(scratch, placeholder)
+past : compiler.pointer_sized = 1
+target : compiler.byte = 0xEB
+_ : compiler.byte = compiler.patch(scratch, past, target)

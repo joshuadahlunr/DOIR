@@ -1,0 +1,38 @@
+// O-Bundle: two targets bundled as alternatives, each the host of its own slice, so the build needs no `set_host`; the bundle level writes the file.
+a_backend : namespace = {
+	path : compiler.byte_pointer = "../../reference/machine.doir"
+	_ : compiler.pointer_sized = compiler.paste_file(path)
+}
+b_backend : namespace = {
+	path : compiler.byte_pointer = "../../reference/machine.doir"
+	_ : compiler.pointer_sized = compiler.paste_file(path)
+}
+// Concatenates the slices, standing in for a universal writer's `fat_header` and `fat_arch` table.
+joined : namespace = {
+	compiler_impl : namespace = {
+		write_bundle : () -> compiler.pointer_sized = {
+			fat_name : compiler.byte_pointer = "fat"
+			fat_flags : compiler.pointer_sized = 0
+			fat_alignment : compiler.pointer_sized = 1
+			fat : compiler.section = compiler.sections.make(fat_name, fat_flags, fat_alignment)
+			first : compiler.pointer_sized = 0
+			second : compiler.pointer_sized = 1
+			_ : compiler.section = compiler.artifacts.copy(fat, first)
+			_ : compiler.section = compiler.artifacts.copy(fat, second)
+			path : compiler.byte_pointer = "universal"
+			_ : compiler.section = compiler.emit_artifact(fat, path)
+			files : compiler.pointer_sized = 1
+			_ : _ = compiler.return(files)
+		}
+	}
+}
+export targets : namespace = {
+	export a : compiler.level = compiler.levels.make(a_backend)
+	export b : compiler.level = compiler.levels.make(b_backend)
+	export universal : compiler.level = compiler.levels.make(joined)
+	_ : compiler.level = compiler.levels.lower_to(a, compiler.levels.builtin, a_backend.machine.schedule)
+	_ : compiler.level = compiler.levels.lower_to(b, compiler.levels.builtin, b_backend.machine.schedule)
+	_ : compiler.level = compiler.levels.lower_to(std.level, a, a_backend.machine.schedule)
+	_ : compiler.level = compiler.levels.lower_to(std.level, b, b_backend.machine.schedule)
+	_ : compiler.level = compiler.levels.bundle(universal, a, b)
+}

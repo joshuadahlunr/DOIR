@@ -5,6 +5,7 @@
 // The file is a backend's contents: a backends file pastes it into a namespace, makes that namespace a level and lowers it onto `compiler.levels.builtin` (`L-Lower`, `reference/backends.doir`), so its root namespaces are exported.
 // Its signatures name only level-0 and machine entities (`L-Mono`).
 // A target pastes an operating system beside it, which supplies `std.os`, the heap included (`OS-Target`, `reference/operating_system.doir`); static storage is laid out by the compiler, and comptime memory is the host's (`MEM-Static`, `MEM-Comptime`).
+// A target pastes an executable format beside it too (`reference/format.doir`): the encoders write to its `object.code`, `object.read_only`, `object.data` and `object.zero` roles and never name a format's own sections (`O-Section`).
 
 // Primitive types (`T-Sig`). Widths are the target's, not the host's: `H-Target` makes comptime layouts use the target's, and `compiler.pointer_sized` is only the host word the widths are written in.
 export machine : namespace = {

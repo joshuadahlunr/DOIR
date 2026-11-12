@@ -22,13 +22,13 @@ import pe
 
 import doir_grammar
 
-SCANNED_CALLS = frozenset({"compiler.levels.make", "compiler.levels.this_file", "compiler.levels.lower_to"})
+SCANNED_CALLS = frozenset({"compiler.levels.make", "compiler.levels.this_file", "compiler.levels.lower_to", "compiler.levels.bundle"})
 
 # Not read by the scan, but found without running anything, so also written at level scope (L-Sema).
 CHECK_CALL = "compiler.levels.check"
 BIND_PASS_CALL = "compiler.levels.bind_pass"
 
-TERMINATORS = frozenset({"std.return", "std.block_result", "std.halt", "return", "block_result", "halt"})
+TERMINATORS = frozenset({"std.return", "std.block_result", "std.halt", "return", "block_result", "halt", "compiler.return", "compiler.block_result"})
 
 # Types whose names are not values, so they may be read above their declaration; a label may be named before it is placed (B-Label).
 NON_VALUE_TYPES = frozenset({"type", "namespace", "alias", "std.label"})

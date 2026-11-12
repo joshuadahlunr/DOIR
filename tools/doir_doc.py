@@ -12,7 +12,7 @@ With `--check`, nothing is written; instead each comment that breaks AGENTS.md i
     uv run tools/doir_doc.py [-o DIR] [file.doir...]    # write DIR/<name>.md for each file (default: bin/docs)
     uv run tools/doir_doc.py --check [file.doir...]
 
-With no files it reads `standard.doir`, `standard.emulated.doir`, `standard.os.doir`, the operating systems `os.*.doir` and `reference/*.doir`.
+With no files it reads `standard.doir`, `standard.emulated.doir`, `standard.os.doir`, the operating systems `os.*.doir`, the executable formats `format.*.doir` and `reference/*.doir`.
 """
 
 import argparse
@@ -211,9 +211,9 @@ def main() -> int:
 	args = argparse.ArgumentParser(description="Generate Markdown documentation from DOIR sources, or check their comments.")
 	args.add_argument("-o", dest="output", default=str(doir_grammar.ROOT / "bin" / "docs"), help="the directory to write <name>.md into")
 	args.add_argument("--check", action="store_true", help="report comments that break AGENTS.md instead of writing documentation")
-	args.add_argument("files", nargs="*", type=pathlib.Path, help="DOIR files (default: standard.doir, standard.emulated.doir, standard.os.doir, os.*.doir and reference/*.doir)")
+	args.add_argument("files", nargs="*", type=pathlib.Path, help="DOIR files (default: standard.doir, standard.emulated.doir, standard.os.doir, os.*.doir, format.*.doir and reference/*.doir)")
 	opts = args.parse_args()
-	files = opts.files or [doir_grammar.ROOT / "standard.doir", doir_grammar.ROOT / "standard.emulated.doir", doir_grammar.ROOT / "standard.os.doir"] + sorted(doir_grammar.ROOT.glob("os.*.doir")) + sorted((doir_grammar.ROOT / "reference").glob("*.doir"))
+	files = opts.files or [doir_grammar.ROOT / "standard.doir", doir_grammar.ROOT / "standard.emulated.doir", doir_grammar.ROOT / "standard.os.doir"] + sorted(doir_grammar.ROOT.glob("os.*.doir")) + sorted(doir_grammar.ROOT.glob("format.*.doir")) + sorted((doir_grammar.ROOT / "reference").glob("*.doir"))
 	try:
 		parser = doir_grammar.load(doir_grammar.GRAMMAR)
 	except pe.Error as exc:

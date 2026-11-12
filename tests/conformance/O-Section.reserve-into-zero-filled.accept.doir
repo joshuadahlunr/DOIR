@@ -1,0 +1,12 @@
+// O-Section: `compiler.reserve` grows a zero-filled section, and `compiler.emit` writes a section that is not one.
+zeros_name : compiler.byte_pointer = ".bss"
+zeros_flags : compiler.pointer_sized = 6
+alignment : compiler.pointer_sized = 8
+zeros : compiler.section = compiler.sections.make(zeros_name, zeros_flags, alignment)
+size : compiler.pointer_sized = 64
+_ : compiler.pointer_sized = compiler.reserve(zeros, size)
+constants_name : compiler.byte_pointer = ".rodata"
+constants_flags : compiler.pointer_sized = 0
+constants : compiler.section = compiler.sections.make(constants_name, constants_flags, alignment)
+one : compiler.byte = 1
+_ : compiler.byte = compiler.emit(constants, one)

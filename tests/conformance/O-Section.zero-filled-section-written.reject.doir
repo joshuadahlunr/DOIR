@@ -1,0 +1,7 @@
+// O-Section: a zero-filled section holds a size and no bytes, so `compiler.emit` into one is ill-formed; `compiler.reserve` is the write it takes.
+zeros_name : compiler.byte_pointer = ".bss"
+zeros_flags : compiler.pointer_sized = 6
+zeros_alignment : compiler.pointer_sized = 8
+zeros : compiler.section = compiler.sections.make(zeros_name, zeros_flags, zeros_alignment)
+one : compiler.byte = 1
+_ : compiler.byte = compiler.emit(zeros, one)
