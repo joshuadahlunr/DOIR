@@ -62,7 +62,7 @@ static import ecrs.storage;
 
 static import doir.engine.locations;
 static import doir.engine.positions;
-static import doir.strings;
+static import doir.core.strings;
 static import doir.components.query;
 
 public import ecrs.registry : EntityId, invalidEntity;
@@ -245,7 +245,7 @@ struct QueryEngine {
 	/// Threads for work shared out, such as `demandEach`'s demands and skimming a large file's chunks; null does that work on the calling thread.
 	/// The engine borrows it.
 	bc.threadpool.ThreadPool* workers = null;
-	doir.strings.Strings* strings = null; /// The interned names its queries read, as checks read declarations' names; the engine borrows it.
+	doir.core.strings.Strings* strings = null; /// The interned names its queries read, as checks read declarations' names; the engine borrows it.
 	/// Set while the reverse dependency edges (`ReadBy`) are not kept: when a refused allocation lost one, or from the start for an engine that defers them, as one that never sees an edit should.
 	/// Meanwhile queries record none, and no query is reused without checking its dependencies, since a change may not reach it.
 	/// `buildDependents` builds them all and clears it.
@@ -2333,7 +2333,7 @@ version(unittest) {
 	static import fp.dynarray;
 
 	static import fp.pointer;
-	static import doir.testing;
+	static import doir.core.testing;
 
 	private shared int runs; // bumped by queries some tests run on several threads
 
@@ -2438,7 +2438,7 @@ version(unittest) {
 		}
 		static bool compute(ref QueryEngine engine, Key key) @nogc nothrow {
 			immutable e = key.related[0];
-			doir.testing.addComponent!Amount(*engine.store, e).value = 9;
+			doir.core.testing.addComponent!Amount(*engine.store, e).value = 9;
 			assert(recordOutput(engine, doir.components.query.Output([e], ecrs.registry.componentId!Amount(), &strip, &hash), false));
 			assert(recordOutput(engine, doir.components.query.Output([e], ecrs.registry.componentId!Amount(), &strip, &hash), false));
 			return true;
@@ -2643,7 +2643,7 @@ version(unittest) {
 			if (!recordOutput(engine, doir.components.query.Output([e], ecrs.registry.componentId!Amount(), &Stamp.strip, &Stamp.hash), true)) return false;
 			// Not through `produce`, so it takes the exclusive section itself, as a query adding a component on its own must.
 			beginExclusive(engine);
-			doir.testing.addComponent!Amount(*engine.store, e).value = 9;
+			doir.core.testing.addComponent!Amount(*engine.store, e).value = 9;
 			endExclusive(engine);
 			return true;
 		}
@@ -2693,8 +2693,8 @@ unittest { // re-validation, early cutoff and replayed diagnostics
 	scope(exit) free(engine);
 	engine.diagnostics = &manager;
 
-	immutable e = doir.testing.addEntity(store);
-	doir.testing.addComponent!Amount(store, e).value = 3;
+	immutable e = doir.core.testing.addEntity(store);
+	doir.core.testing.addComponent!Amount(store, e).value = 3;
 	assert(markChanged(engine, e));
 
 	// Sign reads IsPositive, which reads Input, which reads e.
@@ -2751,8 +2751,8 @@ unittest { // re-validation, early cutoff and replayed diagnostics
 	beginRevision(engine);
 	ecrs.context.getForWriting!Amount(store, e).value = 2;
 	assert(markChanged(engine, e));
-	immutable g = doir.testing.addEntity(store);
-	doir.testing.addComponent!Amount(store, g).value = 1;
+	immutable g = doir.core.testing.addEntity(store);
+	doir.core.testing.addComponent!Amount(store, g).value = 1;
 	assert(markChanged(engine, g));
 	assert(*query!Sign(engine, Sign.Key([e])) == 1 && *query!Sign(engine, Sign.Key([g])) == 1);
 	immutable input = find!Input(engine, Input.Key([e]));
@@ -2775,8 +2775,8 @@ unittest { // re-validation, early cutoff and replayed diagnostics
 	assert(*query!Sign(engine, Sign.Key([g])) == 1 && runs == settled); // checked again, nothing it read having changed
 
 	// A query that starts or stops reporting without its value changing still reaches its readers, which report what it does.
-	immutable h = doir.testing.addEntity(store);
-	doir.testing.addComponent!Amount(store, h).value = 2;
+	immutable h = doir.core.testing.addEntity(store);
+	doir.core.testing.addComponent!Amount(store, h).value = 2;
 	assert(markChanged(engine, h));
 	immutable quiet = fp.dynarray.length(manager.diagnostics);
 	assert(*query!Wrap(engine, Wrap.Key([h])) == 0 && fp.dynarray.length(manager.diagnostics) == quiet);
@@ -2819,8 +2819,8 @@ unittest { // stable created ids, provenance, ownership and eviction
 	assert(changedAt(engine, q) == before);
 
 	// A re-run that writes the same contents is cut off; one with the same value but different contents is a change.
-	immutable knob = doir.testing.addEntity(store);
-	doir.testing.addComponent!Amount(store, knob).value = 1;
+	immutable knob = doir.core.testing.addEntity(store);
+	doir.core.testing.addComponent!Amount(store, knob).value = 1;
 	assert(markChanged(engine, knob));
 	runs = 0;
 	assert(*query!CopiedAmount(engine, CopiedAmount.Key([knob])) == 1);
@@ -2838,7 +2838,7 @@ unittest { // stable created ids, provenance, ownership and eviction
 	assert(runs == 2);
 
 	// A component recorded twice in one run is owned once, and stripped when the query is evicted.
-	immutable stamped = doir.testing.addEntity(store);
+	immutable stamped = doir.core.testing.addEntity(store);
 	assert(*query!Stamp(engine, Stamp.Key([stamped])));
 	assert(ecrs.context.getComponent!Amount(store, stamped).value == 9);
 	immutable stamp = find!Stamp(engine, Stamp.Key([stamped]));
@@ -2848,8 +2848,8 @@ unittest { // stable created ids, provenance, ownership and eviction
 
 	// A value owning memory is freed when a re-run replaces it, when a re-run's equal value is dropped, and on eviction.
 	live = 0;
-	immutable listed = doir.testing.addEntity(store);
-	doir.testing.addComponent!Amount(store, listed).value = 3;
+	immutable listed = doir.core.testing.addEntity(store);
+	doir.core.testing.addComponent!Amount(store, listed).value = 3;
 	assert(fp.dynarray.slice(query!Listing(engine, Listing.Key([listed])).items) == [3]);
 	beginRevision(engine);
 	assert(markChanged(engine, listed));
@@ -2870,9 +2870,9 @@ unittest { // a renumbering rewrites query entities, their keys and their depend
 	auto engine = create(store);
 	scope(exit) free(engine);
 
-	immutable spare = doir.testing.addEntity(store);
-	immutable e = doir.testing.addEntity(store);
-	doir.testing.addComponent!Amount(store, e).value = 1;
+	immutable spare = doir.core.testing.addEntity(store);
+	immutable e = doir.core.testing.addEntity(store);
+	doir.core.testing.addComponent!Amount(store, e).value = 1;
 	assert(markChanged(engine, e));
 	runs = 0;
 	assert(*query!Sign(engine, Sign.Key([e])) == 1);
@@ -2910,8 +2910,8 @@ unittest { // a renumbering rewrites query entities, their keys and their depend
 	assert(ecrs.context.getComponent!Amount(store, renamed).value == 5);
 
 	// A read of an entity a compaction freed becomes `invalidEntity`, which neither path that builds reverse edges gives a reader.
-	immutable doomed = doir.testing.addEntity(store);
-	doir.testing.addComponent!Amount(store, doomed).value = 3;
+	immutable doomed = doir.core.testing.addEntity(store);
+	doir.core.testing.addComponent!Amount(store, doomed).value = 3;
 	assert(markChanged(engine, doomed));
 	assert(*query!Sign(engine, Sign.Key([doomed])) == 1);
 	assert(ecrs.context.removeEntity(store, doomed));
@@ -2933,8 +2933,8 @@ unittest { // a renumbering rewrites query entities, their keys and their depend
 		scope(exit) ecrs.context.free(other);
 		auto engine2 = create(other);
 		scope(exit) free(engine2);
-		immutable input = doir.testing.addEntity(other);
-		doir.testing.addComponent!Amount(other, input).value = 1;
+		immutable input = doir.core.testing.addEntity(other);
+		doir.core.testing.addComponent!Amount(other, input).value = 1;
 		assert(markChanged(engine2, input));
 		assert(*query!Input(engine2, Input.Key([input])) == 1 && *query!Resolve(engine2, 0) == 0);
 		assert(ecrs.context.removeEntity(other, input));
@@ -3019,8 +3019,8 @@ unittest { // cycle fallbacks: coinductive equality, and reset of provisional an
 	scope(exit) free(engine);
 
 	EntityId node(int label) {
-		immutable e = doir.testing.addEntity(store);
-		doir.testing.addComponent!Node(store, e).label = label;
+		immutable e = doir.core.testing.addEntity(store);
+		doir.core.testing.addComponent!Node(store, e).label = label;
 		return e;
 	}
 	void link(EntityId e, EntityId a, EntityId b = invalidEntity) {
@@ -3079,8 +3079,8 @@ unittest { // a refused allocation fails every running query, which memoizes not
 		auto engine = create(store);
 		scope(exit) free(engine);
 		engine.diagnostics = &manager;
-		immutable e = doir.testing.addEntity(store);
-		doir.testing.addComponent!Amount(store, e).value = -2;
+		immutable e = doir.core.testing.addEntity(store);
+		doir.core.testing.addComponent!Amount(store, e).value = -2;
 		assert(markChanged(engine, e));
 		bool refused = false;
 
@@ -3097,14 +3097,14 @@ unittest { // a refused allocation fails every running query, which memoizes not
 
 		// Nested fallbacks: moving E, F down to the lower head can be refused too.
 		// It runs first, so every budget meets the same allocations.
-		immutable a3 = doir.testing.addEntity(store), b3 = doir.testing.addEntity(store), c3 = doir.testing.addEntity(store);
-		immutable d3 = doir.testing.addEntity(store), e3 = doir.testing.addEntity(store), f3 = doir.testing.addEntity(store);
-		doir.testing.addComponent!Node(store, c3) = Node([e3, a3], 1, 2);
-		doir.testing.addComponent!Node(store, d3) = Node([f3, b3], 1, 2);
-		doir.testing.addComponent!Node(store, e3) = Node([c3, invalidEntity], 1, 1);
-		doir.testing.addComponent!Node(store, f3) = Node([d3, invalidEntity], 1, 1);
-		doir.testing.addComponent!Node(store, a3) = Node([c3, invalidEntity], 1, 1);
-		doir.testing.addComponent!Node(store, b3) = Node([d3, invalidEntity], 1, 1);
+		immutable a3 = doir.core.testing.addEntity(store), b3 = doir.core.testing.addEntity(store), c3 = doir.core.testing.addEntity(store);
+		immutable d3 = doir.core.testing.addEntity(store), e3 = doir.core.testing.addEntity(store), f3 = doir.core.testing.addEntity(store);
+		doir.core.testing.addComponent!Node(store, c3) = Node([e3, a3], 1, 2);
+		doir.core.testing.addComponent!Node(store, d3) = Node([f3, b3], 1, 2);
+		doir.core.testing.addComponent!Node(store, e3) = Node([c3, invalidEntity], 1, 1);
+		doir.core.testing.addComponent!Node(store, f3) = Node([d3, invalidEntity], 1, 1);
+		doir.core.testing.addComponent!Node(store, a3) = Node([c3, invalidEntity], 1, 1);
+		doir.core.testing.addComponent!Node(store, b3) = Node([d3, invalidEntity], 1, 1);
 		cast(void) rationed(() => query!Equal(engine, Pair([a3, b3])) !is null);
 		assert(*query!Equal(engine, Pair([a3, b3])) && *query!Equal(engine, Pair([e3, f3])));
 
@@ -3128,13 +3128,13 @@ unittest { // a refused allocation fails every running query, which memoizes not
 		step(1);
 
 		// Cycle fallbacks: a failed head discards the provisional answers resting on it.
-		immutable leafX = doir.testing.addEntity(store), leafY = doir.testing.addEntity(store);
-		immutable a = doir.testing.addEntity(store), b = doir.testing.addEntity(store), b2 = doir.testing.addEntity(store);
-		doir.testing.addComponent!Node(store, leafX) = Node([leafX, invalidEntity], 2, 1);
-		doir.testing.addComponent!Node(store, leafY) = Node([leafY, invalidEntity], 3, 1);
-		doir.testing.addComponent!Node(store, a) = Node([a, leafX], 1, 2);
-		doir.testing.addComponent!Node(store, b) = Node([b2, leafY], 1, 2);
-		doir.testing.addComponent!Node(store, b2) = Node([b, leafX], 1, 2);
+		immutable leafX = doir.core.testing.addEntity(store), leafY = doir.core.testing.addEntity(store);
+		immutable a = doir.core.testing.addEntity(store), b = doir.core.testing.addEntity(store), b2 = doir.core.testing.addEntity(store);
+		doir.core.testing.addComponent!Node(store, leafX) = Node([leafX, invalidEntity], 2, 1);
+		doir.core.testing.addComponent!Node(store, leafY) = Node([leafY, invalidEntity], 3, 1);
+		doir.core.testing.addComponent!Node(store, a) = Node([a, leafX], 1, 2);
+		doir.core.testing.addComponent!Node(store, b) = Node([b2, leafY], 1, 2);
+		doir.core.testing.addComponent!Node(store, b2) = Node([b, leafX], 1, 2);
 		auto previous = fp.testing.limitAllocations(n);
 		auto same = query!Equal(engine, Pair([a, b]));
 		immutable answer = same is null || *same;
@@ -3157,7 +3157,7 @@ unittest { // a refused allocation fails every running query, which memoizes not
 		engine.depthLimit = defaultDepthLimit;
 
 		// After a renumbering the index is stale; a lookup that cannot rehash it searches it instead, allocating nothing.
-		immutable spare = doir.testing.addEntity(store);
+		immutable spare = doir.core.testing.addEntity(store);
 		assert(ecrs.context.swapEntities(store, e, spare));
 		previous = fp.testing.limitAllocations(0);
 		auto moved = query!Sign(engine, Sign.Key([spare]));
@@ -3226,7 +3226,7 @@ unittest { // demands on many threads: a shared query runs once, reports keep se
 
 	// Claim produces without creating, adding its component itself.
 	EntityId[4] claimed;
-	foreach (ref e; claimed) e = doir.testing.addEntity(store);
+	foreach (ref e; claimed) e = doir.core.testing.addEntity(store);
 	ecrs.relation.Relation!1[4] claims;
 	foreach (i, e; claimed) claims[i] = Claim.Key([e]);
 	assert(demandEach!Claim(engine, claims[]));
@@ -3264,8 +3264,8 @@ unittest { // demands on many threads: a shared query runs once, reports keep se
 		wide.edgesMissing = deferred;
 		if (inputs !is null) fp.dynarray.clear(inputs);
 		foreach (i; 0 .. keys.length * wideReads) {
-			immutable e = doir.testing.addEntity(wideStore);
-			doir.testing.addComponent!Amount(wideStore, e).value = 1;
+			immutable e = doir.core.testing.addEntity(wideStore);
+			doir.core.testing.addComponent!Amount(wideStore, e).value = 1;
 			assert(fp.dynarray.pushBack(inputs, e));
 		}
 		wideInputs = inputs;
@@ -3273,7 +3273,7 @@ unittest { // demands on many threads: a shared query runs once, reports keep se
 		assert(*query!Wide(wide, 3) == wideReads);
 
 		// An unrelated change re-runs no Wide: with edges, none is reached; without, each finds its reads unchanged.
-		immutable unrelated = doir.testing.addEntity(wideStore);
+		immutable unrelated = doir.core.testing.addEntity(wideStore);
 		beginRevision(wide);
 		assert(markChanged(wide, unrelated));
 		core.atomic.atomicStore(wideRuns, 0);
@@ -3296,8 +3296,8 @@ unittest { // demands on many threads: a shared query runs once, reports keep se
 		scope(exit) free(wide);
 		wide.workers = pool;
 		foreach (i; 0 .. keys.length * wideReads) {
-			immutable e = doir.testing.addEntity(wideStore);
-			doir.testing.addComponent!Amount(wideStore, e).value = 1;
+			immutable e = doir.core.testing.addEntity(wideStore);
+			doir.core.testing.addComponent!Amount(wideStore, e).value = 1;
 			inputs[i] = e;
 		}
 		wideInputs = inputs;
@@ -3368,13 +3368,13 @@ unittest { // demands on many threads: a shared query runs once, reports keep se
 
 		// Coinductive comparisons from several threads, whose provisional answers rest on other threads' running queries (S-Struct).
 		EntityId[6] n;
-		foreach (ref e; n) e = doir.testing.addEntity(anyStore);
-		doir.testing.addComponent!Node(anyStore, n[2]) = Node([n[4], n[0]], 1, 2);
-		doir.testing.addComponent!Node(anyStore, n[3]) = Node([n[5], n[1]], 1, 2);
-		doir.testing.addComponent!Node(anyStore, n[4]) = Node([n[2], invalidEntity], 1, 1);
-		doir.testing.addComponent!Node(anyStore, n[5]) = Node([n[3], invalidEntity], 1, 1);
-		doir.testing.addComponent!Node(anyStore, n[0]) = Node([n[2], invalidEntity], 1, 1);
-		doir.testing.addComponent!Node(anyStore, n[1]) = Node([n[3], invalidEntity], 1, 1);
+		foreach (ref e; n) e = doir.core.testing.addEntity(anyStore);
+		doir.core.testing.addComponent!Node(anyStore, n[2]) = Node([n[4], n[0]], 1, 2);
+		doir.core.testing.addComponent!Node(anyStore, n[3]) = Node([n[5], n[1]], 1, 2);
+		doir.core.testing.addComponent!Node(anyStore, n[4]) = Node([n[2], invalidEntity], 1, 1);
+		doir.core.testing.addComponent!Node(anyStore, n[5]) = Node([n[3], invalidEntity], 1, 1);
+		doir.core.testing.addComponent!Node(anyStore, n[0]) = Node([n[2], invalidEntity], 1, 1);
+		doir.core.testing.addComponent!Node(anyStore, n[1]) = Node([n[3], invalidEntity], 1, 1);
 		Pair[6] pairs = [Pair([n[0], n[1]]), Pair([n[2], n[3]]), Pair([n[4], n[5]]), Pair([n[1], n[0]]), Pair([n[3], n[2]]), Pair([n[5], n[4]])];
 		assert(ecrs.schedules.parallel!equal(any, pool, pairs[]) && !any.refused);
 	}

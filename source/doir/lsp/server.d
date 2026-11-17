@@ -51,7 +51,7 @@ static import doir.lsp.session;
 static import doir.lsp.tokens;
 static import doir.query;
 static import doir.source;
-static import doir.strings;
+static import doir.core.strings;
 
 public import ecrs.registry : EntityId, invalidEntity;
 
@@ -60,11 +60,16 @@ public import ecrs.registry : EntityId, invalidEntity;
 
 // --- documents ---------------------------------------------------------------
 
-// The path a `file://` URI names, percent-decoded, as a new fp string; any other URI is its own path.
+// The path a `file` URI names, without its host, query or fragment, percent-decoded, as a new fp string; any other URI, percent-decoded, is its own path.
 // Null on refusal or for an empty URI.
 private char* pathOf(const(char)[] uri) {
-	static immutable scheme = "file://";
-	return bc.http.message.percentDecoded(fp.string.startsWith(uri, scheme) ? uri[scheme.length .. $] : uri).get(null);
+	auto url = bc.http.message.parseUrl(uri);
+	if (url.isNull || !fp.string.ascii.equalIgnoringCase(url.get.scheme, "file")) return bc.http.message.percentDecoded(uri).get(null);
+	auto path = url.get.target;
+	immutable query = fp.string.find(path, '?');
+	if (query != fp.pointer.notFound) path = path[0 .. query];
+	assert(fp.string.startsWith(path, '/'), "doir.lsp.server: a file URL whose path is not absolute");
+	return bc.http.message.percentDecoded(path).get(null);
 }
 
 
@@ -108,7 +113,7 @@ private void publish(ref doir.lsp.session.Session s, ref doir.lsp.session.Opened
 	if (o.open) bc.json.set(params, "version", o.version_);
 	auto diagnostics = bc.json.setArray(params, "diagnostics");
 	// The checks replay every file's memoized diagnostics, so only this document's are kept.
-	const path = doir.strings.text(*s.strings, ecrs.context.getComponent!(doir.components.source.SourceFile)(*s.engine.store, o.file).path);
+	const path = doir.core.strings.text(*s.strings, ecrs.context.getComponent!(doir.components.source.SourceFile)(*s.engine.store, o.file).path);
 	foreach (ref d; fp.dynarray.slice(manager.diagnostics)) {
 		if (d.location.file != path) continue;
 		const text_ = fp.string.slice(d.message);
@@ -342,8 +347,8 @@ int run(int input, int output) {
 	engine.edgesMissing = true;
 	engine.workers = bc.threadpool.create();
 	scope(exit) bc.threadpool.free(engine.workers);
-	doir.strings.Strings strings;
-	scope(exit) doir.strings.free(strings);
+	doir.core.strings.Strings strings;
+	scope(exit) doir.core.strings.free(strings);
 	engine.strings = &strings;
 	auto s = doir.lsp.session.Session(&engine, &strings, output);
 	scope(exit) {
@@ -369,9 +374,9 @@ int run(int input, int output) {
 }
 
 
-unittest { // a `file://` URI's path is percent-decoded; any other URI is its own path
+unittest { // a `file` URI's path is percent-decoded without its host, query or fragment; any other URI is its own path
 	static import fp.testing;
-	static immutable string[2][4] paths = [["file:///a%20b%2Fc.doir", "/a b/c.doir"], ["file:///odd%2g%2", "/odd%2g%2"], ["untitled:x", "untitled:x"], ["file:///%41%62", "/Ab"]];
+	static immutable string[2][8] paths = [["file:///a%20b%2Fc.doir", "/a b/c.doir"], ["file:///odd%2g%2", "/odd%2g%2"], ["untitled:x", "untitled:x"], ["file:///%41%62", "/Ab"], ["FILE://localhost/t.doir?v=2#top", "/t.doir"], ["file:///C:/a%3Fb.doir", "/C:/a?b.doir"], ["file://", "file://"], ["untitled:a%20b", "untitled:a b"]];
 	foreach (pair; paths) {
 		char* path = pathOf(pair[0]);
 		scope(exit) fp.string.free(path);

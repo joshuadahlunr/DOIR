@@ -11,7 +11,7 @@ static import fp.string;
 static import bc.json;
 static import ecrs.context;
 
-static import doir.components.ast;
+static import doir.core.components.ast;
 static import doir.format;
 static import doir.lsp.positions;
 static import doir.lsp.session;
@@ -19,8 +19,8 @@ static import doir.lsp.store;
 static import doir.names;
 static import doir.query;
 static import doir.source;
-static import doir.strings;
-static import doir.syntax.tables;
+static import doir.core.strings;
+static import doir.core.syntax.tables;
 
 public import ecrs.registry : EntityId, invalidEntity;
 
@@ -28,7 +28,7 @@ public import ecrs.registry : EntityId, invalidEntity;
 
 // A name completion offers, and how deep the block listing it is, so an inner one shadows an outer.
 private struct Candidate {
-	doir.strings.StringId name;
+	doir.core.strings.StringId name;
 	size_t depth;
 	EntityId e;
 }
@@ -58,13 +58,13 @@ private void respond(ref doir.lsp.session.Session s, bc.json.Value id, Candidate
 		if (i && found[i - 1].name == c.name) continue; // shadowed by a deeper one, sorted first
 		if (written++ == limit) break;
 		auto item = bc.json.appendObject(items);
-		bc.json.set(item, "label", doir.strings.text(*s.strings, c.name));
+		bc.json.set(item, "label", doir.core.strings.text(*s.strings, c.name));
 		bc.json.set(item, "kind", completionKind(s, c.e));
-		if (auto t = ecrs.context.findComponent!(doir.components.ast.LookupTypeOf)(*s.engine.store, c.e))
-			bc.json.set(item, "detail", doir.strings.text(*s.strings, t.name));
+		if (auto t = ecrs.context.findComponent!(doir.core.components.ast.LookupTypeOf)(*s.engine.store, c.e))
+			bc.json.set(item, "detail", doir.core.strings.text(*s.strings, t.name));
 	}
 	if (!qualified)
-		foreach (keyword; doir.syntax.tables.keywords) {
+		foreach (keyword; doir.core.syntax.tables.keywords) {
 			if (!fp.string.startsWith(keyword, partial) || written > limit) continue;
 			++written;
 			auto item = bc.json.appendObject(items);
@@ -112,8 +112,8 @@ package(doir) void completion(ref doir.lsp.session.Session s, bc.json.Value para
 			return;
 		}
 		foreach (e; fp.dynarray.slice(entries.related)) {
-			immutable name = ecrs.context.getComponent!(doir.components.ast.Name)(*s.engine.store, e).value;
-			const spelled = doir.strings.text(*s.strings, name);
+			immutable name = ecrs.context.getComponent!(doir.core.components.ast.Name)(*s.engine.store, e).value;
+			const spelled = doir.core.strings.text(*s.strings, name);
 			if (!fp.string.startsWith(spelled, partial)) continue;
 			refused = refused || !fp.dynarray.pushBack(found, Candidate(name, depth, e));
 		}
@@ -127,7 +127,7 @@ package(doir) void completion(ref doir.lsp.session.Session s, bc.json.Value para
 		scope(exit) fp.dynarray.free(chain);
 		gather(doir.source.rootOf(*s.engine, o.file), 0);
 		foreach (i, ref f; fp.dynarray.slice(chain))
-			if (ecrs.context.hasComponent!(doir.components.ast.Block)(*s.engine.store, f.e)) gather(f.e, i + 1);
+			if (ecrs.context.hasComponent!(doir.core.components.ast.Block)(*s.engine.store, f.e)) gather(f.e, i + 1);
 	}
 	if (refused) {
 		doir.lsp.session.respondError(s, id, -32_603, "out of memory listing completions");

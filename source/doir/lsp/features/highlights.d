@@ -8,13 +8,14 @@ static import fp.string;
 static import bc.json;
 static import ecrs.context;
 
-static import doir.components.ast;
+static import doir.core.components.ast;
 static import doir.components.source;
+static import doir.core.components.source;
 static import doir.lsp.session;
 static import doir.lsp.store;
 static import doir.source;
-static import doir.strings;
-static import doir.syntax.lexer;
+static import doir.core.strings;
+static import doir.core.syntax.lexer;
 
 public import ecrs.registry : invalidEntity;
 
@@ -46,19 +47,19 @@ package(doir) void documentHighlight(ref doir.lsp.session.Session s, bc.json.Val
 	immutable target = spelled.length ? doir.lsp.store.resolve(s, o.file, at, spelled[0 .. segmentEnd]) : doir.lsp.store.Found(invalidEntity);
 	if (target.e == invalidEntity) return doir.lsp.session.respondNull(s, id);
 	auto store = s.engine.store;
-	auto targetName = ecrs.context.findComponent!(doir.components.ast.Name)(*store, target.e);
+	auto targetName = ecrs.context.findComponent!(doir.core.components.ast.Name)(*store, target.e);
 	if (targetName is null) return doir.lsp.session.respondNull(s, id);
-	const wanted = doir.strings.text(*s.strings, targetName.value);
+	const wanted = doir.core.strings.text(*s.strings, targetName.value);
 	// The declaration's own name follows `export`, if it has one.
 	immutable declared = !fp.rope.equalAt(text, target.start, wanted) && fp.rope.equalAt(text, target.start, "export ") ? target.start + 7 : target.start;
 	// A namespace's members are read through dotted names from anywhere; anything else only inside the block declaring it.
 	size_t from = 0, to = fp.rope.length(text);
-	auto parent = ecrs.context.findComponent!(doir.components.ast.Parent)(*store, target.e);
-	auto parentFlags = parent is null ? null : ecrs.context.findComponent!(doir.components.ast.Flags)(*store, parent.parent);
-	immutable namespace = parentFlags !is null && (parentFlags.flags & doir.components.ast.Flags.Namespace);
-	if (parent !is null && !namespace && !ecrs.context.hasComponent!(doir.components.source.InFile)(*store, parent.parent) && ecrs.context.hasComponent!(doir.components.source.SourceSpan)(*store, parent.parent)) {
-		from = target.start - ecrs.context.getComponent!(doir.components.source.SourceSpan)(*s.engine.store, target.e).offset;
-		to = from + ecrs.context.getComponent!(doir.components.source.SourceSpan)(*s.engine.store, parent.parent).length;
+	auto parent = ecrs.context.findComponent!(doir.core.components.ast.Parent)(*store, target.e);
+	auto parentFlags = parent is null ? null : ecrs.context.findComponent!(doir.core.components.ast.Flags)(*store, parent.parent);
+	immutable namespace = parentFlags !is null && (parentFlags.flags & doir.core.components.ast.Flags.Namespace);
+	if (parent !is null && !namespace && !ecrs.context.hasComponent!(doir.components.source.InFile)(*store, parent.parent) && ecrs.context.hasComponent!(doir.core.components.source.SourceSpan)(*store, parent.parent)) {
+		from = target.start - ecrs.context.getComponent!(doir.core.components.source.SourceSpan)(*s.engine.store, target.e).offset;
+		to = from + ecrs.context.getComponent!(doir.core.components.source.SourceSpan)(*s.engine.store, parent.parent).length;
 	}
 	auto copied = fp.rope.text(text, from, to);
 	if (copied.isNull) return doir.lsp.session.respondError(s, id, -32_603, "out of memory reading the document");
@@ -67,11 +68,11 @@ package(doir) void documentHighlight(ref doir.lsp.session.Session s, bc.json.Val
 	auto source = fp.string.slice(bytes);
 	bc.json.Document d;
 	auto highlights = bc.json.setArray(doir.lsp.session.response(d, id), "result");
-	auto cursor = doir.syntax.lexer.Cursor(source);
+	auto cursor = doir.core.syntax.lexer.Cursor(source);
 	while (cursor.at < source.length) {
-		immutable t = doir.syntax.lexer.next(cursor);
-		if (t.kind != doir.syntax.lexer.TokenKind.identifier) continue;
-		const token = doir.syntax.lexer.text(t, source);
+		immutable t = doir.core.syntax.lexer.next(cursor);
+		if (t.kind != doir.core.syntax.lexer.TokenKind.identifier) continue;
+		const token = doir.core.syntax.lexer.text(t, source);
 		for (size_t start = 0; start < token.length;) {
 			immutable nextDot = fp.string.find(token, '.', start);
 			immutable end = nextDot == fp.pointer.notFound ? token.length : nextDot;

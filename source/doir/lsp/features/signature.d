@@ -8,12 +8,12 @@ static import fp.string;
 static import bc.json;
 static import ecrs.context;
 
-static import doir.components.ast;
+static import doir.core.components.ast;
 static import doir.lsp.session;
 static import doir.lsp.store;
 static import doir.source;
-static import doir.strings;
-static import doir.syntax.lexer;
+static import doir.core.strings;
+static import doir.core.syntax.lexer;
 
 public import ecrs.registry : invalidEntity;
 
@@ -49,11 +49,11 @@ package(doir) void signatureHelp(ref doir.lsp.session.Session s, bc.json.Value p
 	scope(exit) fp.dynarray.free(open);
 	if (bytes !is null) {
 		auto source = bytes[0 .. at - from];
-		auto cursor = doir.syntax.lexer.Cursor(source);
-		doir.syntax.lexer.Token previous;
+		auto cursor = doir.core.syntax.lexer.Cursor(source);
+		doir.core.syntax.lexer.Token previous;
 		while (cursor.at < source.length) {
-			immutable t = doir.syntax.lexer.next(cursor);
-			switch (t.kind) with (doir.syntax.lexer.TokenKind) {
+			immutable t = doir.core.syntax.lexer.next(cursor);
+			switch (t.kind) with (doir.core.syntax.lexer.TokenKind) {
 				case whitespace, newline, lineComment, longComment: continue;
 				case leftParen:
 					immutable call = previous.kind == identifier ? OpenCall(from + previous.start, previous.length) : OpenCall(from, 0);
@@ -78,21 +78,21 @@ package(doir) void signatureHelp(ref doir.lsp.session.Session s, bc.json.Value p
 	immutable type = target.e == invalidEntity ? invalidEntity : doir.lsp.store.functionTypeOf(s, o.file, target);
 	if (type == invalidEntity) return doir.lsp.session.respondNull(s, id);
 	auto store = s.engine.store;
-	auto inputs = fp.dynarray.slice(ecrs.context.getComponent!(doir.components.ast.FunctionInputs)(*store, type).related);
+	auto inputs = fp.dynarray.slice(ecrs.context.getComponent!(doir.core.components.ast.FunctionInputs)(*store, type).related);
 	char* label = null;
 	scope(exit) fp.dynarray.free(label);
 	bool fits = fp.string.append(label, callee[0 .. call.length], "(");
 	size_t[2]* parameters = null; // each parameter's start and end in `label`
 	scope(exit) fp.dynarray.free(parameters);
 	foreach (i, p; inputs) {
-		auto name = ecrs.context.findComponent!(doir.components.ast.Name)(*store, p);
-		auto ofType = ecrs.context.findComponent!(doir.components.ast.LookupTypeOf)(*store, p);
+		auto name = ecrs.context.findComponent!(doir.core.components.ast.Name)(*store, p);
+		auto ofType = ecrs.context.findComponent!(doir.core.components.ast.LookupTypeOf)(*store, p);
 		immutable start = fp.dynarray.length(label) + (i ? 2 : 0);
-		fits = fits && fp.string.append(label, i ? ", " : "", name is null ? "_" : doir.strings.text(*s.strings, name.value), ofType is null ? "" : ": ", ofType is null ? "" : doir.strings.text(*s.strings, ofType.name));
+		fits = fits && fp.string.append(label, i ? ", " : "", name is null ? "_" : doir.core.strings.text(*s.strings, name.value), ofType is null ? "" : ": ", ofType is null ? "" : doir.core.strings.text(*s.strings, ofType.name));
 		fits = fits && fp.dynarray.pushBack(parameters, cast(size_t[2]) [start, fp.dynarray.length(label)]);
 	}
-	auto returns = ecrs.context.findComponent!(doir.components.ast.LookupFunctionReturn)(*store, type);
-	fits = fits && fp.string.append(label, ")", returns is null ? "" : " -> ", returns is null ? "" : doir.strings.text(*s.strings, returns.name));
+	auto returns = ecrs.context.findComponent!(doir.core.components.ast.LookupFunctionReturn)(*store, type);
+	fits = fits && fp.string.append(label, ")", returns is null ? "" : " -> ", returns is null ? "" : doir.core.strings.text(*s.strings, returns.name));
 	if (!fits) return doir.lsp.session.respondError(s, id, -32_603, "out of memory describing the signature");
 	auto written = label[0 .. fp.dynarray.length(label)];
 	bc.json.Document d;

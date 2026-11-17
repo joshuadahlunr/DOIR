@@ -2,12 +2,13 @@
 /// Absolute locations are not stored: `locate` derives one on demand by adding the spans up the `Parent` chain to a file's root block, so moving text rewrites only the spans of what moved.
 ///
 /// Spans are untracked: no query records a dependency on them, and a diagnostic names the entity it is about, its location resolved only when it is reported.
-/// The components are in `doir.components.source`.
+/// The components are in `doir.components.source` and `doir.core.components.source`.
 ///
 /// Examples:
 /// ---
-/// static import doir.components.ast;
+/// static import doir.core.components.ast;
 /// static import doir.components.source;
+/// static import doir.core.components.source;
 /// static import ecrs.context;
 /// static import fp.rope;
 /// static import diagnose;
@@ -16,9 +17,9 @@
 /// immutable file = ecrs.context.addEntity(store), root = ecrs.context.addEntity(store), e = ecrs.context.addEntity(store);
 /// assert(ecrs.context.setComponent!(doir.components.source.SourceText)(store, file, doir.components.source.SourceText("f.doir", fp.rope.create("a : T\nb : T\n").get)));
 /// ecrs.context.addComponent!(doir.components.source.InFile)(store, root).file = file;
-/// *ecrs.context.addComponent!(doir.components.source.SourceSpan)(store, root) = doir.components.source.SourceSpan(0, 12);
-/// ecrs.context.addComponent!(doir.components.ast.Parent)(store, e).parent = root;
-/// *ecrs.context.addComponent!(doir.components.source.SourceSpan)(store, e) = doir.components.source.SourceSpan(6, 5);
+/// *ecrs.context.addComponent!(doir.core.components.source.SourceSpan)(store, root) = doir.core.components.source.SourceSpan(0, 12);
+/// ecrs.context.addComponent!(doir.core.components.ast.Parent)(store, e).parent = root;
+/// *ecrs.context.addComponent!(doir.core.components.source.SourceSpan)(store, e) = doir.core.components.source.SourceSpan(6, 5);
 /// const where = locate(store, e).get;
 /// assert(where.start == diagnose.LineColumn(2, 1) && where.end == diagnose.LineColumn(2, 6));
 /// ---
@@ -32,9 +33,10 @@ static import diagnose;
 static import ecrs.context;
 static import ecrs.relation;
 
-static import doir.components.ast;
+static import doir.core.components.ast;
 static import doir.components.query;
 static import doir.components.source;
+static import doir.core.components.source;
 
 public import ecrs.registry : EntityId, invalidEntity;
 
@@ -85,7 +87,7 @@ struct FileBytes {
 /// assert(fileRange(store, ecrs.context.addEntity(store)).isNull);
 /// ---
 std.typecons.Nullable!FileBytes fileRange(ref ecrs.context.Context store, EntityId e) {
-	auto own = ecrs.context.findComponent!(doir.components.source.SourceSpan)(store, e);
+	auto own = ecrs.context.findComponent!(doir.core.components.source.SourceSpan)(store, e);
 	if (own is null) return typeof(return).init;
 	size_t start = own.offset;
 	for (EntityId at = e;;) {
@@ -97,10 +99,10 @@ std.typecons.Nullable!FileBytes fileRange(ref ecrs.context.Context store, Entity
 			out_.bytes = diagnose.ByteRange(source.path, start, start + own.length);
 			return typeof(return)(out_);
 		}
-		auto parent = ecrs.context.findComponent!(doir.components.ast.Parent)(store, at);
+		auto parent = ecrs.context.findComponent!(doir.core.components.ast.Parent)(store, at);
 		if (parent is null) return typeof(return).init;
 		at = parent.parent;
-		auto span = ecrs.context.findComponent!(doir.components.source.SourceSpan)(store, at);
+		auto span = ecrs.context.findComponent!(doir.core.components.source.SourceSpan)(store, at);
 		if (span is null) return typeof(return).init;
 		start += span.offset;
 	}
@@ -120,8 +122,8 @@ std.typecons.Nullable!FileBytes fileRange(ref ecrs.context.Context store, Entity
 std.typecons.Nullable!(diagnose.LineColumnRange) locate(ref ecrs.context.Context store, EntityId e) {
 	foreach (hop; 0 .. maxHops) {
 		if (e == invalidEntity) return typeof(return).init;
-		if (auto annotation = ecrs.context.findComponent!(doir.components.source.SourceAnnotation)(store, e)) return typeof(return)(annotation.location);
-		if (ecrs.context.hasComponent!(doir.components.source.SourceSpan)(store, e)) {
+		if (auto annotation = ecrs.context.findComponent!(doir.core.components.source.SourceAnnotation)(store, e)) return typeof(return)(annotation.location);
+		if (ecrs.context.hasComponent!(doir.core.components.source.SourceSpan)(store, e)) {
 			auto found = fileRange(store, e);
 			if (found.isNull) return typeof(return).init;
 			auto start = lineColumnAt(store, found.get.file, found.get.bytes.startByte);
@@ -131,7 +133,7 @@ std.typecons.Nullable!(diagnose.LineColumnRange) locate(ref ecrs.context.Context
 			return typeof(return)(diagnose.LineColumnRange(found.get.bytes.file, start.get, end.get));
 		}
 		if (auto provenance = ecrs.context.findComponent!(doir.components.query.Provenance)(store, e)) e = provenance.origin;
-		else if (auto parent = ecrs.context.findComponent!(doir.components.ast.Parent)(store, e)) e = parent.parent;
+		else if (auto parent = ecrs.context.findComponent!(doir.core.components.ast.Parent)(store, e)) e = parent.parent;
 		else return typeof(return).init;
 	}
 	return typeof(return).init;
@@ -147,17 +149,17 @@ unittest { // spans add up to the file; annotations win; derived entities and pa
 	static immutable text = "ns : namespace = {\n\tx : T = 1\n\ty : T = 2\n}\n";
 	assert(ecrs.context.setComponent!(doir.components.source.SourceText)(store, file, doir.components.source.SourceText("a.doir", fp.rope.create(text).get)));
 	ecrs.context.addComponent!(doir.components.source.InFile)(store, root).file = file;
-	*ecrs.context.addComponent!(doir.components.source.SourceSpan)(store, root) = doir.components.source.SourceSpan(0, cast(uint) text.length);
+	*ecrs.context.addComponent!(doir.core.components.source.SourceSpan)(store, root) = doir.core.components.source.SourceSpan(0, cast(uint) text.length);
 	void place(EntityId e, EntityId parent, uint offset, uint length) {
-		ecrs.context.addComponent!(doir.components.ast.Parent)(store, e).parent = parent;
-		*ecrs.context.addComponent!(doir.components.source.SourceSpan)(store, e) = doir.components.source.SourceSpan(offset, length);
+		ecrs.context.addComponent!(doir.core.components.ast.Parent)(store, e).parent = parent;
+		*ecrs.context.addComponent!(doir.core.components.source.SourceSpan)(store, e) = doir.core.components.source.SourceSpan(offset, length);
 	}
 	place(ns, root, 0, cast(uint) text.length - 1);
 	place(declared, ns, 20, 9);
 	place(annotated, ns, 31, 9);
-	ecrs.context.addComponent!(doir.components.source.SourceAnnotation)(store, annotated).location = diagnose.LineColumnRange("gen", diagnose.LineColumn(9, 2), diagnose.LineColumn(9, 2));
+	ecrs.context.addComponent!(doir.core.components.source.SourceAnnotation)(store, annotated).location = diagnose.LineColumnRange("gen", diagnose.LineColumn(9, 2), diagnose.LineColumn(9, 2));
 	ecrs.context.addComponent!(doir.components.query.Provenance)(store, derived).origin = declared;
-	ecrs.context.addComponent!(doir.components.ast.Parent)(store, part).parent = annotated;
+	ecrs.context.addComponent!(doir.core.components.ast.Parent)(store, part).parent = annotated;
 
 	const found = fileRange(store, declared).get;
 	assert(text[found.bytes.startByte .. found.bytes.endByte] == "x : T = 1" && found.bytes.file == "a.doir" && found.file == file);
@@ -176,8 +178,8 @@ unittest { // spans add up to the file; annotations win; derived entities and pa
 	// New text brings its own lines.
 	static immutable moved = "\n\n" ~ text;
 	assert(ecrs.context.setComponent!(doir.components.source.SourceText)(store, file, doir.components.source.SourceText("a.doir", fp.rope.create(moved).get)));
-	ecrs.context.getForWriting!(doir.components.source.SourceSpan)(store, root) = doir.components.source.SourceSpan(0, cast(uint) moved.length);
-	ecrs.context.getForWriting!(doir.components.source.SourceSpan)(store, ns).offset = 2;
+	ecrs.context.getForWriting!(doir.core.components.source.SourceSpan)(store, root) = doir.core.components.source.SourceSpan(0, cast(uint) moved.length);
+	ecrs.context.getForWriting!(doir.core.components.source.SourceSpan)(store, ns).offset = 2;
 	assert(locate(store, declared).get.start == diagnose.LineColumn(4, 2));
 
 	static immutable crText = "a\rbc\r";

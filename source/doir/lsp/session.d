@@ -14,7 +14,7 @@ static import doir.format;
 static import doir.lsp.positions;
 static import doir.query;
 static import doir.source;
-static import doir.strings;
+static import doir.core.strings;
 
 public import ecrs.registry : EntityId, invalidEntity;
 
@@ -35,7 +35,7 @@ package(doir) struct Opened {
 /// The server's state between messages.
 package(doir) struct Session {
 	doir.query.QueryEngine* engine; ///
-	doir.strings.Strings* strings; ///
+	doir.core.strings.Strings* strings; ///
 	int output; /// Where messages to the client go.
 	doir.lsp.positions.Encoding encoding = doir.lsp.positions.Encoding.utf16; ///
 	doir.lsp.positions.LineCache lines; /// Reset before each message, since an edit may free the text it describes.
@@ -237,7 +237,7 @@ version (unittest) {
 	package(doir) struct Fixture {
 		ecrs.context.Context store; ///
 		doir.query.QueryEngine engine; ///
-		doir.strings.Strings strings; ///
+		doir.core.strings.Strings strings; ///
 		Session s; ///
 		bc.json.Document request; /// The params `parse` read last.
 		bc.json.Document requestId; /// The id `id` gives: `1`.
@@ -370,7 +370,7 @@ version (unittest) {
 		f.pipe = fp.io.Pipe.init;
 		if (f.live) {
 			doir.query.free(f.engine);
-			doir.strings.free(f.strings);
+			doir.core.strings.free(f.strings);
 			ecrs.context.free(f.store);
 			f.live = false;
 		}

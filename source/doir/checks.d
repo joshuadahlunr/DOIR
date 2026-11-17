@@ -11,13 +11,13 @@
 /// static import diagnose;
 /// static import doir.query;
 /// static import doir.source;
-/// static import doir.strings;
+/// static import doir.core.strings;
 /// auto store = ecrs.context.create();
 /// scope(exit) ecrs.context.free(store);
 /// auto engine = doir.query.create(store);
 /// scope(exit) doir.query.free(engine);
-/// doir.strings.Strings strings;
-/// scope(exit) doir.strings.free(strings);
+/// doir.core.strings.Strings strings;
+/// scope(exit) doir.core.strings.free(strings);
 /// engine.strings = &strings;
 /// diagnose.Manager manager;
 /// scope(exit) diagnose.free(manager);
@@ -41,15 +41,15 @@ static import ecrs.context;
 static import ecrs.relation;
 static import ecrs.schedules;
 
-static import doir.components.ast;
+static import doir.core.components.ast;
 static import doir.components.source;
 static import doir.engine.positions;
 static import doir.query;
 static import doir.names;
 static import doir.schedules;
 static import doir.source;
-static import doir.strings;
-static import doir.syntax.parser;
+static import doir.core.strings;
+static import doir.core.syntax.parser;
 
 public import ecrs.registry : EntityId, invalidEntity;
 
@@ -84,26 +84,26 @@ private static immutable LevelCall[6] levelCalls = [
 // A declaration as `doir_check` sees it.
 private struct Decl {
 	EntityId e;
-	doir.strings.StringId name; // `unnamed` for `_`
+	doir.core.strings.StringId name; // `unnamed` for `_`
 	const(char)[] typeName; // `function` for a function type written in place; empty for none
 	bool complete; // it has a type and a value, as the declarations `doir_check` walks do
 	bool isFunction, isValue;
 }
 
-private const(char)[] nameText(ref doir.query.QueryEngine engine, doir.strings.StringId id) {
+private const(char)[] nameText(ref doir.query.QueryEngine engine, doir.core.strings.StringId id) {
 	assert(engine.strings !is null, "doir.checks: naming with no strings");
-	assert(id != doir.strings.refused, "doir.checks: the text of a name that was never interned");
-	return id == doir.strings.unnamed ? "_" : doir.strings.text(*engine.strings, id);
+	assert(id != doir.core.strings.refused, "doir.checks: the text of a name that was never interned");
+	return id == doir.core.strings.unnamed ? "_" : doir.core.strings.text(*engine.strings, id);
 }
 
 private bool functionType(ref doir.query.QueryEngine engine, EntityId e) {
-	return e != invalidEntity && ecrs.context.hasComponent!(doir.components.ast.FunctionInputs)(*engine.store, e);
+	return e != invalidEntity && ecrs.context.hasComponent!(doir.core.components.ast.FunctionInputs)(*engine.store, e);
 }
 
 // The function type `e` declares: written in place as its type, or its value.
 private EntityId ownFunctionType(ref doir.query.QueryEngine engine, EntityId e) {
 	assert(e != invalidEntity, "doir.checks: the function type of no declaration");
-	if (auto type = ecrs.context.findComponent!(doir.components.ast.TypeOf)(*engine.store, e))
+	if (auto type = ecrs.context.findComponent!(doir.core.components.ast.TypeOf)(*engine.store, e))
 		if (functionType(engine, type.type)) return type.type;
 	return functionType(engine, e) ? e : invalidEntity;
 }
@@ -116,17 +116,17 @@ private bool among(const(char)[] word, const(string)[] words) {
 private Decl declOf(ref doir.query.QueryEngine engine, EntityId e) {
 	auto store = engine.store;
 	Decl d = Decl(e);
-	if (auto n = ecrs.context.findComponent!(doir.components.ast.Name)(*store, e)) d.name = n.value;
+	if (auto n = ecrs.context.findComponent!(doir.core.components.ast.Name)(*store, e)) d.name = n.value;
 	immutable inPlace = ownFunctionType(engine, e) != invalidEntity && !functionType(engine, e);
-	auto flags = ecrs.context.findComponent!(doir.components.ast.Flags)(*store, e);
+	auto flags = ecrs.context.findComponent!(doir.core.components.ast.Flags)(*store, e);
 	// The parser writes `namespace` as a flag, not a type it looks up.
-	if (flags !is null && (flags.flags & doir.components.ast.Flags.Namespace)) d.typeName = "namespace";
+	if (flags !is null && (flags.flags & doir.core.components.ast.Flags.Namespace)) d.typeName = "namespace";
 	else if (inPlace) d.typeName = "function";
-	else if (auto t = ecrs.context.findComponent!(doir.components.ast.LookupTypeOf)(*store, e)) d.typeName = nameText(engine, t.name);
-	else if (ecrs.context.hasComponent!(doir.components.ast.LookupAlias)(*store, e)) d.typeName = "alias";
-	immutable valueless = flags !is null && (flags.flags & doir.components.ast.Flags.Valueless);
+	else if (auto t = ecrs.context.findComponent!(doir.core.components.ast.LookupTypeOf)(*store, e)) d.typeName = nameText(engine, t.name);
+	else if (ecrs.context.hasComponent!(doir.core.components.ast.LookupAlias)(*store, e)) d.typeName = "alias";
+	immutable valueless = flags !is null && (flags.flags & doir.core.components.ast.Flags.Valueless);
 	d.complete = d.typeName.length && !valueless;
-	immutable block = ecrs.context.hasComponent!(doir.components.ast.Block)(*store, e);
+	immutable block = ecrs.context.hasComponent!(doir.core.components.ast.Block)(*store, e);
 	d.isFunction = ownFunctionType(engine, e) != invalidEntity || (block && !among(d.typeName, blockTypes[]));
 	d.isValue = !d.isFunction && !among(d.typeName, nonValueTypes[]);
 	assert(!(d.isFunction && d.isValue), "doir.checks: a declaration both a function and a plain value");
@@ -135,7 +135,7 @@ private Decl declOf(ref doir.query.QueryEngine engine, EntityId e) {
 }
 
 private const(EntityId)[] entriesOf(ref doir.query.QueryEngine engine, EntityId block) {
-	auto b = ecrs.context.findComponent!(doir.components.ast.Block)(*engine.store, block);
+	auto b = ecrs.context.findComponent!(doir.core.components.ast.Block)(*engine.store, block);
 	return b is null ? null : fp.dynarray.slice(b.related);
 }
 
@@ -165,9 +165,9 @@ private Decl* declarationsOf(ref doir.query.QueryEngine engine, EntityId block, 
 }
 
 // The index of the first complete declaration of `decls` named `name`, or `fp.pointer.notFound`.
-private size_t indexOf(const(Decl)[] decls, doir.strings.StringId name) {
+private size_t indexOf(const(Decl)[] decls, doir.core.strings.StringId name) {
 	assert(decls.length < fp.pointer.allocationRefused, "doir.checks: an index that could read as a sentinel");
-	if (name == doir.strings.unnamed) return fp.pointer.notFound;
+	if (name == doir.core.strings.unnamed) return fp.pointer.notFound;
 	foreach (i, ref d; decls) if (d.name == name) return i;
 	return fp.pointer.notFound;
 }
@@ -175,22 +175,22 @@ private size_t indexOf(const(Decl)[] decls, doir.strings.StringId name) {
 // Calls `f` with each name `d`'s value reads, not descending into blocks: callee, arguments, a reference's target, and a function type's parameters and return.
 private bool forEachRead(alias f)(ref doir.query.QueryEngine engine, EntityId e) {
 	auto store = engine.store;
-	bool each(doir.strings.StringId id) {
-		return id == doir.strings.unnamed || nameText(engine, id) == "_" || f(id);
+	bool each(doir.core.strings.StringId id) {
+		return id == doir.core.strings.unnamed || nameText(engine, id) == "_" || f(id);
 	}
-	if (auto call = ecrs.context.findComponent!(doir.components.ast.LookupCall)(*store, e)) {
+	if (auto call = ecrs.context.findComponent!(doir.core.components.ast.LookupCall)(*store, e)) {
 		if (!each(call.name)) return false;
-		if (auto inputs = ecrs.context.findComponent!(doir.components.ast.LookupFunctionInputs)(*store, e))
+		if (auto inputs = ecrs.context.findComponent!(doir.core.components.ast.LookupFunctionInputs)(*store, e))
 			foreach (a; fp.dynarray.slice(inputs.names.p)) if (!each(a)) return false;
 	}
-	if (auto v = ecrs.context.findComponent!(doir.components.ast.LookupValue)(*store, e)) if (!each(v.name)) return false;
-	if (auto a = ecrs.context.findComponent!(doir.components.ast.LookupAlias)(*store, e)) if (!each(a.name)) return false;
+	if (auto v = ecrs.context.findComponent!(doir.core.components.ast.LookupValue)(*store, e)) if (!each(v.name)) return false;
+	if (auto a = ecrs.context.findComponent!(doir.core.components.ast.LookupAlias)(*store, e)) if (!each(a.name)) return false;
 	if (functionType(engine, e)) {
-		foreach (p; fp.dynarray.slice(ecrs.context.getComponent!(doir.components.ast.FunctionInputs)(*store, e).related)) {
-			if (auto t = ecrs.context.findComponent!(doir.components.ast.LookupTypeOf)(*store, p)) if (!each(t.name)) return false;
-			if (auto v = ecrs.context.findComponent!(doir.components.ast.LookupValue)(*store, p)) if (!each(v.name)) return false;
+		foreach (p; fp.dynarray.slice(ecrs.context.getComponent!(doir.core.components.ast.FunctionInputs)(*store, e).related)) {
+			if (auto t = ecrs.context.findComponent!(doir.core.components.ast.LookupTypeOf)(*store, p)) if (!each(t.name)) return false;
+			if (auto v = ecrs.context.findComponent!(doir.core.components.ast.LookupValue)(*store, p)) if (!each(v.name)) return false;
 		}
-		if (auto r = ecrs.context.findComponent!(doir.components.ast.LookupFunctionReturn)(*store, e)) if (!each(r.name)) return false;
+		if (auto r = ecrs.context.findComponent!(doir.core.components.ast.LookupFunctionReturn)(*store, e)) if (!each(r.name)) return false;
 	}
 	return true;
 }
@@ -198,9 +198,9 @@ private bool forEachRead(alias f)(ref doir.query.QueryEngine engine, EntityId e)
 // The names `e`'s value passes as call arguments or reads plainly: where a block binding it names is executed.
 private bool forEachArgument(alias f)(ref doir.query.QueryEngine engine, EntityId e) {
 	auto store = engine.store;
-	if (auto inputs = ecrs.context.findComponent!(doir.components.ast.LookupFunctionInputs)(*store, e))
+	if (auto inputs = ecrs.context.findComponent!(doir.core.components.ast.LookupFunctionInputs)(*store, e))
 		foreach (a; fp.dynarray.slice(inputs.names.p)) if (!f(a)) return false;
-	if (auto v = ecrs.context.findComponent!(doir.components.ast.LookupValue)(*store, e)) if (!f(v.name)) return false;
+	if (auto v = ecrs.context.findComponent!(doir.core.components.ast.LookupValue)(*store, e)) if (!f(v.name)) return false;
 	return true;
 }
 
@@ -229,7 +229,7 @@ private struct Placements {
 
 // A name passed as an argument by the declaration at `index`, for finding a block binding's first use.
 private struct Use {
-	doir.strings.StringId name;
+	doir.core.strings.StringId name;
 	uint index;
 }
 
@@ -298,7 +298,7 @@ private struct ChildContexts {
 			uint index = uint.max;
 			if (next < fp.dynarray.length(decls) && decls[next].e == e) index = cast(uint) next++;
 			Placement placed;
-			if (ecrs.context.hasComponent!(doir.components.ast.Block)(*engine.store, e)) {
+			if (ecrs.context.hasComponent!(doir.core.components.ast.Block)(*engine.store, e)) {
 				const d = declOf(engine, e);
 				if (d.isFunction) placed = Placement(0, executed | ordered | inFunction);
 				else if (d.typeName == "namespace") placed = Placement(index, cast(ubyte) (ordered | inside | (p.flags & levelScope)), true);
@@ -319,8 +319,8 @@ private struct ChildContexts {
 }
 
 // The index of the first declaration passing `name` as an argument, from `uses` sorted by name then index, or `uint.max`.
-private uint firstUse(const(Use)[] uses, doir.strings.StringId name) {
-	if (name == doir.strings.unnamed) return uint.max;
+private uint firstUse(const(Use)[] uses, doir.core.strings.StringId name) {
+	if (name == doir.core.strings.unnamed) return uint.max;
 	size_t low = 0, high = uses.length;
 	while (low < high) {
 		immutable middle = (low + high) / 2;
@@ -343,13 +343,13 @@ struct ContextOf {
 	/// static import ecrs.context;
 	/// static import doir.query;
 	/// static import doir.source;
-	/// static import doir.strings;
+	/// static import doir.core.strings;
 	/// auto store = ecrs.context.create();
 	/// scope(exit) ecrs.context.free(store);
 	/// auto engine = doir.query.create(store);
 	/// scope(exit) doir.query.free(engine);
-	/// doir.strings.Strings strings;
-	/// scope(exit) doir.strings.free(strings);
+	/// doir.core.strings.Strings strings;
+	/// scope(exit) doir.core.strings.free(strings);
 	/// engine.strings = &strings;
 	/// immutable file = doir.source.addFile(engine, strings, "a.doir");
 	/// cast(void) doir.source.commit(engine, strings, file, "x : T = 1\n");
@@ -360,7 +360,7 @@ struct ContextOf {
 		auto store = engine.store;
 		if (!doir.query.read(engine, block)) return Context.init;
 		if (ecrs.context.hasComponent!(doir.components.source.InFile)(*store, block)) return Context([invalidEntity], 0, executed | ordered | levelScope);
-		auto parentOf = ecrs.context.findComponent!(doir.components.ast.Parent)(*store, block);
+		auto parentOf = ecrs.context.findComponent!(doir.core.components.ast.Parent)(*store, block);
 		if (parentOf is null) return Context.init;
 		immutable parent = parentOf.parent;
 		auto placements = doir.query.query!ChildContexts(engine, ChildContexts.Key([parent]));
@@ -384,13 +384,13 @@ private EntityId lookupPath(ref doir.query.QueryEngine engine, EntityId start, c
 	for (;;) {
 		size_t dot = 0;
 		while (dot < name.length && name[dot] != '.') ++dot;
-		immutable id = doir.strings.find(*engine.strings, name[0 .. dot]);
-		if (id == doir.strings.unnamed) return invalidEntity;
+		immutable id = doir.core.strings.find(*engine.strings, name[0 .. dot]);
+		if (id == doir.core.strings.unnamed) return invalidEntity;
 		immutable next = doir.names.entryNamed(engine, at, id);
 		if (next == invalidEntity || dot == name.length) return next;
 		if (!doir.query.read(engine, next)) return invalidEntity;
-		auto flags = ecrs.context.findComponent!(doir.components.ast.Flags)(*engine.store, next);
-		if (flags is null || !(flags.flags & doir.components.ast.Flags.Namespace)) return invalidEntity;
+		auto flags = ecrs.context.findComponent!(doir.core.components.ast.Flags)(*engine.store, next);
+		if (flags is null || !(flags.flags & doir.core.components.ast.Flags.Namespace)) return invalidEntity;
 		at = next;
 		name = name[dot + 1 .. $];
 	}
@@ -402,14 +402,14 @@ private EntityId resolve(ref doir.query.QueryEngine engine, EntityId from, const
 	size_t climbed = 0;
 	for (EntityId at = from; at != invalidEntity;) {
 		// Parents nest no deeper than the parser builds, so a longer climb is a cycle of parents (WF-Par).
-		assert(++climbed <= doir.syntax.parser.maxNesting + 2, "doir.checks: a chain of parents deeper than any parse, or a cycle (WF-Par)");
-		auto flags = ecrs.context.findComponent!(doir.components.ast.Flags)(*store, at);
-		immutable scope_ = ecrs.context.hasComponent!(doir.components.source.InFile)(*store, at) || (flags !is null && (flags.flags & doir.components.ast.Flags.Namespace));
+		assert(++climbed <= doir.core.syntax.parser.maxNesting + 2, "doir.checks: a chain of parents deeper than any parse, or a cycle (WF-Par)");
+		auto flags = ecrs.context.findComponent!(doir.core.components.ast.Flags)(*store, at);
+		immutable scope_ = ecrs.context.hasComponent!(doir.components.source.InFile)(*store, at) || (flags !is null && (flags.flags & doir.core.components.ast.Flags.Namespace));
 		if (scope_) {
 			immutable found = lookupPath(engine, at, name);
 			if (found != invalidEntity) return found;
 		}
-		auto parent = ecrs.context.findComponent!(doir.components.ast.Parent)(*store, at);
+		auto parent = ecrs.context.findComponent!(doir.core.components.ast.Parent)(*store, at);
 		at = parent is null ? invalidEntity : parent.parent;
 	}
 	return invalidEntity;
@@ -421,8 +421,8 @@ private EntityId signatureOf(ref doir.query.QueryEngine engine, EntityId from, c
 	if (target == invalidEntity || !doir.query.read(engine, target)) return invalidEntity;
 	immutable own = ownFunctionType(engine, target);
 	if (own != invalidEntity) return own;
-	auto type = ecrs.context.findComponent!(doir.components.ast.LookupTypeOf)(*engine.store, target);
-	auto parent = ecrs.context.findComponent!(doir.components.ast.Parent)(*engine.store, target);
+	auto type = ecrs.context.findComponent!(doir.core.components.ast.LookupTypeOf)(*engine.store, target);
+	auto parent = ecrs.context.findComponent!(doir.core.components.ast.Parent)(*engine.store, target);
 	if (type is null || parent is null) return invalidEntity;
 	immutable named = resolve(engine, parent.parent, nameText(engine, type.name));
 	return named == invalidEntity || !doir.query.read(engine, named) ? invalidEntity : ownFunctionType(engine, named);
@@ -433,13 +433,13 @@ private EntityId signatureOf(ref doir.query.QueryEngine engine, EntityId from, c
 
 // Whether `block`'s last entry calls a terminator, or is a tail call (`WF-Term`, B-Tail).
 private bool endsWithTerminator(ref doir.query.QueryEngine engine, EntityId block) {
-	assert(ecrs.context.hasComponent!(doir.components.ast.Block)(*engine.store, block), "doir.checks: WF-Term asked of a declaration with no block");
+	assert(ecrs.context.hasComponent!(doir.core.components.ast.Block)(*engine.store, block), "doir.checks: WF-Term asked of a declaration with no block");
 	auto entries = entriesOf(engine, block);
 	if (entries.length == 0 || !doir.query.read(engine, entries[$ - 1])) return false;
 	immutable last = entries[$ - 1];
-	auto flags = ecrs.context.findComponent!(doir.components.ast.Flags)(*engine.store, last);
-	if (flags !is null && (flags.flags & doir.components.ast.Flags.Tail)) return true;
-	auto call = ecrs.context.findComponent!(doir.components.ast.LookupCall)(*engine.store, last);
+	auto flags = ecrs.context.findComponent!(doir.core.components.ast.Flags)(*engine.store, last);
+	if (flags !is null && (flags.flags & doir.core.components.ast.Flags.Tail)) return true;
+	auto call = ecrs.context.findComponent!(doir.core.components.ast.LookupCall)(*engine.store, last);
 	return call !is null && among(nameText(engine, call.name), terminators[]);
 }
 
@@ -494,7 +494,7 @@ private bool checkOrder(ref doir.query.QueryEngine engine, const(Decl)[] decls, 
 /// The checks of each block, as a system the engine runs as one memoized query per block (`doir.schedules.Memo`), in no order (`L-Sema`): `WF-Term` for the blocks its declarations hold, `WF-Order` for the names they read, and `D-Return`, `B-Tail`, `L-Scan`, `L-Sema` and `L-Bind` for their calls.
 /// A block passes if none of them reports; their diagnostics go through `doir.query.report`.
 struct BlockChecks {
-	alias Tag = doir.components.ast.Block; /// The domain: every block, a file's root or a block-valued declaration.
+	alias Tag = doir.core.components.ast.Block; /// The domain: every block, a file's root or a block-valued declaration.
 	alias Order = BlockOrder; /// The order checks report in.
 
 	/// Where `block` comes in that order.
@@ -502,20 +502,20 @@ struct BlockChecks {
 	/// Examples:
 	/// ---
 	/// static import ecrs.context;
-	/// static import doir.components.ast;
+	/// static import doir.core.components.ast;
 	/// static import doir.query;
 	/// static import doir.source;
-	/// static import doir.strings;
+	/// static import doir.core.strings;
 	/// auto store = ecrs.context.create();
 	/// scope(exit) ecrs.context.free(store);
 	/// auto engine = doir.query.create(store);
 	/// scope(exit) doir.query.free(engine);
-	/// doir.strings.Strings strings;
-	/// scope(exit) doir.strings.free(strings);
+	/// doir.core.strings.Strings strings;
+	/// scope(exit) doir.core.strings.free(strings);
 	/// immutable file = doir.source.addFile(engine, strings, "a.doir");
 	/// cast(void) doir.source.commit(engine, strings, file, "n : namespace = {\n\tx : T = 1\n}\n");
 	/// immutable root = doir.source.rootOf(engine, file);
-	/// immutable n = ecrs.context.getComponent!(doir.components.ast.Block)(store, root).related[0];
+	/// immutable n = ecrs.context.getComponent!(doir.core.components.ast.Block)(store, root).related[0];
 	/// auto top = BlockChecks.orderOf(engine, root), inner = BlockChecks.orderOf(engine, n);
 	/// assert(top.root == root && inner.root == root && BlockChecks.compare(engine, top, inner) < 0);
 	/// ---
@@ -524,8 +524,8 @@ struct BlockChecks {
 		EntityId root = block;
 		size_t climbed = 0;
 		while (!ecrs.context.hasComponent!(doir.components.source.InFile)(*store, root)) {
-			assert(++climbed <= doir.syntax.parser.maxNesting + 2, "doir.checks: a chain of parents deeper than any parse, or a cycle (WF-Par)");
-			auto parent = ecrs.context.findComponent!(doir.components.ast.Parent)(*store, root);
+			assert(++climbed <= doir.core.syntax.parser.maxNesting + 2, "doir.checks: a chain of parents deeper than any parse, or a cycle (WF-Par)");
+			auto parent = ecrs.context.findComponent!(doir.core.components.ast.Parent)(*store, root);
 			if (parent is null) break;
 			root = parent.parent;
 		}
@@ -561,13 +561,13 @@ struct BlockChecks {
 	/// static import doir.query;
 	/// static import doir.schedules;
 	/// static import doir.source;
-	/// static import doir.strings;
+	/// static import doir.core.strings;
 	/// auto store = ecrs.context.create();
 	/// scope(exit) ecrs.context.free(store);
 	/// auto engine = doir.query.create(store);
 	/// scope(exit) doir.query.free(engine);
-	/// doir.strings.Strings strings;
-	/// scope(exit) doir.strings.free(strings);
+	/// doir.core.strings.Strings strings;
+	/// scope(exit) doir.core.strings.free(strings);
 	/// engine.strings = &strings;
 	/// immutable file = doir.source.addFile(engine, strings, "a.doir");
 	/// cast(void) doir.source.commit(engine, strings, file, "f : () -> void = {\n\tx : T = 1\n}\n");
@@ -589,17 +589,17 @@ struct BlockChecks {
 			return false;
 		}
 		auto decls = fp.dynarray.slice(own);
-		auto blockFlags = ecrs.context.findComponent!(doir.components.ast.Flags)(*engine.store, block);
-		immutable inNamespace = blockFlags !is null && (blockFlags.flags & doir.components.ast.Flags.Namespace);
+		auto blockFlags = ecrs.context.findComponent!(doir.core.components.ast.Flags)(*engine.store, block);
+		immutable inNamespace = blockFlags !is null && (blockFlags.flags & doir.core.components.ast.Flags.Namespace);
 		bool passed = true;
 		foreach (i, ref d; decls) {
 			// WF-Term is syntactic: a body or block binding ends properly wherever it is declared.
-			if (ecrs.context.hasComponent!(doir.components.ast.Block)(*engine.store, d.e) && d.typeName != "namespace" && d.typeName != "type" && !endsWithTerminator(engine, d.e)) {
+			if (ecrs.context.hasComponent!(doir.core.components.ast.Block)(*engine.store, d.e) && d.typeName != "namespace" && d.typeName != "type" && !endsWithTerminator(engine, d.e)) {
 				passed = false;
 				// Messages name no lines: a memo outlives edits that move its declarations, and the annotations are located when reported.
 				if (!doir.query.report(engine, d.e, diagnose.Kind.error, "WF-Term: the block's last statement does not say where control goes next", terminatorHint)) return false;
 			}
-			auto called = ecrs.context.findComponent!(doir.components.ast.LookupCall)(*engine.store, d.e);
+			auto called = ecrs.context.findComponent!(doir.core.components.ast.LookupCall)(*engine.store, d.e);
 			// L-Scan, L-Sema, L-Bind: the scan reads these calls before anything runs, so only a file root or namespace may hold them.
 			if (called !is null && !(context.flags & levelScope)) {
 				const callee = nameText(engine, called.name);
@@ -611,8 +611,8 @@ struct BlockChecks {
 				}
 			}
 			// B-Tail: a tail call returns from the function enclosing it, so it needs one, and ends its block.
-			auto flags = ecrs.context.findComponent!(doir.components.ast.Flags)(*engine.store, d.e);
-			if (called !is null && flags !is null && (flags.flags & doir.components.ast.Flags.Tail)) {
+			auto flags = ecrs.context.findComponent!(doir.core.components.ast.Flags)(*engine.store, d.e);
+			if (called !is null && flags !is null && (flags.flags & doir.core.components.ast.Flags.Tail)) {
 				if (!(context.flags & inFunction)) {
 					passed = false;
 					if (!doir.query.report(engine, d.e, diagnose.Kind.error, "B-Tail: this tail call is outside every function body, so it has nothing to return from", "move it into a function body, or drop `tail` to make it a plain call")) return false;
@@ -627,7 +627,7 @@ struct BlockChecks {
 			if (called !is null && d.typeName == "_") {
 				const callee = nameText(engine, called.name);
 				immutable functionType = signatureOf(engine, block, callee);
-				auto returned = functionType == invalidEntity ? null : ecrs.context.findComponent!(doir.components.ast.LookupFunctionReturn)(*engine.store, functionType);
+				auto returned = functionType == invalidEntity ? null : ecrs.context.findComponent!(doir.core.components.ast.LookupFunctionReturn)(*engine.store, functionType);
 				if (returned !is null && nameText(engine, returned.name) == "_") {
 					passed = false;
 					if (!reportJoined(engine, d.e, fp.string.joined("D-Return: this declaration's type cannot be worked out, since both it and the return type of '", callee, "' are `_`"), fp.string.joined("write the type in place of `_`, as in `x : std.u8 = ...`, or give '", callee, "' a return type after its `->`"))) return false;
@@ -668,13 +668,13 @@ private struct ProgramEnd {
 /// static import diagnose;
 /// static import doir.query;
 /// static import doir.source;
-/// static import doir.strings;
+/// static import doir.core.strings;
 /// auto store = ecrs.context.create();
 /// scope(exit) ecrs.context.free(store);
 /// auto engine = doir.query.create(store);
 /// scope(exit) doir.query.free(engine);
-/// doir.strings.Strings strings;
-/// scope(exit) doir.strings.free(strings);
+/// doir.core.strings.Strings strings;
+/// scope(exit) doir.core.strings.free(strings);
 /// engine.strings = &strings;
 /// diagnose.Manager manager;
 /// scope(exit) diagnose.free(manager);
@@ -711,13 +711,13 @@ struct Checking {
 	/// static import diagnose;
 	/// static import doir.query;
 	/// static import doir.source;
-	/// static import doir.strings;
+	/// static import doir.core.strings;
 	/// auto store = ecrs.context.create();
 	/// scope(exit) ecrs.context.free(store);
 	/// auto engine = doir.query.create(store);
 	/// scope(exit) doir.query.free(engine);
-	/// doir.strings.Strings strings;
-	/// scope(exit) doir.strings.free(strings);
+	/// doir.core.strings.Strings strings;
+	/// scope(exit) doir.core.strings.free(strings);
 	/// engine.strings = &strings;
 	/// diagnose.Manager manager;
 	/// scope(exit) diagnose.free(manager);
@@ -752,8 +752,8 @@ unittest { // an edit in one namespace re-runs only its checks, on one thread or
 		scope(exit) ecrs.context.free(store);
 		auto engine = doir.query.create(store);
 		scope(exit) doir.query.free(engine);
-		doir.strings.Strings strings;
-		scope(exit) doir.strings.free(strings);
+		doir.core.strings.Strings strings;
+		scope(exit) doir.core.strings.free(strings);
 		engine.strings = &strings;
 		engine.workers = workers;
 		engine.edgesMissing = deferred;
@@ -800,8 +800,8 @@ unittest { // the corpus cases for these rules: each reject case reports its rul
 		scope(exit) ecrs.context.free(store);
 		auto engine = doir.query.create(store);
 		scope(exit) doir.query.free(engine);
-		doir.strings.Strings strings;
-		scope(exit) doir.strings.free(strings);
+		doir.core.strings.Strings strings;
+		scope(exit) doir.core.strings.free(strings);
 		engine.strings = &strings;
 		diagnose.Manager manager;
 		scope(exit) diagnose.free(manager);
@@ -857,8 +857,8 @@ unittest { // the corpus cases for these rules: each reject case reports its rul
 		scope(exit) ecrs.context.free(store);
 		auto engine = doir.query.create(store);
 		scope(exit) doir.query.free(engine);
-		doir.strings.Strings strings;
-		scope(exit) doir.strings.free(strings);
+		doir.core.strings.Strings strings;
+		scope(exit) doir.core.strings.free(strings);
 		engine.strings = &strings;
 		engine.workers = workers;
 		diagnose.Manager manager;
@@ -898,8 +898,8 @@ unittest { // the corpus cases for these rules: each reject case reports its rul
 	scope(exit) ecrs.context.free(store);
 	auto engine = doir.query.create(store);
 	scope(exit) doir.query.free(engine);
-	doir.strings.Strings strings;
-	scope(exit) doir.strings.free(strings);
+	doir.core.strings.Strings strings;
+	scope(exit) doir.core.strings.free(strings);
 	engine.strings = &strings;
 	engine.workers = pool;
 	diagnose.Manager manager;
@@ -940,8 +940,8 @@ unittest { // L-Entry points at the program's last statement; ContextOf finds an
 		scope(exit) ecrs.context.free(store);
 		auto engine = doir.query.create(store);
 		scope(exit) doir.query.free(engine);
-		doir.strings.Strings strings;
-		scope(exit) doir.strings.free(strings);
+		doir.core.strings.Strings strings;
+		scope(exit) doir.core.strings.free(strings);
 		engine.strings = &strings;
 		diagnose.Manager manager;
 		scope(exit) diagnose.free(manager);
@@ -965,8 +965,8 @@ unittest { // L-Entry points at the program's last statement; ContextOf finds an
 		scope(exit) ecrs.context.free(store);
 		auto engine = doir.query.create(store);
 		scope(exit) doir.query.free(engine);
-		doir.strings.Strings strings;
-		scope(exit) doir.strings.free(strings);
+		doir.core.strings.Strings strings;
+		scope(exit) doir.core.strings.free(strings);
 		engine.strings = &strings;
 		diagnose.Manager manager;
 		scope(exit) diagnose.free(manager);
@@ -988,8 +988,8 @@ unittest { // L-Entry points at the program's last statement; ContextOf finds an
 		scope(exit) ecrs.context.free(store);
 		auto engine = doir.query.create(store);
 		scope(exit) doir.query.free(engine);
-		doir.strings.Strings strings;
-		scope(exit) doir.strings.free(strings);
+		doir.core.strings.Strings strings;
+		scope(exit) doir.core.strings.free(strings);
 		engine.strings = &strings;
 		immutable file = doir.source.addFile(engine, strings, "n.doir");
 		assert(doir.source.commit(engine, strings, file, nested) == 0);
@@ -1006,13 +1006,13 @@ unittest { // L-Entry points at the program's last statement; ContextOf finds an
 		scope(exit) ecrs.context.free(store);
 		auto engine = doir.query.create(store);
 		scope(exit) doir.query.free(engine);
-		doir.strings.Strings strings;
-		scope(exit) doir.strings.free(strings);
+		doir.core.strings.Strings strings;
+		scope(exit) doir.core.strings.free(strings);
 		engine.strings = &strings;
 		immutable file = doir.source.addFile(engine, strings, "o.doir");
 		assert(doir.source.commit(engine, strings, file, nested) == 0);
 		immutable orphan = ecrs.context.addEntity(store);
-		assert(ecrs.context.setComponent!(doir.components.ast.Parent)(store, orphan, doir.components.ast.Parent([doir.source.rootOf(engine, file)])));
+		assert(ecrs.context.setComponent!(doir.core.components.ast.Parent)(store, orphan, doir.core.components.ast.Parent([doir.source.rootOf(engine, file)])));
 		assert(*doir.query.query!ContextOf(engine, ContextOf.Key([orphan])) == Context.init);
 	}
 
@@ -1021,8 +1021,8 @@ unittest { // L-Entry points at the program's last statement; ContextOf finds an
 		scope(exit) ecrs.context.free(store);
 		auto engine = doir.query.create(store);
 		scope(exit) doir.query.free(engine);
-		doir.strings.Strings strings;
-		scope(exit) doir.strings.free(strings);
+		doir.core.strings.Strings strings;
+		scope(exit) doir.core.strings.free(strings);
 		engine.strings = &strings;
 		immutable file = doir.source.addFile(engine, strings, "r.doir");
 		assert(doir.source.commit(engine, strings, file, nested) == 0);

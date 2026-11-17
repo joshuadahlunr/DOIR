@@ -14,13 +14,13 @@
 /// static import ecrs.context;
 /// static import doir.query;
 /// static import doir.engine.positions;
-/// static import doir.components.ast;
+/// static import doir.core.components.ast;
 /// struct Modify {
 /// 	alias Key = ecrs.relation.Relation!1;
 /// 	alias Value = bool;
 /// 	static bool compute(ref doir.query.QueryEngine engine, Key key) @nogc nothrow {
 /// 		immutable t = key.related[0];
-/// 		return applyFlags(engine, t, doir.engine.positions.between(engine.positions, doir.engine.positions.root, doir.engine.positions.end, doir.engine.positions.end), doir.components.ast.Flags.ReadOnly);
+/// 		return applyFlags(engine, t, doir.engine.positions.between(engine.positions, doir.engine.positions.root, doir.engine.positions.end, doir.engine.positions.end), doir.core.components.ast.Flags.ReadOnly);
 /// 	}
 /// }
 /// auto store = ecrs.context.create();
@@ -30,7 +30,7 @@
 /// immutable t = ecrs.context.addEntity(store);
 /// assert(*doir.query.query!Modify(engine, Modify.Key([t])));
 /// assert(flagsAt(engine, t, doir.engine.positions.root).get == 0);
-/// assert(flagsAt(engine, t, doir.engine.positions.end).get == doir.components.ast.Flags.ReadOnly);
+/// assert(flagsAt(engine, t, doir.engine.positions.end).get == doir.core.components.ast.Flags.ReadOnly);
 /// ---
 module doir.effects;
 
@@ -46,8 +46,8 @@ static import ecrs.relation;
 static import doir.engine.logs;
 static import doir.engine.positions;
 static import doir.query;
-static import doir.builders;
-static import doir.components.ast;
+static import doir.core.builders;
+static import doir.core.components.ast;
 static import doir.components.effects;
 
 public import ecrs.registry : EntityId, invalidEntity;
@@ -69,12 +69,12 @@ public import doir.engine.positions : Position;
 /// static import ecrs.relation;
 /// static import doir.query;
 /// static import doir.engine.positions;
-/// static import doir.components.ast;
+/// static import doir.core.components.ast;
 /// struct Pure {
 /// 	alias Key = ecrs.relation.Relation!1;
 /// 	alias Value = bool;
 /// 	static bool compute(ref doir.query.QueryEngine engine, Key key) @nogc nothrow {
-/// 		return applyFlags(engine, key.related[0], doir.engine.positions.between(engine.positions, doir.engine.positions.root, doir.engine.positions.end, doir.engine.positions.end), doir.components.ast.Flags.Pure);
+/// 		return applyFlags(engine, key.related[0], doir.engine.positions.between(engine.positions, doir.engine.positions.root, doir.engine.positions.end, doir.engine.positions.end), doir.core.components.ast.Flags.Pure);
 /// 	}
 /// }
 /// auto store = ecrs.context.create();
@@ -83,7 +83,7 @@ public import doir.engine.positions : Position;
 /// scope(exit) doir.query.free(engine);
 /// immutable e = ecrs.context.addEntity(store);
 /// assert(*doir.query.query!Pure(engine, Pure.Key([e])));
-/// assert(flagsAt(engine, e, doir.engine.positions.end).get == doir.components.ast.Flags.Pure);
+/// assert(flagsAt(engine, e, doir.engine.positions.end).get == doir.core.components.ast.Flags.Pure);
 /// ---
 bool applyFlags(ref doir.query.QueryEngine engine, EntityId e, Position at, uint flags) {
 	assert(at != doir.engine.positions.end);
@@ -170,18 +170,18 @@ bool liveOn(ref doir.query.QueryEngine engine, EntityId e, Position at, EntityId
 /// static import ecrs.context;
 /// static import doir.query;
 /// static import doir.engine.positions;
-/// static import doir.builders;
-/// static import doir.components.ast;
+/// static import doir.core.builders;
+/// static import doir.core.components.ast;
 /// auto store = ecrs.context.create();
 /// scope(exit) ecrs.context.free(store);
 /// auto engine = doir.query.create(store);
 /// scope(exit) doir.query.free(engine);
 /// immutable e = ecrs.context.addEntity(store);
-/// assert(doir.builders.addFlags(store, e, doir.components.ast.Flags.Export));
-/// assert(flagsAt(engine, e, doir.engine.positions.end).get == doir.components.ast.Flags.Export);
+/// assert(doir.core.builders.addFlags(store, e, doir.core.components.ast.Flags.Export));
+/// assert(flagsAt(engine, e, doir.engine.positions.end).get == doir.core.components.ast.Flags.Export);
 /// ---
 std.typecons.Nullable!uint flagsAt(ref doir.query.QueryEngine engine, EntityId e, Position at) {
-	auto own = ecrs.context.findComponent!(doir.components.ast.Flags)(*engine.store, e);
+	auto own = ecrs.context.findComponent!(doir.core.components.ast.Flags)(*engine.store, e);
 	uint out_ = own is null ? 0 : own.flags;
 	if (!doir.engine.logs.fold!(doir.components.effects.FlagsLog, uint)(engine, e, at, (ref const uint flags) { out_ |= flags; })) return typeof(return).init;
 	return typeof(return)(out_);
@@ -229,20 +229,20 @@ bool entitiesAt(L)(ref doir.query.QueryEngine engine, EntityId e, Position at, r
 /// ---
 /// static import ecrs.context;
 /// static import doir.query;
-/// static import doir.builders;
-/// static import doir.components.ast;
+/// static import doir.core.builders;
+/// static import doir.core.components.ast;
 /// auto store = ecrs.context.create();
 /// scope(exit) ecrs.context.free(store);
 /// auto engine = doir.query.create(store);
 /// scope(exit) doir.query.free(engine);
 /// immutable e = ecrs.context.addEntity(store);
-/// assert(doir.builders.addFlags(store, e, doir.components.ast.Flags.Export));
-/// assert(flags(engine, e) == doir.components.ast.Flags.Export);
+/// assert(doir.core.builders.addFlags(store, e, doir.core.components.ast.Flags.Export));
+/// assert(flags(engine, e) == doir.core.components.ast.Flags.Export);
 /// ---
 uint flags(ref doir.query.QueryEngine engine, EntityId e) {
 	cast(void) doir.query.read(engine, e); // a refusal fails the running queries, discarding this answer
 	if (auto frozen = ecrs.context.findComponent!(doir.components.effects.FrozenFlags)(*engine.store, e)) return frozen.flags;
-	if (auto own = ecrs.context.findComponent!(doir.components.ast.Flags)(*engine.store, e)) return own.flags;
+	if (auto own = ecrs.context.findComponent!(doir.core.components.ast.Flags)(*engine.store, e)) return own.flags;
 	return 0;
 }
 
@@ -317,12 +317,12 @@ bool freezeEntity(ref doir.query.QueryEngine engine, EntityId e) {
 /// ---
 /// static import ecrs.context;
 /// static import doir.query;
-/// static import doir.builders;
+/// static import doir.core.builders;
 /// auto store = ecrs.context.create();
 /// scope(exit) ecrs.context.free(store);
 /// auto engine = doir.query.create(store);
 /// scope(exit) doir.query.free(engine);
-/// auto root = doir.builders.createRoot(store);
+/// auto root = doir.core.builders.createRoot(store);
 /// assert(freezeLevel(engine, root.block));
 /// ---
 bool freezeLevel(ref doir.query.QueryEngine engine, EntityId root) {
@@ -333,9 +333,9 @@ bool freezeLevel(ref doir.query.QueryEngine engine, EntityId root) {
 		immutable e = *fp.dynarray.back(pending);
 		cast(void) fp.dynarray.removeLast(pending);
 		if (!freezeEntity(engine, e)) return false;
-		if (auto block = ecrs.context.findComponent!(doir.components.ast.Block)(*engine.store, e))
+		if (auto block = ecrs.context.findComponent!(doir.core.components.ast.Block)(*engine.store, e))
 			grew = fp.dynarray.concatenate(pending, fp.dynarray.slice(block.related));
-		if (auto inputs = ecrs.context.findComponent!(doir.components.ast.FunctionInputs)(*engine.store, e))
+		if (auto inputs = ecrs.context.findComponent!(doir.core.components.ast.FunctionInputs)(*engine.store, e))
 			grew = grew && fp.dynarray.concatenate(pending, fp.dynarray.slice(inputs.related));
 	}
 	if (!grew) doir.query.fail(engine);
@@ -348,12 +348,12 @@ version(unittest) {
 
 	static import diagnose;
 
-	static import doir.strings;
-	static import doir.testing;
+	static import doir.core.strings;
+	static import doir.core.testing;
 	static import doir.engine.positions;
 
 	private __gshared int modifierRuns, readRuns;
-	private __gshared uint modifierFlags = doir.components.ast.Flags.ReadOnly;
+	private __gshared uint modifierFlags = doir.core.components.ast.Flags.ReadOnly;
 
 	// The modifier line `std.pointers.read_only(t)` at position `at`, a comptime evaluation keyed by ⟨entity, position⟩.
 	private struct Modifier {
@@ -389,7 +389,7 @@ version(unittest) {
 		}
 		alias Value = uint;
 		static uint compute(ref doir.query.QueryEngine engine, Key key) @nogc nothrow {
-			assert(applyFlags(engine, key.target, key.at, doir.components.ast.Flags.Pure));
+			assert(applyFlags(engine, key.target, key.at, doir.core.components.ast.Flags.Pure));
 			return *doir.query.query!ReadFlags(engine, ReadFlags.Key([key.target], key.later));
 		}
 	}
@@ -427,9 +427,9 @@ unittest { // a read before a modifier's position sees the type unmodified, even
 	scope(exit) doir.query.free(engine);
 
 	// t : type = {} ; x : _ = read(t) ; _ : _ = std.pointers.read_only(t) ; y : _ = read(t)
-	auto root = doir.builders.createRoot(store);
-	immutable t = doir.builders.pushAggregate(root, doir.strings.StringId(0), doir.strings.StringId(1)).block;
-	assert(doir.builders.addFlags(store, t, doir.components.ast.Flags.Export));
+	auto root = doir.core.builders.createRoot(store);
+	immutable t = doir.core.builders.pushAggregate(root, doir.core.strings.StringId(0), doir.core.strings.StringId(1)).block;
+	assert(doir.core.builders.addFlags(store, t, doir.core.components.ast.Flags.Export));
 	assert(doir.query.markChanged(engine, t));
 	immutable pt = doir.engine.positions.between(engine.positions, doir.engine.positions.root, doir.engine.positions.end, doir.engine.positions.end);
 	immutable px = doir.engine.positions.between(engine.positions, doir.engine.positions.root, pt, doir.engine.positions.end);
@@ -439,46 +439,46 @@ unittest { // a read before a modifier's position sees the type unmodified, even
 	// Demand runs the modifier on line 3 before the read on line 2.
 	modifierRuns = readRuns = 0;
 	assert(*doir.query.query!Modifier(engine, Modifier.Key([t], pm)));
-	assert(*doir.query.query!ReadFlags(engine, ReadFlags.Key([t], px)) == doir.components.ast.Flags.Export);
-	assert(*doir.query.query!ReadFlags(engine, ReadFlags.Key([t], py)) == (doir.components.ast.Flags.Export | doir.components.ast.Flags.ReadOnly));
-	assert(*doir.query.query!ReadFlags(engine, ReadFlags.Key([t], pm)) == doir.components.ast.Flags.Export);
+	assert(*doir.query.query!ReadFlags(engine, ReadFlags.Key([t], px)) == doir.core.components.ast.Flags.Export);
+	assert(*doir.query.query!ReadFlags(engine, ReadFlags.Key([t], py)) == (doir.core.components.ast.Flags.Export | doir.core.components.ast.Flags.ReadOnly));
+	assert(*doir.query.query!ReadFlags(engine, ReadFlags.Key([t], pm)) == doir.core.components.ast.Flags.Export);
 
 	// Freezing folds the log once; cross-level reads by entity alone see every modifier.
 	doir.query.beginRevision(engine);
 	assert(freezeLevel(engine, root.block));
-	assert(ecrs.context.getComponent!(doir.components.effects.FrozenFlags)(store, t).flags == (doir.components.ast.Flags.Export | doir.components.ast.Flags.ReadOnly));
-	assert(flags(engine, t) == (doir.components.ast.Flags.Export | doir.components.ast.Flags.ReadOnly));
-	assert(ecrs.context.getComponent!(doir.components.ast.Flags)(store, t).flags == doir.components.ast.Flags.Export);
+	assert(ecrs.context.getComponent!(doir.components.effects.FrozenFlags)(store, t).flags == (doir.core.components.ast.Flags.Export | doir.core.components.ast.Flags.ReadOnly));
+	assert(flags(engine, t) == (doir.core.components.ast.Flags.Export | doir.core.components.ast.Flags.ReadOnly));
+	assert(ecrs.context.getComponent!(doir.core.components.ast.Flags)(store, t).flags == doir.core.components.ast.Flags.Export);
 
 	// Freezing marked `t` changed, so its in-level reads re-validate here, cut off by their equal values.
-	assert(*doir.query.query!ReadFlags(engine, ReadFlags.Key([t], py)) == (doir.components.ast.Flags.Export | doir.components.ast.Flags.ReadOnly));
-	assert(*doir.query.query!ReadFlags(engine, ReadFlags.Key([t], px)) == doir.components.ast.Flags.Export);
+	assert(*doir.query.query!ReadFlags(engine, ReadFlags.Key([t], py)) == (doir.core.components.ast.Flags.Export | doir.core.components.ast.Flags.ReadOnly));
+	assert(*doir.query.query!ReadFlags(engine, ReadFlags.Key([t], px)) == doir.core.components.ast.Flags.Export);
 
 	// The modifier re-runs with a different effect: the read after it re-runs, the one before it does not, and a re-freeze drops the old bit.
 	doir.query.beginRevision(engine);
-	modifierFlags = doir.components.ast.Flags.Packed;
+	modifierFlags = doir.core.components.ast.Flags.Packed;
 	doir.query.evict!Modifier(engine, Modifier.Key([t], pm));
 	readRuns = 0;
-	assert(*doir.query.query!ReadFlags(engine, ReadFlags.Key([t], py)) == (doir.components.ast.Flags.Export | doir.components.ast.Flags.Packed));
-	assert(*doir.query.query!ReadFlags(engine, ReadFlags.Key([t], px)) == doir.components.ast.Flags.Export);
+	assert(*doir.query.query!ReadFlags(engine, ReadFlags.Key([t], py)) == (doir.core.components.ast.Flags.Export | doir.core.components.ast.Flags.Packed));
+	assert(*doir.query.query!ReadFlags(engine, ReadFlags.Key([t], px)) == doir.core.components.ast.Flags.Export);
 	assert(readRuns == 1);
 	doir.query.beginRevision(engine);
 	assert(freezeLevel(engine, root.block));
-	assert(flags(engine, t) == (doir.components.ast.Flags.Export | doir.components.ast.Flags.Packed));
-	modifierFlags = doir.components.ast.Flags.ReadOnly;
+	assert(flags(engine, t) == (doir.core.components.ast.Flags.Export | doir.core.components.ast.Flags.Packed));
+	modifierFlags = doir.core.components.ast.Flags.ReadOnly;
 
 	// A renumbering rewrites the logs and positioned keys with everything else (E-Remap).
-	immutable spare = doir.testing.addEntity(store);
+	immutable spare = doir.core.testing.addEntity(store);
 	assert(ecrs.context.swapEntities(store, t, spare));
 	assert(doir.query.find!ReadFlags(engine, ReadFlags.Key([spare], py)) != invalidEntity);
-	assert(*doir.query.query!ReadFlags(engine, ReadFlags.Key([spare], py)) == (doir.components.ast.Flags.Export | doir.components.ast.Flags.Packed));
-	assert(flagsAt(engine, spare, px).get == doir.components.ast.Flags.Export);
+	assert(*doir.query.query!ReadFlags(engine, ReadFlags.Key([spare], py)) == (doir.core.components.ast.Flags.Export | doir.core.components.ast.Flags.Packed));
+	assert(flagsAt(engine, spare, px).get == doir.core.components.ast.Flags.Export);
 
 	// A modifier whose allocation is refused fails, leaving no entry its re-run would not strip; the next demand applies it once.
 	size_t n = 0;
 	for (bool refused = true; refused;) {
-		immutable fresh = doir.testing.addEntity(store);
-		assert(doir.builders.addFlags(store, fresh, doir.components.ast.Flags.Export));
+		immutable fresh = doir.core.testing.addEntity(store);
+		assert(doir.core.builders.addFlags(store, fresh, doir.core.components.ast.Flags.Export));
 		assert(doir.query.markChanged(engine, fresh));
 		auto previous = fp.testing.limitAllocations(n++);
 		auto applied = doir.query.query!Modifier(engine, Modifier.Key([fresh], pm));
@@ -488,7 +488,7 @@ unittest { // a read before a modifier's position sees the type unmodified, even
 		engine.refused = false;
 		assert(*doir.query.query!Modifier(engine, Modifier.Key([fresh], pm)));
 		assert(fp.dynarray.length(ecrs.context.getComponent!(doir.components.effects.FlagsLog)(store, fresh).entries) == 1);
-		assert(flagsAt(engine, fresh, py).get == (doir.components.ast.Flags.Export | doir.components.ast.Flags.ReadOnly));
+		assert(flagsAt(engine, fresh, py).get == (doir.core.components.ast.Flags.Export | doir.core.components.ast.Flags.ReadOnly));
 	}
 }
 
@@ -501,7 +501,7 @@ unittest { // overload sets fold in position order; a read needing a running que
 	scope(exit) doir.query.free(engine);
 	engine.diagnostics = &manager;
 
-	immutable set = doir.testing.addEntity(store), f = doir.testing.addEntity(store), g = doir.testing.addEntity(store);
+	immutable set = doir.core.testing.addEntity(store), f = doir.core.testing.addEntity(store), g = doir.core.testing.addEntity(store);
 	immutable p1 = doir.engine.positions.between(engine.positions, doir.engine.positions.root, doir.engine.positions.end, doir.engine.positions.end);
 	immutable p2 = doir.engine.positions.between(engine.positions, doir.engine.positions.root, p1, doir.engine.positions.end);
 	immutable p3 = doir.engine.positions.between(engine.positions, doir.engine.positions.root, p2, doir.engine.positions.end);
@@ -519,10 +519,10 @@ unittest { // overload sets fold in position order; a read needing a running que
 	assert(fp.dynarray.slice(ecrs.context.getComponent!(doir.components.effects.Overloads)(store, set).related) == [f, g]);
 
 	// Targets fold the same way, and freezing reaches a function type's parameters (T-Live, L-Freeze).
-	auto root = doir.builders.createRoot(store);
-	immutable functionType = doir.builders.pushFunctionType(root, doir.strings.StringId(0), doir.strings.StringId(1));
-	immutable param = doir.builders.pushParameter(store, functionType, doir.strings.StringId(2), doir.strings.StringId(3));
-	immutable cpu = doir.testing.addEntity(store), gpu = doir.testing.addEntity(store);
+	auto root = doir.core.builders.createRoot(store);
+	immutable functionType = doir.core.builders.pushFunctionType(root, doir.core.strings.StringId(0), doir.core.strings.StringId(1));
+	immutable param = doir.core.builders.pushParameter(store, functionType, doir.core.strings.StringId(2), doir.core.strings.StringId(3));
+	immutable cpu = doir.core.testing.addEntity(store), gpu = doir.core.testing.addEntity(store);
 	assert(*doir.query.query!LiveOn(engine, LiveOn.Key([param, gpu], p2)));
 	assert(*doir.query.query!LiveOn(engine, LiveOn.Key([param, cpu], p1)));
 	EntityId* targets = null;
@@ -534,7 +534,7 @@ unittest { // overload sets fold in position order; a read needing a running que
 	assert(fp.dynarray.slice(ecrs.context.getComponent!(doir.components.effects.On)(store, param).related) == [cpu, gpu]);
 
 	// Without a frozen modifier, a cross-level read sees the parser's flags, or none.
-	assert(flags(engine, param) == doir.components.ast.Flags.Valueless);
+	assert(flags(engine, param) == doir.core.components.ast.Flags.Valueless);
 	assert(flags(engine, cpu) == 0);
 
 	// A re-freeze that folds the same members leaves the entity unchanged; one that drops a member replaces the last freeze.
@@ -549,7 +549,7 @@ unittest { // overload sets fold in position order; a read needing a running que
 	assert(fp.dynarray.slice(ecrs.context.getComponent!(doir.components.effects.On)(store, param).related) == [cpu]);
 	assert(doir.query.changedAt(engine, param) == engine.revision);
 
-	immutable t = doir.testing.addEntity(store);
+	immutable t = doir.core.testing.addEntity(store);
 	cast(void) doir.query.query!ModifyThenRead(engine, ModifyThenRead.Key([t], p1, p3));
 	assert(fp.dynarray.length(manager.diagnostics) == 1);
 	enum prefix = "Q-Cycle: a read needs an effect of a query that is still running: ModifyThenRead";
@@ -559,7 +559,7 @@ unittest { // overload sets fold in position order; a read needing a running que
 	bool refused = true;
 	for (size_t n = 0; refused; ++n) {
 		assert(n < 100);
-		immutable x = doir.testing.addEntity(store);
+		immutable x = doir.core.testing.addEntity(store);
 		assert(*doir.query.query!Modifier(engine, Modifier.Key([x], p1)));
 		assert(*doir.query.query!Overload(engine, Overload.Key([x, f], p1)));
 		assert(*doir.query.query!LiveOn(engine, LiveOn.Key([x, cpu], p1)));

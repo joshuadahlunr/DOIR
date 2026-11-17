@@ -9,13 +9,13 @@ static import fp.string;
 
 static import ecrs.context;
 
-static import doir.components.ast;
-static import doir.components.source;
+static import doir.core.components.ast;
+static import doir.core.components.source;
 static import doir.lsp.session;
 static import doir.names;
 static import doir.source;
-static import doir.strings;
-static import doir.syntax.lexer;
+static import doir.core.strings;
+static import doir.core.syntax.lexer;
 
 public import ecrs.registry : EntityId, invalidEntity;
 
@@ -40,7 +40,7 @@ package(doir) struct Found {
 /// assert(childrenOf(f.s, doir.source.rootOf(f.engine, f.s.opened[0].file)).length == 2);
 /// ---
 package(doir) const(EntityId)[] childrenOf(ref doir.lsp.session.Session s, EntityId e) {
-	auto block = ecrs.context.findComponent!(doir.components.ast.Block)(*s.engine.store, e);
+	auto block = ecrs.context.findComponent!(doir.core.components.ast.Block)(*s.engine.store, e);
 	return block is null ? null : fp.dynarray.slice(block.related);
 }
 
@@ -55,7 +55,7 @@ package(doir) const(EntityId)[] childrenOf(ref doir.lsp.session.Session s, Entit
 /// assert(childrenBefore(f.s, children, 0, 12) == 2);
 /// ---
 package(doir) size_t childrenBefore(ref doir.lsp.session.Session s, const(EntityId)[] children, size_t base, size_t at) {
-	return fp.algorithms.upperBound!((offset, child) => offset < base + ecrs.context.getComponent!(doir.components.source.SourceSpan)(*s.engine.store, child).offset)(children, at);
+	return fp.algorithms.upperBound!((offset, child) => offset < base + ecrs.context.getComponent!(doir.core.components.source.SourceSpan)(*s.engine.store, child).offset)(children, at);
 }
 
 /// The last child of `parent`, which starts at `base`, starting at or before byte `at`, or a null `Found`.
@@ -72,7 +72,7 @@ package(doir) Found childAt(ref doir.lsp.session.Session s, EntityId parent, siz
 	auto children = childrenOf(s, parent);
 	immutable n = childrenBefore(s, children, base, at);
 	if (n == 0) return Found(invalidEntity);
-	immutable span = ecrs.context.getComponent!(doir.components.source.SourceSpan)(*s.engine.store, children[n - 1]);
+	immutable span = ecrs.context.getComponent!(doir.core.components.source.SourceSpan)(*s.engine.store, children[n - 1]);
 	return Found(children[n - 1], base + span.offset, base + span.offset + span.length);
 }
 
@@ -118,14 +118,14 @@ package(doir) Found* enclosingAt(ref doir.lsp.session.Session s, EntityId file, 
 /// ---
 package(doir) long symbolKind(ref doir.lsp.session.Session s, EntityId e) {
 	auto store = s.engine.store;
-	auto flags = ecrs.context.findComponent!(doir.components.ast.Flags)(*store, e);
-	if (flags !is null && (flags.flags & doir.components.ast.Flags.Namespace)) return 3; // Namespace
-	immutable block = ecrs.context.hasComponent!(doir.components.ast.Block)(*store, e);
-	if (block && ecrs.context.hasComponent!(doir.components.ast.TypeDefinition)(*store, e)) return 23; // Struct
-	if (auto type = ecrs.context.findComponent!(doir.components.ast.TypeOf)(*store, e))
-		if (ecrs.context.hasComponent!(doir.components.ast.FunctionInputs)(*store, type.type)) return 12; // Function
+	auto flags = ecrs.context.findComponent!(doir.core.components.ast.Flags)(*store, e);
+	if (flags !is null && (flags.flags & doir.core.components.ast.Flags.Namespace)) return 3; // Namespace
+	immutable block = ecrs.context.hasComponent!(doir.core.components.ast.Block)(*store, e);
+	if (block && ecrs.context.hasComponent!(doir.core.components.ast.TypeDefinition)(*store, e)) return 23; // Struct
+	if (auto type = ecrs.context.findComponent!(doir.core.components.ast.TypeOf)(*store, e))
+		if (ecrs.context.hasComponent!(doir.core.components.ast.FunctionInputs)(*store, type.type)) return 12; // Function
 	if (block) return 19; // Object
-	if (ecrs.context.hasComponent!(doir.components.ast.ConstantVal)(*store, e)) return 14; // Constant
+	if (ecrs.context.hasComponent!(doir.core.components.ast.ConstantVal)(*store, e)) return 14; // Constant
 	return 13; // Variable
 }
 
@@ -133,10 +133,10 @@ package(doir) long symbolKind(ref doir.lsp.session.Session s, EntityId e) {
 // --- names -------------------------------------------------------------------
 
 // The entry of `block`, starting at `base`, named `id`, or a null `Found`.
-private Found entryNamed(ref doir.lsp.session.Session s, EntityId block, size_t base, doir.strings.StringId id) {
+private Found entryNamed(ref doir.lsp.session.Session s, EntityId block, size_t base, doir.core.strings.StringId id) {
 	immutable child = doir.names.entryNamed(*s.engine, block, id);
 	if (child == invalidEntity) return Found(invalidEntity);
-	immutable span = ecrs.context.getComponent!(doir.components.source.SourceSpan)(*s.engine.store, child);
+	immutable span = ecrs.context.getComponent!(doir.core.components.source.SourceSpan)(*s.engine.store, child);
 	return Found(child, base + span.offset, base + span.offset + span.length);
 }
 
@@ -156,8 +156,8 @@ package(doir) Found resolve(ref doir.lsp.session.Session s, EntityId file, size_
 	scope(exit) fp.dynarray.free(chain);
 	size_t dot = fp.string.find(name, '.');
 	if (dot == fp.pointer.notFound) dot = name.length;
-	immutable first = doir.strings.find(*s.strings, name[0 .. dot]);
-	if (first == doir.strings.unnamed) return Found(invalidEntity);
+	immutable first = doir.core.strings.find(*s.strings, name[0 .. dot]);
+	if (first == doir.core.strings.unnamed) return Found(invalidEntity);
 	Found found = Found(invalidEntity);
 	for (size_t level = fp.dynarray.length(chain) + 1; level-- > 0 && found.e == invalidEntity;)
 		found = level == 0 ? entryNamed(s, doir.source.rootOf(*s.engine, file), 0, first) : entryNamed(s, chain[level - 1].e, chain[level - 1].start, first);
@@ -165,8 +165,8 @@ package(doir) Found resolve(ref doir.lsp.session.Session s, EntityId file, size_
 		name = name[dot + 1 .. $];
 		dot = fp.string.find(name, '.');
 		if (dot == fp.pointer.notFound) dot = name.length;
-		immutable next = doir.strings.find(*s.strings, name[0 .. dot]);
-		found = next == doir.strings.unnamed ? Found(invalidEntity) : entryNamed(s, found.e, found.start, next);
+		immutable next = doir.core.strings.find(*s.strings, name[0 .. dot]);
+		found = next == doir.core.strings.unnamed ? Found(invalidEntity) : entryNamed(s, found.e, found.start, next);
 	}
 	return found;
 }
@@ -191,12 +191,12 @@ package(doir) char* identifierAt(const fp.rope.Rope text, size_t at, out size_t 
 	scope(exit) fp.string.free(bytes);
 	if (bytes is null) return null;
 	auto source = bytes[0 .. lineEnd - lineStart];
-	auto cursor = doir.syntax.lexer.Cursor(source);
+	auto cursor = doir.core.syntax.lexer.Cursor(source);
 	while (cursor.at < source.length) {
-		immutable t = doir.syntax.lexer.next(cursor);
-		if (t.kind != doir.syntax.lexer.TokenKind.identifier || lineStart + t.start > at || lineStart + t.start + t.length < at) continue;
+		immutable t = doir.core.syntax.lexer.next(cursor);
+		if (t.kind != doir.core.syntax.lexer.TokenKind.identifier || lineStart + t.start > at || lineStart + t.start + t.length < at) continue;
 		start = lineStart + t.start;
-		return fp.string.clone(doir.syntax.lexer.text(t, source)).get(null);
+		return fp.string.clone(doir.core.syntax.lexer.text(t, source)).get(null);
 	}
 	return null;
 }
@@ -240,12 +240,12 @@ package(doir) Named declarationAt(ref doir.lsp.session.Session s, EntityId file,
 package(doir) EntityId functionTypeOf(ref doir.lsp.session.Session s, EntityId file, Found found) {
 	auto store = s.engine.store;
 	foreach (step; 0 .. 2) {
-		if (auto t = ecrs.context.findComponent!(doir.components.ast.TypeOf)(*store, found.e))
-			if (ecrs.context.hasComponent!(doir.components.ast.FunctionInputs)(*store, t.type)) return t.type;
-		if (ecrs.context.hasComponent!(doir.components.ast.FunctionInputs)(*store, found.e)) return found.e;
-		auto named = ecrs.context.findComponent!(doir.components.ast.LookupTypeOf)(*store, found.e);
+		if (auto t = ecrs.context.findComponent!(doir.core.components.ast.TypeOf)(*store, found.e))
+			if (ecrs.context.hasComponent!(doir.core.components.ast.FunctionInputs)(*store, t.type)) return t.type;
+		if (ecrs.context.hasComponent!(doir.core.components.ast.FunctionInputs)(*store, found.e)) return found.e;
+		auto named = ecrs.context.findComponent!(doir.core.components.ast.LookupTypeOf)(*store, found.e);
 		if (step == 1 || named is null) break;
-		found = resolve(s, file, found.start, doir.strings.text(*s.strings, named.name));
+		found = resolve(s, file, found.start, doir.core.strings.text(*s.strings, named.name));
 		if (found.e == invalidEntity) break;
 	}
 	return invalidEntity;
@@ -256,19 +256,20 @@ package(doir) EntityId functionTypeOf(ref doir.lsp.session.Session s, EntityId f
 ///
 /// Examples:
 /// ---
+/// static import doir.core.components.ast;
 /// static import ecrs.context;
 /// static import fp.dynarray;
 /// doir.lsp.session.Fixture f;
 /// assert(doir.lsp.session.open(f, "g : (T: deduced type, a: T) -> T\n"));
 /// scope(exit) doir.lsp.session.free(f);
 /// immutable type = functionTypeOf(f.s, f.s.opened[0].file, resolve(f.s, f.s.opened[0].file, 0, "g"));
-/// auto inputs = fp.dynarray.slice(ecrs.context.getComponent!(doir.components.ast.FunctionInputs)(f.store, type).related);
+/// auto inputs = fp.dynarray.slice(ecrs.context.getComponent!(doir.core.components.ast.FunctionInputs)(f.store, type).related);
 /// assert(parameterOf(f.s, inputs, 0) == 1 && parameterOf(f.s, inputs, 1) == 2);
 /// ---
 package(doir) size_t parameterOf(ref doir.lsp.session.Session s, const(EntityId)[] inputs, size_t argument) {
 	foreach (i, p; inputs) {
-		auto type = ecrs.context.findComponent!(doir.components.ast.LookupTypeOf)(*s.engine.store, p);
-		if (type !is null && doir.strings.text(*s.strings, type.name) == doir.components.ast.deducedTypeName) continue;
+		auto type = ecrs.context.findComponent!(doir.core.components.ast.LookupTypeOf)(*s.engine.store, p);
+		if (type !is null && doir.core.strings.text(*s.strings, type.name) == doir.core.components.ast.deducedTypeName) continue;
 		if (argument-- == 0) return i;
 	}
 	return inputs.length;

@@ -20,7 +20,7 @@ static import doir.checks;
 static import doir.printer;
 static import doir.query;
 static import doir.source;
-static import doir.strings;
+static import doir.core.strings;
 
 @nogc nothrow:
 
@@ -83,7 +83,7 @@ private void printDifference(ref const diagnose.Manager edited, ref const diagno
 private struct Side {
 	ecrs.context.Context store;
 	doir.query.QueryEngine engine;
-	doir.strings.Strings strings;
+	doir.core.strings.Strings strings;
 	diagnose.Manager manager;
 	EntityId file;
 }
@@ -100,7 +100,7 @@ private void open(ref Side side) {
 private void close(ref Side side) {
 	diagnose.free(side.manager);
 	doir.query.free(side.engine);
-	doir.strings.free(side.strings);
+	doir.core.strings.free(side.strings);
 	ecrs.context.free(side.store);
 }
 

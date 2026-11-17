@@ -24,11 +24,11 @@ static import ecrs.schedules;
 static import doir.bench;
 static import doir.checks;
 static import doir.lsp.server;
-static import doir.strings;
+static import doir.core.strings;
 static import doir.printer;
 static import doir.query;
 static import doir.source;
-static import doir.syntax.parser;
+static import doir.core.syntax.parser;
 
 @nogc nothrow:
 
@@ -39,13 +39,13 @@ private bool syntaxOnly(const(char)* path) {
 	auto text = read.get;
 	scope(exit) fp.string.free(text);
 	auto source = fp.string.slice(text);
-	doir.syntax.parser.Syntax syntax;
-	scope(exit) doir.syntax.parser.free(syntax);
-	if (!doir.syntax.parser.skim(source, syntax)) return false;
+	doir.core.syntax.parser.Syntax syntax;
+	scope(exit) doir.core.syntax.parser.free(syntax);
+	if (!doir.core.syntax.parser.skim(source, syntax)) return false;
 	foreach (error; fp.dynarray.slice(syntax.errors)) {
-		if (error.kind != doir.syntax.parser.SyntaxError.Kind.syntax && error.kind != doir.syntax.parser.SyntaxError.Kind.nesting) continue;
+		if (error.kind != doir.core.syntax.parser.SyntaxError.Kind.syntax && error.kind != doir.core.syntax.parser.SyntaxError.Kind.nesting) continue;
 		immutable at = diagnose.lineColumn(source, error.at);
-		auto message = doir.syntax.parser.describe(syntax, source, error);
+		auto message = doir.core.syntax.parser.describe(syntax, source, error);
 		if (message is null) return false;
 		scope(exit) fp.string.free(message);
 		return fp.io.print(path, ": line ", at.line, ':', at.column, ": ", message, '\n');
@@ -64,8 +64,8 @@ private bool checkFile(const(char)* path, bool program) {
 	scope(exit) doir.query.free(engine);
 	engine.diagnostics = &manager;
 	engine.edgesMissing = true; // nothing is edited, so no change needs pushing
-	doir.strings.Strings strings;
-	scope(exit) doir.strings.free(strings);
+	doir.core.strings.Strings strings;
+	scope(exit) doir.core.strings.free(strings);
 	engine.strings = &strings;
 	auto read = fp.io.readFile(fp.string.slice(path));
 	if (read.isNull) {
@@ -157,8 +157,8 @@ extern(C) int main(int argc, char** argv) {
 	// Without a pool the commit skims on this thread.
 	engine.workers = bc.threadpool.create();
 	scope(exit) bc.threadpool.free(engine.workers);
-	doir.strings.Strings strings;
-	scope(exit) doir.strings.free(strings);
+	doir.core.strings.Strings strings;
+	scope(exit) doir.core.strings.free(strings);
 	engine.strings = &strings;
 	// libdiagnose borrows each text it prints from, so they live until the end.
 	char** texts = null;

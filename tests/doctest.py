@@ -6,7 +6,7 @@ Each example becomes a unittest in a generated module that imports only the modu
 
 A module defining `main` is checked but not compiled into the doctest binary, which has its own `main`, and `main` needs no example.
 
-Import paths and libraries for the dub dependencies (libECRS, libdiagnose, Mizu and theirs) come from `dub describe`.
+Import paths and libraries for the dub dependencies (DOIRcore, libECRS, libdiagnose, Mizu and theirs) come from `dub describe`.
 
 Usage: python3 tests/doctest.py [-I dir]... [file.d]...   (default sources: source/**/*.d; -I adds further import paths; set DC to use a compiler other than ldc2)
 """

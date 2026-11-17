@@ -19,7 +19,7 @@ static import fp.pointer;
 version(unittest) static import fp.io;
 static import fp.string;
 
-static import doir.syntax.lexer;
+static import doir.core.syntax.lexer;
 
 @nogc nothrow:
 
@@ -94,8 +94,8 @@ struct Options {
 private enum Space : ubyte { none, one, kept }
 
 // The space between tokens `p` and `t` on one line; `inParentheses` whether the innermost open bracket is a parenthesis, so a `:` is a parameter's.
-private Space between(doir.syntax.lexer.TokenKind p, doir.syntax.lexer.TokenKind t, bool inParentheses, ref const Options options) {
-	with (doir.syntax.lexer.TokenKind) {
+private Space between(doir.core.syntax.lexer.TokenKind p, doir.core.syntax.lexer.TokenKind t, bool inParentheses, ref const Options options) {
+	with (doir.core.syntax.lexer.TokenKind) {
 		if (t == lineComment || t == longComment || t == sourceInfo) return Space.one;
 		if (t == comma || t == rightParen || p == leftParen) return Space.none;
 		if (t == colon) return (inParentheses ? options.parameterColons : options.definitionColons) == Colons.attached ? Space.none : Space.one;
@@ -110,31 +110,31 @@ private Space between(doir.syntax.lexer.TokenKind p, doir.syntax.lexer.TokenKind
 // --- statements --------------------------------------------------------------
 
 // The kind of the first token from `cursor` that is not whitespace, nor, with `lines`, a newline or comment; `end` at the text's end.
-private doir.syntax.lexer.TokenKind peek(doir.syntax.lexer.Cursor cursor, bool lines) {
+private doir.core.syntax.lexer.TokenKind peek(doir.core.syntax.lexer.Cursor cursor, bool lines) {
 	while (cursor.at < cursor.source.length) {
 		immutable before = cursor.at;
-		immutable t = doir.syntax.lexer.next(cursor);
+		immutable t = doir.core.syntax.lexer.next(cursor);
 		assert(cursor.at > before, "doir.format: a token that did not advance");
-		with (doir.syntax.lexer.TokenKind)
+		with (doir.core.syntax.lexer.TokenKind)
 			if (t.kind == whitespace || (lines && (t.kind == newline || t.kind == lineComment || t.kind == longComment))) continue;
 		return t.kind;
 	}
-	return doir.syntax.lexer.TokenKind.end;
+	return doir.core.syntax.lexer.TokenKind.end;
 }
 
 // Whether a statement may end with a token of kind `k`, so a newline after it, outside parentheses, is its `Terminator`.
-private bool endsStatement(doir.syntax.lexer.TokenKind k) {
-	with (doir.syntax.lexer.TokenKind) return k == identifier || k == rightParen || k == rightBrace || k == integer || k == float_ || k == string_ || k == rawString || k == character || k == sourceInfo;
+private bool endsStatement(doir.core.syntax.lexer.TokenKind k) {
+	with (doir.core.syntax.lexer.TokenKind) return k == identifier || k == rightParen || k == rightBrace || k == integer || k == float_ || k == string_ || k == rawString || k == character || k == sourceInfo;
 }
 
 // Whether a token of kind `k` follows a `Terminator` rather than continuing the statement before it, as `=`, `->`, `(` and `:` do after a newline (`_` in `doir.peg`).
-private bool startsStatement(doir.syntax.lexer.TokenKind k) {
-	with (doir.syntax.lexer.TokenKind) return k == identifier || k == keyword || k == rightBrace || k == end;
+private bool startsStatement(doir.core.syntax.lexer.TokenKind k) {
+	with (doir.core.syntax.lexer.TokenKind) return k == identifier || k == keyword || k == rightBrace || k == end;
 }
 
 // Whether a `{` followed on its line by a token of kind `after` ends its line once `semicolons` has broken lines, so its block spans lines.
-private bool endsLineAfterBrace(doir.syntax.lexer.TokenKind after, Semicolons semicolons) {
-	with (doir.syntax.lexer.TokenKind) return after == newline || after == end || after == lineComment || (semicolons == Semicolons.newlinesAfterBraces && after != rightBrace);
+private bool endsLineAfterBrace(doir.core.syntax.lexer.TokenKind after, Semicolons semicolons) {
+	with (doir.core.syntax.lexer.TokenKind) return after == newline || after == end || after == lineComment || (semicolons == Semicolons.newlinesAfterBraces && after != rightBrace);
 }
 
 /// Whether `c` may be part of a word or a dotted name, so two tokens meeting at it and another such byte need a space between them.
@@ -162,13 +162,13 @@ private bool editsValid(ref const Formatted f, size_t source) {
 private bool minify(const(char)[] source, ref Formatted out_) {
 	char* text = null;
 	scope(exit) fp.dynarray.free(text);
-	auto cursor = doir.syntax.lexer.Cursor(source);
-	doir.syntax.lexer.TokenKind last = doir.syntax.lexer.TokenKind.end;
+	auto cursor = doir.core.syntax.lexer.Cursor(source);
+	doir.core.syntax.lexer.TokenKind last = doir.core.syntax.lexer.TokenKind.end;
 	size_t parentheses = 0;
 	bool kept = true;
 	while (kept && cursor.at < source.length) {
-		immutable t = doir.syntax.lexer.next(cursor);
-		with (doir.syntax.lexer.TokenKind) switch (t.kind) {
+		immutable t = doir.core.syntax.lexer.next(cursor);
+		with (doir.core.syntax.lexer.TokenKind) switch (t.kind) {
 			case invalid, unterminated:
 				out_.unlexed = t.start;
 				return true;
@@ -181,12 +181,12 @@ private bool minify(const(char)[] source, ref Formatted out_) {
 				continue;
 			default: break;
 		}
-		const token = doir.syntax.lexer.text(t, source);
+		const token = doir.core.syntax.lexer.text(t, source);
 		immutable n = fp.dynarray.length(text);
 		if (n && wordByte(text[n - 1]) && wordByte(token[0])) kept = fp.dynarray.pushBack(text, ' ');
 		kept = kept && fp.dynarray.concatenate(text, token);
-		if (t.kind == doir.syntax.lexer.TokenKind.leftParen) ++parentheses;
-		else if (t.kind == doir.syntax.lexer.TokenKind.rightParen && parentheses) --parentheses;
+		if (t.kind == doir.core.syntax.lexer.TokenKind.leftParen) ++parentheses;
+		else if (t.kind == doir.core.syntax.lexer.TokenKind.rightParen && parentheses) --parentheses;
 		last = t.kind;
 	}
 	immutable n = fp.dynarray.length(text);
@@ -241,7 +241,7 @@ private bool endLine(ref State s, size_t newline, size_t next) {
 
 // Appends what goes before a token of kind `kind` after one of kind `previous`: `levels` tabs, one fewer for a closer, at a line's start, or the space `between` asks for.
 // False on refusal.
-private bool appendSpacing(ref State s, size_t levels, bool closes, bool inParentheses, doir.syntax.lexer.TokenKind previous, doir.syntax.lexer.TokenKind kind, bool spaced, Options options) {
+private bool appendSpacing(ref State s, size_t levels, bool closes, bool inParentheses, doir.core.syntax.lexer.TokenKind previous, doir.core.syntax.lexer.TokenKind kind, bool spaced, Options options) {
 	if (s.atStart) {
 		foreach (_; 0 .. closes && levels ? levels - 1 : levels)
 			if (!fp.dynarray.pushBack(s.line, '\t')) return false;
@@ -253,9 +253,9 @@ private bool appendSpacing(ref State s, size_t levels, bool closes, bool inParen
 
 // Appends token `t`, spelled `text`, to the line; a multi-line token's first line ends it, and its last line starts the next, which is not reindented.
 // False on refusal.
-private bool appendToken(ref State s, doir.syntax.lexer.Token t, const(char)[] text) {
+private bool appendToken(ref State s, doir.core.syntax.lexer.Token t, const(char)[] text) {
 	assert(text.length > 0 && t.start + text.length <= s.source.length, "doir.format: an empty token, or one past the source");
-	if (t.kind == doir.syntax.lexer.TokenKind.lineComment)
+	if (t.kind == doir.core.syntax.lexer.TokenKind.lineComment)
 		text = fp.string.trimEnd(text, " \t");
 	s.any = true;
 	s.atStart = false;
@@ -297,13 +297,13 @@ bool format(const(char)[] source, uint depth, ref Formatted out_, Options option
 		fp.dynarray.free(s.line);
 		fp.dynarray.free(s.brackets);
 	}
-	auto cursor = doir.syntax.lexer.Cursor(source);
-	doir.syntax.lexer.TokenKind previous;
+	auto cursor = doir.core.syntax.lexer.Cursor(source);
+	doir.core.syntax.lexer.TokenKind previous;
 	bool spaced = false, kept = true;
 	while (kept && cursor.at < source.length) {
-		immutable t = doir.syntax.lexer.next(cursor);
-		auto text = doir.syntax.lexer.text(t, source);
-		with (doir.syntax.lexer.TokenKind) switch (t.kind) {
+		immutable t = doir.core.syntax.lexer.next(cursor);
+		auto text = doir.core.syntax.lexer.text(t, source);
+		with (doir.core.syntax.lexer.TokenKind) switch (t.kind) {
 			case invalid, unterminated:
 				free(out_);
 				out_.unlexed = t.start;
@@ -323,10 +323,10 @@ bool format(const(char)[] source, uint depth, ref Formatted out_, Options option
 			default: break;
 		}
 		immutable open = fp.dynarray.length(s.brackets);
-		if (t.kind == doir.syntax.lexer.TokenKind.semicolon && options.semicolons != Semicolons.kept && (open == 0 || !s.brackets[open - 1]) && startsStatement(peek(cursor, true))) {
+		if (t.kind == doir.core.syntax.lexer.TokenKind.semicolon && options.semicolons != Semicolons.kept && (open == 0 || !s.brackets[open - 1]) && startsStatement(peek(cursor, true))) {
 			// Where the line ends anyway, or only a comment follows, its newline already ends the statement.
 			immutable after = peek(cursor, false);
-			with (doir.syntax.lexer.TokenKind) if (after != newline && after != end && after != lineComment) {
+			with (doir.core.syntax.lexer.TokenKind) if (after != newline && after != end && after != lineComment) {
 				kept = fp.dynarray.pushBack(s.line, '\n');
 				s.atStart = true;
 			}
@@ -334,13 +334,13 @@ bool format(const(char)[] source, uint depth, ref Formatted out_, Options option
 			spaced = false;
 			continue;
 		}
-		immutable closes = t.kind == doir.syntax.lexer.TokenKind.rightBrace || t.kind == doir.syntax.lexer.TokenKind.rightParen;
-		with (doir.syntax.lexer.TokenKind) if (t.kind == leftBrace && options.braces == Braces.nextLine && !s.atStart && previous == equals && endsLineAfterBrace(peek(cursor, false), options.semicolons)) {
+		immutable closes = t.kind == doir.core.syntax.lexer.TokenKind.rightBrace || t.kind == doir.core.syntax.lexer.TokenKind.rightParen;
+		with (doir.core.syntax.lexer.TokenKind) if (t.kind == leftBrace && options.braces == Braces.nextLine && !s.atStart && previous == equals && endsLineAfterBrace(peek(cursor, false), options.semicolons)) {
 			kept = kept && fp.dynarray.pushBack(s.line, '\n');
 			s.atStart = true;
 		}
 		kept = kept && appendSpacing(s, depth + open, closes, open && s.brackets[open - 1], previous, t.kind, spaced, options) && appendToken(s, t, text);
-		with (doir.syntax.lexer.TokenKind) {
+		with (doir.core.syntax.lexer.TokenKind) {
 			if (t.kind == leftBrace || t.kind == leftParen) kept = kept && fp.dynarray.pushBack(s.brackets, t.kind == leftParen);
 			else if (closes && open) cast(void) fp.dynarray.removeLast(s.brackets);
 			if (t.kind == leftBrace && options.semicolons == Semicolons.newlinesAfterBraces) {
@@ -393,13 +393,13 @@ version(unittest) {
 		static import doir.printer;
 		static import doir.query;
 		static import doir.source;
-		static import doir.strings;
+		static import doir.core.strings;
 		auto store = ecrs.context.create();
 		scope(exit) ecrs.context.free(store);
 		auto engine = doir.query.create(store);
 		scope(exit) doir.query.free(engine);
-		doir.strings.Strings strings;
-		scope(exit) doir.strings.free(strings);
+		doir.core.strings.Strings strings;
+		scope(exit) doir.core.strings.free(strings);
 		immutable file = doir.source.addFile(engine, strings, "f.doir");
 		assert(doir.source.commit(engine, strings, file, text) == 0);
 		return doir.printer.print(store, strings, doir.source.rootOf(engine, file)).get;

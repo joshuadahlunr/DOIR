@@ -1,6 +1,6 @@
 /// Test-only helpers shared by this repository's unittests.
 /// Compiled only under `-unittest`.
-module doir.testing;
+module doir.core.testing;
 
 version(unittest):
 
@@ -24,7 +24,7 @@ public import ecrs.registry : EntityId, invalidEntity;
 /// ---
 package(doir) EntityId addEntity(ref ecrs.context.Context store) {
 	immutable e = ecrs.context.addEntity(store);
-	assert(e != invalidEntity, "doir.testing: allocation refused");
+	assert(e != invalidEntity, "doir.core.testing: allocation refused");
 	return e;
 }
 
@@ -41,6 +41,6 @@ package(doir) EntityId addEntity(ref ecrs.context.Context store) {
 /// ---
 package(doir) ref C addComponent(C)(ref ecrs.context.Context store, EntityId e) {
 	auto component = ecrs.context.addComponent!C(store, e);
-	assert(component !is null, "doir.testing: allocation refused");
+	assert(component !is null, "doir.core.testing: allocation refused");
 	return *component;
 }

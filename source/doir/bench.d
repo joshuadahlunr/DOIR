@@ -20,7 +20,7 @@ static import ecrs.registry;
 static import doir.checks;
 static import doir.query;
 static import doir.source;
-static import doir.strings;
+static import doir.core.strings;
 
 @nogc nothrow:
 
@@ -57,7 +57,7 @@ private Summary summarize(ulong[] times) {
 private enum string benchLine = "bench_edit : T = 1\n";
 
 // Times the checks of `file` for `bench`: a first run, a re-run with nothing changed, and re-runs after one-line edits at `at`, each into `times`, and prints them. 0, or 1 on refusal.
-private int benchChecks(ref doir.query.QueryEngine engine, ref doir.strings.Strings strings, ecrs.registry.EntityId file, const(char)* path, size_t at, ulong[] times) {
+private int benchChecks(ref doir.query.QueryEngine engine, ref doir.core.strings.Strings strings, ecrs.registry.EntityId file, const(char)* path, size_t at, ulong[] times) {
 	engine.strings = &strings;
 	immutable checkStart = bc.thread.monotonicMicroseconds();
 	if (!doir.checks.check(engine, file)) return 1;
@@ -113,8 +113,8 @@ int bench(const(char)* path, size_t rounds) {
 	// Without a pool the commit skims on this thread.
 	engine.workers = bc.threadpool.create();
 	scope(exit) bc.threadpool.free(engine.workers);
-	doir.strings.Strings strings;
-	scope(exit) doir.strings.free(strings);
+	doir.core.strings.Strings strings;
+	scope(exit) doir.core.strings.free(strings);
 	immutable file = doir.source.addFile(engine, strings, fp.string.slice(path));
 	if (file == doir.source.invalidEntity) return 1;
 

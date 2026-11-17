@@ -8,13 +8,13 @@ static import fp.tree;
 static import bc.json;
 static import ecrs.context;
 
-static import doir.components.ast;
-static import doir.components.source;
+static import doir.core.components.ast;
+static import doir.core.components.source;
 static import doir.lsp.positions;
 static import doir.lsp.session;
 static import doir.lsp.store;
 static import doir.source;
-static import doir.syntax.lexer;
+static import doir.core.syntax.lexer;
 
 public import ecrs.registry : EntityId;
 
@@ -28,9 +28,9 @@ private void foldings(ref doir.lsp.session.Session s, bc.json.Value ranges, cons
 	auto w = fp.tree.walk(doir.source.BlockTree(s.engine.store), root);
 	foreach (step; w) {
 		if (step.event != fp.tree.Event.enter || step.depth == 0) continue;
-		immutable span = ecrs.context.getComponent!(doir.components.source.SourceSpan)(*s.engine.store, step.index);
+		immutable span = ecrs.context.getComponent!(doir.core.components.source.SourceSpan)(*s.engine.store, step.index);
 		immutable start = starts[step.depth] = starts[step.depth - 1] + span.offset;
-		if (!ecrs.context.hasComponent!(doir.components.ast.Block)(*s.engine.store, step.index)) continue;
+		if (!ecrs.context.hasComponent!(doir.core.components.ast.Block)(*s.engine.store, step.index)) continue;
 		size_t first, last, character;
 		doir.lsp.positions.positionOf(text, s.encoding, start, first, character);
 		doir.lsp.positions.positionOf(text, s.encoding, start + span.length, last, character);
@@ -60,13 +60,13 @@ private bool commentFoldings(bc.json.Value ranges, const fp.rope.Rope text) {
 	scope(exit) fp.string.free(bytes);
 	if (bytes is null) return length == 0;
 	auto source = bytes[0 .. length];
-	auto cursor = doir.syntax.lexer.Cursor(source);
+	auto cursor = doir.core.syntax.lexer.Cursor(source);
 	size_t line = 0, runStart = 0, runEnd = 0;
 	bool blank = true, inRun = false; // whether the line has only whitespace so far, and whether a run of comment lines is open
 	while (cursor.at < source.length) {
-		immutable t = doir.syntax.lexer.next(cursor);
-		const token = doir.syntax.lexer.text(t, source);
-		switch (t.kind) with (doir.syntax.lexer.TokenKind) {
+		immutable t = doir.core.syntax.lexer.next(cursor);
+		const token = doir.core.syntax.lexer.text(t, source);
+		switch (t.kind) with (doir.core.syntax.lexer.TokenKind) {
 			case whitespace: continue;
 			case newline:
 				++line;
@@ -86,7 +86,7 @@ private bool commentFoldings(bc.json.Value ranges, const fp.rope.Rope text) {
 		blank = false;
 		size_t lines = 0;
 		foreach (c; token) lines += c == '\n';
-		if (t.kind == doir.syntax.lexer.TokenKind.longComment) commentFolding(ranges, line, line + lines);
+		if (t.kind == doir.core.syntax.lexer.TokenKind.longComment) commentFolding(ranges, line, line + lines);
 		line += lines;
 	}
 	if (inRun) commentFolding(ranges, runStart, runEnd);

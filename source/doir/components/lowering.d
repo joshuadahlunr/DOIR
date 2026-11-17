@@ -202,7 +202,7 @@ std.typecons.Nullable!bool retiredFor(ref doir.query.QueryEngine engine, EntityI
 
 
 version(unittest) {
-	static import doir.testing;
+	static import doir.core.testing;
 	static import doir.query;
 
 	private __gshared uint registerBase;
@@ -231,7 +231,7 @@ unittest { // targets own their registers and retirement independently
 	auto engine = doir.query.create(store);
 	scope(exit) doir.query.free(engine);
 
-	immutable e = doir.testing.addEntity(store);
+	immutable e = doir.core.testing.addEntity(store);
 	registerBase = 10;
 	assert(*doir.query.query!LowerFor(engine, LowerFor.Key([e], 0)));
 	assert(*doir.query.query!LowerFor(engine, LowerFor.Key([e], 1)));

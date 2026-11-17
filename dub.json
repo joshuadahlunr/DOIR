@@ -1,6 +1,6 @@
 {
 	"name": "doir",
-	"description": "A query-driven DOIR compiler for -betterC D, built on libECRS, libdiagnose and Mizu",
+	"description": "A query-driven DOIR compiler for -betterC D, built on DOIRcore, libECRS, libdiagnose and Mizu",
 	"license": "MIT",
 	"targetType": "executable",
 	"sourcePaths": [
@@ -12,26 +12,29 @@
 	"dependencies": {
 		"bc-fetch": {
 			"repository": "git+https://github.com/doir-lang/bc-fetch",
-			"version": "84d384497eebda929a333b299b684e316891831e"
+			"version": "2adaf06bbafd35989b032d9a637c0bdcd126d44d"
 		},
 		"libecrs": {
 			"repository": "git+https://github.com/doir-lang/libECRS.git",
-			"version": "f2c13ae05a4153171d0f62acf209646506e2e672"
+			"version": "9a95e53d2c9a2218cd384324d992289f14b0931f"
 		},
 		"bc-threads": {
 			"repository": "git+https://github.com/doir-lang/bc-threads.git",
-			"version": "0f8f0c6df0a632b74cb021e310891fe14e2adadb"
+			"version": "0ca5577fce88be9e2505b5adf459562c3d0d3801"
 		},
 		"libfp": {
 			"repository": "git+https://github.com/doir-lang/libfp.git",
-			"version": "75cee27a135b6b16456d6d96fb0d363c4ade27aa"
+			"version": "8979c94e32829db1f6a0c3ca50456296c8474c3d"
 		},
 		"libdiagnose": {
 			"repository": "git+https://github.com/doir-lang/libdiagnose.git",
-			"version": "ee15b8e8842818f9d3f49e15466f74f0ba29a9c0"
+			"version": "c3d9bef9595de2fee319bfac9b7ca57097d34a7a"
 		},
 		"mizu": {
 			"path": "mizu"
+		},
+		"doir-core": {
+			"path": "core"
 		}
 	},
 	"dflags-ldc": [

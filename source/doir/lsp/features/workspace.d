@@ -11,12 +11,12 @@ static import fp.tree;
 static import bc.json;
 static import ecrs.context;
 
-static import doir.components.ast;
-static import doir.components.source;
+static import doir.core.components.ast;
+static import doir.core.components.source;
 static import doir.lsp.session;
 static import doir.lsp.store;
 static import doir.source;
-static import doir.strings;
+static import doir.core.strings;
 
 public import ecrs.registry : EntityId;
 
@@ -38,10 +38,10 @@ private void workspaceSymbols(ref doir.lsp.session.Session s, bc.json.Value symb
 		if (written == symbolLimit) return;
 		immutable child = step.index;
 		const container = names[step.depth - 1];
-		immutable span = ecrs.context.getComponent!(doir.components.source.SourceSpan)(*s.engine.store, child);
+		immutable span = ecrs.context.getComponent!(doir.core.components.source.SourceSpan)(*s.engine.store, child);
 		immutable start = starts[step.depth] = starts[step.depth - 1] + span.offset;
-		auto n = ecrs.context.findComponent!(doir.components.ast.Name)(*s.engine.store, child);
-		const name = names[step.depth] = n is null ? "" : doir.strings.text(*s.strings, n.value);
+		auto n = ecrs.context.findComponent!(doir.core.components.ast.Name)(*s.engine.store, child);
+		const name = names[step.depth] = n is null ? "" : doir.core.strings.text(*s.strings, n.value);
 		if (name.length && fp.string.ascii.findIgnoringCase(name, query) != fp.pointer.notFound) {
 			++written;
 			auto symbol = bc.json.appendObject(symbols);

@@ -6,11 +6,11 @@ static import fp.string;
 static import bc.json;
 static import ecrs.context;
 
-static import doir.components.ast;
+static import doir.core.components.ast;
 static import doir.lsp.session;
 static import doir.lsp.store;
 static import doir.source;
-static import doir.strings;
+static import doir.core.strings;
 
 public import ecrs.registry : invalidEntity;
 
@@ -34,8 +34,8 @@ package(doir) void typeDefinition(ref doir.lsp.session.Session s, bc.json.Value 
 	auto found = doir.lsp.store.declarationAt(s, o.file, doir.lsp.session.offsetAt(s, params["position"], text)).declaration;
 	// The type is named where the declaration is, so it is looked up from there.
 	if (found.e != invalidEntity) {
-		auto type = ecrs.context.findComponent!(doir.components.ast.LookupTypeOf)(*s.engine.store, found.e);
-		found = type is null ? doir.lsp.store.Found(invalidEntity) : doir.lsp.store.resolve(s, o.file, found.start, doir.strings.text(*s.strings, type.name));
+		auto type = ecrs.context.findComponent!(doir.core.components.ast.LookupTypeOf)(*s.engine.store, found.e);
+		found = type is null ? doir.lsp.store.Found(invalidEntity) : doir.lsp.store.resolve(s, o.file, found.start, doir.core.strings.text(*s.strings, type.name));
 	}
 	bc.json.Document d;
 	auto response = doir.lsp.session.response(d, id);

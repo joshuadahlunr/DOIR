@@ -1,4 +1,4 @@
-/// The builders that write the parser's components (`doir.components.ast`) into the libECRS store, one call per declaration form of `doir.peg`.
+/// The builders that write the parser's components (`doir.core.components.ast`) into the libECRS store, one call per declaration form of `doir.peg`.
 /// The parser resolves no names: a name it reads becomes a `Lookup*` component holding the interned path, which name resolution replaces with the entity-valued component it stands for.
 ///
 /// A refused allocation is reported through each builder's result: `false`, `invalidEntity`, or a `BlockBuilder` whose `block` is `invalidEntity`.
@@ -7,28 +7,28 @@
 /// Examples:
 /// ---
 /// static import ecrs.context;
-/// static import doir.strings;
-/// static import doir.components.ast;
-/// doir.strings.Strings strings;
-/// scope(exit) doir.strings.free(strings);
+/// static import doir.core.strings;
+/// static import doir.core.components.ast;
+/// doir.core.strings.Strings strings;
+/// scope(exit) doir.core.strings.free(strings);
 /// auto store = ecrs.context.create();
 /// scope(exit) ecrs.context.free(store);
 /// auto root = createRoot(store);
-/// auto six = pushConstant(root, doir.strings.intern(strings, "six"), doir.strings.intern(strings, "std.u8"), doir.components.ast.ConstantVal.integer(6));
-/// assert(ecrs.context.getComponent!(doir.components.ast.ConstantVal)(store, six).integerValue == 6);
-/// assert(ecrs.context.getComponent!(doir.components.ast.Parent)(store, six).parent == root.block);
+/// auto six = pushConstant(root, doir.core.strings.intern(strings, "six"), doir.core.strings.intern(strings, "std.u8"), doir.core.components.ast.ConstantVal.integer(6));
+/// assert(ecrs.context.getComponent!(doir.core.components.ast.ConstantVal)(store, six).integerValue == 6);
+/// assert(ecrs.context.getComponent!(doir.core.components.ast.Parent)(store, six).parent == root.block);
 /// ---
-module doir.builders;
+module doir.core.builders;
 
 static import fp.dynarray;
 version(unittest) static import fp.testing;
 
 static import ecrs.context;
 
-static import doir.components.ast;
+static import doir.core.components.ast;
 
 public import ecrs.context : EntityId, invalidEntity;
-public import doir.strings : StringId, unnamed;
+public import doir.core.strings : StringId, unnamed;
 
 @nogc nothrow:
 
@@ -49,20 +49,20 @@ struct BlockBuilder {
 /// Examples:
 /// ---
 /// static import ecrs.context;
-/// static import doir.components.ast;
+/// static import doir.core.components.ast;
 /// auto store = ecrs.context.create();
 /// scope(exit) ecrs.context.free(store);
 /// auto e = ecrs.context.addEntity(store);
-/// assert(addFlags(store, e, doir.components.ast.Flags.Export));
-/// assert(addFlags(store, e, doir.components.ast.Flags.Tail));
-/// assert(ecrs.context.getComponent!(doir.components.ast.Flags)(store, e).flags == (doir.components.ast.Flags.Export | doir.components.ast.Flags.Tail));
+/// assert(addFlags(store, e, doir.core.components.ast.Flags.Export));
+/// assert(addFlags(store, e, doir.core.components.ast.Flags.Tail));
+/// assert(ecrs.context.getComponent!(doir.core.components.ast.Flags)(store, e).flags == (doir.core.components.ast.Flags.Export | doir.core.components.ast.Flags.Tail));
 /// ---
 bool addFlags(ref ecrs.context.Context store, EntityId e, uint flags) {
-	assert(e != invalidEntity, "doir.builders: building on no entity");
-	auto set = ecrs.context.ensureComponent!(doir.components.ast.Flags)(store, e);
+	assert(e != invalidEntity, "doir.core.builders: building on no entity");
+	auto set = ecrs.context.ensureComponent!(doir.core.components.ast.Flags)(store, e);
 	if (set is null) return false;
 	set.flags |= flags;
-	assert((ecrs.context.getComponent!(doir.components.ast.Flags)(store, e).flags & flags) == flags, "doir.builders: flags that did not stick");
+	assert((ecrs.context.getComponent!(doir.core.components.ast.Flags)(store, e).flags & flags) == flags, "doir.core.builders: flags that did not stick");
 	return true;
 }
 
@@ -72,17 +72,17 @@ bool addFlags(ref ecrs.context.Context store, EntityId e, uint flags) {
 /// Examples:
 /// ---
 /// static import ecrs.context;
-/// static import doir.components.ast;
+/// static import doir.core.components.ast;
 /// auto store = ecrs.context.create();
 /// scope(exit) ecrs.context.free(store);
 /// auto root = createRoot(store);
-/// assert(ecrs.context.hasComponent!(doir.components.ast.Block)(store, root.block));
+/// assert(ecrs.context.hasComponent!(doir.core.components.ast.Block)(store, root.block));
 /// ---
 BlockBuilder createRoot(ref ecrs.context.Context store) {
 	immutable e = ecrs.context.addEntity(store);
 	if (e == invalidEntity) return BlockBuilder.init;
-	if (ecrs.context.addComponent!(doir.components.ast.Block)(store, e) !is null) {
-		assert(!ecrs.context.hasComponent!(doir.components.ast.Parent)(store, e), "doir.builders: a root with a parent (WF-Par)");
+	if (ecrs.context.addComponent!(doir.core.components.ast.Block)(store, e) !is null) {
+		assert(!ecrs.context.hasComponent!(doir.core.components.ast.Parent)(store, e), "doir.core.builders: a root with a parent (WF-Par)");
 		return BlockBuilder(&store, e);
 	}
 	cast(void) ecrs.context.removeEntity(store, e); // if refused, an orphan nothing reaches
@@ -96,24 +96,24 @@ BlockBuilder createRoot(ref ecrs.context.Context store) {
 /// Examples:
 /// ---
 /// static import ecrs.context;
-/// static import doir.components.ast;
+/// static import doir.core.components.ast;
 /// auto store = ecrs.context.create();
 /// scope(exit) ecrs.context.free(store);
 /// auto root = createRoot(store);
 /// auto e = pushDeclaration(root, unnamed);
-/// assert(!ecrs.context.hasComponent!(doir.components.ast.Name)(store, e));
-/// assert(ecrs.context.getComponent!(doir.components.ast.Block)(store, root.block).related[0] == e);
+/// assert(!ecrs.context.hasComponent!(doir.core.components.ast.Name)(store, e));
+/// assert(ecrs.context.getComponent!(doir.core.components.ast.Block)(store, root.block).related[0] == e);
 /// ---
 EntityId pushDeclaration(ref BlockBuilder b, StringId name) {
-	assert(b.store !is null && b.block != invalidEntity && ecrs.context.hasComponent!(doir.components.ast.Block)(*b.store, b.block), "doir.builders: pushing onto something that is not a block");
+	assert(b.store !is null && b.block != invalidEntity && ecrs.context.hasComponent!(doir.core.components.ast.Block)(*b.store, b.block), "doir.core.builders: pushing onto something that is not a block");
 	auto store = b.store;
 	immutable e = ecrs.context.addEntity(*store);
 	if (e == invalidEntity) return invalidEntity;
-	if ((name == unnamed || ecrs.context.setComponent!(doir.components.ast.Name)(*store, e, doir.components.ast.Name(name)))
-		&& ecrs.context.setComponent!(doir.components.ast.Parent)(*store, e, doir.components.ast.Parent([b.block]))
-		&& fp.dynarray.pushBack(ecrs.context.getForWriting!(doir.components.ast.Block)(*store, b.block).related, e)) {
-		assert(*fp.dynarray.back(ecrs.context.getComponent!(doir.components.ast.Block)(*store, b.block).related) == e, "doir.builders: a declaration missing from the end of its block");
-		assert(ecrs.context.getComponent!(doir.components.ast.Parent)(*store, e).parent == b.block, "doir.builders: a declaration under another parent (WF-Par)");
+	if ((name == unnamed || ecrs.context.setComponent!(doir.core.components.ast.Name)(*store, e, doir.core.components.ast.Name(name)))
+		&& ecrs.context.setComponent!(doir.core.components.ast.Parent)(*store, e, doir.core.components.ast.Parent([b.block]))
+		&& fp.dynarray.pushBack(ecrs.context.getForWriting!(doir.core.components.ast.Block)(*store, b.block).related, e)) {
+		assert(*fp.dynarray.back(ecrs.context.getComponent!(doir.core.components.ast.Block)(*store, b.block).related) == e, "doir.core.builders: a declaration missing from the end of its block");
+		assert(ecrs.context.getComponent!(doir.core.components.ast.Parent)(*store, e).parent == b.block, "doir.core.builders: a declaration under another parent (WF-Par)");
 		return e;
 	}
 	cast(void) ecrs.context.removeEntity(*store, e); // if refused, an orphan nothing reaches
@@ -127,26 +127,26 @@ EntityId pushDeclaration(ref BlockBuilder b, StringId name) {
 /// Examples:
 /// ---
 /// static import ecrs.context;
-/// static import doir.components.ast;
+/// static import doir.core.components.ast;
 /// auto store = ecrs.context.create();
 /// scope(exit) ecrs.context.free(store);
 /// auto e = ecrs.context.addEntity(store);
 /// assert(setType(store, e, StringId(0)));
-/// assert(ecrs.context.getComponent!(doir.components.ast.LookupTypeOf)(store, e).name == StringId(0));
+/// assert(ecrs.context.getComponent!(doir.core.components.ast.LookupTypeOf)(store, e).name == StringId(0));
 /// ---
 bool setType(ref ecrs.context.Context store, EntityId e, StringId type) {
-	assert(e != invalidEntity, "doir.builders: building on no entity");
-	immutable set = ecrs.context.setComponent!(doir.components.ast.LookupTypeOf)(store, e, doir.components.ast.LookupTypeOf(type));
-	assert(!set || ecrs.context.getComponent!(doir.components.ast.LookupTypeOf)(store, e).name == type, "doir.builders: a type name that did not stick");
+	assert(e != invalidEntity, "doir.core.builders: building on no entity");
+	immutable set = ecrs.context.setComponent!(doir.core.components.ast.LookupTypeOf)(store, e, doir.core.components.ast.LookupTypeOf(type));
+	assert(!set || ecrs.context.getComponent!(doir.core.components.ast.LookupTypeOf)(store, e).name == type, "doir.core.builders: a type name that did not stick");
 	return set;
 }
 
 // wrapper: as above
 /// Ditto
 bool setType(ref ecrs.context.Context store, EntityId e, EntityId type) {
-	assert(e != invalidEntity && type != invalidEntity, "doir.builders: a type that is no entity");
-	immutable set = ecrs.context.setComponent!(doir.components.ast.TypeOf)(store, e, doir.components.ast.TypeOf([type]));
-	assert(!set || ecrs.context.getComponent!(doir.components.ast.TypeOf)(store, e).related[0] == type, "doir.builders: a type that did not stick");
+	assert(e != invalidEntity && type != invalidEntity, "doir.core.builders: a type that is no entity");
+	immutable set = ecrs.context.setComponent!(doir.core.components.ast.TypeOf)(store, e, doir.core.components.ast.TypeOf([type]));
+	assert(!set || ecrs.context.getComponent!(doir.core.components.ast.TypeOf)(store, e).related[0] == type, "doir.core.builders: a type that did not stick");
 	return set;
 }
 
@@ -159,16 +159,16 @@ bool setType(ref ecrs.context.Context store, EntityId e, EntityId type) {
 /// Examples:
 /// ---
 /// static import ecrs.context;
-/// static import doir.components.ast;
+/// static import doir.core.components.ast;
 /// auto store = ecrs.context.create();
 /// scope(exit) ecrs.context.free(store);
 /// auto e = ecrs.context.addEntity(store);
-/// assert(attachConstant(store, e, StringId(0), doir.components.ast.ConstantVal.integer(6)));
-/// assert(ecrs.context.getComponent!(doir.components.ast.ConstantVal)(store, e).integerValue == 6);
+/// assert(attachConstant(store, e, StringId(0), doir.core.components.ast.ConstantVal.integer(6)));
+/// assert(ecrs.context.getComponent!(doir.core.components.ast.ConstantVal)(store, e).integerValue == 6);
 /// ---
-bool attachConstant(T)(ref ecrs.context.Context store, EntityId e, T type, doir.components.ast.ConstantVal value) {
-	immutable attached = setType(store, e, type) && ecrs.context.setComponent!(doir.components.ast.ConstantVal)(store, e, value) && addFlags(store, e, doir.components.ast.Flags.Comptime);
-	assert(!attached || ecrs.context.hasComponent!(doir.components.ast.ConstantVal)(store, e), "doir.builders: a constant without its value");
+bool attachConstant(T)(ref ecrs.context.Context store, EntityId e, T type, doir.core.components.ast.ConstantVal value) {
+	immutable attached = setType(store, e, type) && ecrs.context.setComponent!(doir.core.components.ast.ConstantVal)(store, e, value) && addFlags(store, e, doir.core.components.ast.Flags.Comptime);
+	assert(!attached || ecrs.context.hasComponent!(doir.core.components.ast.ConstantVal)(store, e), "doir.core.builders: a constant without its value");
 	return attached;
 }
 
@@ -178,14 +178,14 @@ bool attachConstant(T)(ref ecrs.context.Context store, EntityId e, T type, doir.
 /// Examples:
 /// ---
 /// static import ecrs.context;
-/// static import doir.components.ast;
+/// static import doir.core.components.ast;
 /// auto store = ecrs.context.create();
 /// scope(exit) ecrs.context.free(store);
 /// auto root = createRoot(store);
-/// auto e = pushConstant(root, StringId(0), StringId(1), doir.components.ast.ConstantVal.integer(6));
-/// assert(ecrs.context.getComponent!(doir.components.ast.Flags)(store, e).flags == doir.components.ast.Flags.Comptime);
+/// auto e = pushConstant(root, StringId(0), StringId(1), doir.core.components.ast.ConstantVal.integer(6));
+/// assert(ecrs.context.getComponent!(doir.core.components.ast.Flags)(store, e).flags == doir.core.components.ast.Flags.Comptime);
 /// ---
-EntityId pushConstant(T)(ref BlockBuilder b, StringId name, T type, doir.components.ast.ConstantVal value) {
+EntityId pushConstant(T)(ref BlockBuilder b, StringId name, T type, doir.core.components.ast.ConstantVal value) {
 	immutable e = pushDeclaration(b, name);
 	return e != invalidEntity && attachConstant(*b.store, e, type, value) ? e : invalidEntity;
 }
@@ -196,16 +196,16 @@ EntityId pushConstant(T)(ref BlockBuilder b, StringId name, T type, doir.compone
 /// Examples:
 /// ---
 /// static import ecrs.context;
-/// static import doir.components.ast;
+/// static import doir.core.components.ast;
 /// auto store = ecrs.context.create();
 /// scope(exit) ecrs.context.free(store);
 /// auto e = ecrs.context.addEntity(store);
 /// assert(attachValueless(store, e, StringId(0)));
-/// assert(ecrs.context.getComponent!(doir.components.ast.Flags)(store, e).flags == doir.components.ast.Flags.Valueless);
+/// assert(ecrs.context.getComponent!(doir.core.components.ast.Flags)(store, e).flags == doir.core.components.ast.Flags.Valueless);
 /// ---
 bool attachValueless(T)(ref ecrs.context.Context store, EntityId e, T type) {
-	immutable attached = setType(store, e, type) && addFlags(store, e, doir.components.ast.Flags.Valueless);
-	assert(!attached || !ecrs.context.hasComponent!(doir.components.ast.ConstantVal)(store, e), "doir.builders: a valueless declaration with a value");
+	immutable attached = setType(store, e, type) && addFlags(store, e, doir.core.components.ast.Flags.Valueless);
+	assert(!attached || !ecrs.context.hasComponent!(doir.core.components.ast.ConstantVal)(store, e), "doir.core.builders: a valueless declaration with a value");
 	return attached;
 }
 
@@ -215,12 +215,12 @@ bool attachValueless(T)(ref ecrs.context.Context store, EntityId e, T type) {
 /// Examples:
 /// ---
 /// static import ecrs.context;
-/// static import doir.components.ast;
+/// static import doir.core.components.ast;
 /// auto store = ecrs.context.create();
 /// scope(exit) ecrs.context.free(store);
 /// auto root = createRoot(store);
 /// auto e = pushValueless(root, StringId(0), StringId(1));
-/// assert(ecrs.context.getComponent!(doir.components.ast.Flags)(store, e).flags == doir.components.ast.Flags.Valueless);
+/// assert(ecrs.context.getComponent!(doir.core.components.ast.Flags)(store, e).flags == doir.core.components.ast.Flags.Valueless);
 /// ---
 EntityId pushValueless(T)(ref BlockBuilder b, StringId name, T type) {
 	immutable e = pushDeclaration(b, name);
@@ -233,17 +233,17 @@ EntityId pushValueless(T)(ref BlockBuilder b, StringId name, T type) {
 /// Examples:
 /// ---
 /// static import ecrs.context;
-/// static import doir.components.ast;
+/// static import doir.core.components.ast;
 /// auto store = ecrs.context.create();
 /// scope(exit) ecrs.context.free(store);
 /// auto e = ecrs.context.addEntity(store);
 /// assert(attachReference(store, e, StringId(0), StringId(1)));
-/// assert(ecrs.context.getComponent!(doir.components.ast.LookupValue)(store, e).name == StringId(1));
+/// assert(ecrs.context.getComponent!(doir.core.components.ast.LookupValue)(store, e).name == StringId(1));
 /// ---
 bool attachReference(T)(ref ecrs.context.Context store, EntityId e, T type, StringId target) {
-	assert(target != unnamed, "doir.builders: a reference to no name");
-	immutable attached = setType(store, e, type) && ecrs.context.setComponent!(doir.components.ast.LookupValue)(store, e, doir.components.ast.LookupValue(target));
-	assert(!attached || ecrs.context.getComponent!(doir.components.ast.LookupValue)(store, e).name == target, "doir.builders: a reference that lost its target");
+	assert(target != unnamed, "doir.core.builders: a reference to no name");
+	immutable attached = setType(store, e, type) && ecrs.context.setComponent!(doir.core.components.ast.LookupValue)(store, e, doir.core.components.ast.LookupValue(target));
+	assert(!attached || ecrs.context.getComponent!(doir.core.components.ast.LookupValue)(store, e).name == target, "doir.core.builders: a reference that lost its target");
 	return attached;
 }
 
@@ -253,12 +253,12 @@ bool attachReference(T)(ref ecrs.context.Context store, EntityId e, T type, Stri
 /// Examples:
 /// ---
 /// static import ecrs.context;
-/// static import doir.components.ast;
+/// static import doir.core.components.ast;
 /// auto store = ecrs.context.create();
 /// scope(exit) ecrs.context.free(store);
 /// auto root = createRoot(store);
 /// auto e = pushReference(root, StringId(0), StringId(1), StringId(2));
-/// assert(ecrs.context.getComponent!(doir.components.ast.LookupValue)(store, e).name == StringId(2));
+/// assert(ecrs.context.getComponent!(doir.core.components.ast.LookupValue)(store, e).name == StringId(2));
 /// ---
 EntityId pushReference(T)(ref BlockBuilder b, StringId name, T type, StringId target) {
 	immutable e = pushDeclaration(b, name);
@@ -272,21 +272,21 @@ EntityId pushReference(T)(ref BlockBuilder b, StringId name, T type, StringId ta
 /// Examples:
 /// ---
 /// static import ecrs.context;
-/// static import doir.components.ast;
+/// static import doir.core.components.ast;
 /// auto store = ecrs.context.create();
 /// scope(exit) ecrs.context.free(store);
 /// auto e = ecrs.context.addEntity(store);
 /// immutable StringId[2] arguments = [StringId(2), StringId(3)];
 /// assert(attachCall(store, e, StringId(0), StringId(1), arguments[]));
-/// assert(ecrs.context.getComponent!(doir.components.ast.LookupCall)(store, e).name == StringId(1));
+/// assert(ecrs.context.getComponent!(doir.core.components.ast.LookupCall)(store, e).name == StringId(1));
 /// ---
 bool attachCall(T)(ref ecrs.context.Context store, EntityId e, T type, StringId callee, const(StringId)[] arguments) {
-	if (!setType(store, e, type) || !ecrs.context.setComponent!(doir.components.ast.LookupCall)(store, e, doir.components.ast.LookupCall(callee))) return false;
-	auto inputs = ecrs.context.addComponent!(doir.components.ast.LookupFunctionInputs)(store, e);
+	if (!setType(store, e, type) || !ecrs.context.setComponent!(doir.core.components.ast.LookupCall)(store, e, doir.core.components.ast.LookupCall(callee))) return false;
+	auto inputs = ecrs.context.addComponent!(doir.core.components.ast.LookupFunctionInputs)(store, e);
 	if (inputs is null) return false;
 	foreach (a; arguments)
 		if (!fp.dynarray.pushBack(inputs.names.p, a)) return false;
-	assert(fp.dynarray.length(inputs.names.p) == arguments.length, "doir.builders: a call with another number of arguments");
+	assert(fp.dynarray.length(inputs.names.p) == arguments.length, "doir.core.builders: a call with another number of arguments");
 	return true;
 }
 
@@ -296,13 +296,13 @@ bool attachCall(T)(ref ecrs.context.Context store, EntityId e, T type, StringId 
 /// Examples:
 /// ---
 /// static import ecrs.context;
-/// static import doir.components.ast;
+/// static import doir.core.components.ast;
 /// auto store = ecrs.context.create();
 /// scope(exit) ecrs.context.free(store);
 /// auto root = createRoot(store);
 /// immutable StringId[2] arguments = [StringId(3), StringId(4)];
 /// auto e = pushCall(root, StringId(0), StringId(1), StringId(2), arguments[]);
-/// assert(ecrs.context.getComponent!(doir.components.ast.LookupFunctionInputs)(store, e).names[1] == StringId(4));
+/// assert(ecrs.context.getComponent!(doir.core.components.ast.LookupFunctionInputs)(store, e).names[1] == StringId(4));
 /// ---
 EntityId pushCall(T)(ref BlockBuilder b, StringId name, T type, StringId callee, const(StringId)[] arguments) {
 	immutable e = pushDeclaration(b, name);
@@ -316,16 +316,16 @@ EntityId pushCall(T)(ref BlockBuilder b, StringId name, T type, StringId callee,
 /// Examples:
 /// ---
 /// static import ecrs.context;
-/// static import doir.components.ast;
+/// static import doir.core.components.ast;
 /// auto store = ecrs.context.create();
 /// scope(exit) ecrs.context.free(store);
 /// auto e = ecrs.context.addEntity(store);
 /// auto body_ = attachBlock(store, e, StringId(0));
-/// assert(body_.block == e && ecrs.context.hasComponent!(doir.components.ast.Block)(store, e));
+/// assert(body_.block == e && ecrs.context.hasComponent!(doir.core.components.ast.Block)(store, e));
 /// ---
 BlockBuilder attachBlock(T)(ref ecrs.context.Context store, EntityId e, T type) {
-	assert(!ecrs.context.hasComponent!(doir.components.ast.Block)(store, e), "doir.builders: a second block on one declaration");
-	return setType(store, e, type) && ecrs.context.addComponent!(doir.components.ast.Block)(store, e) !is null ? BlockBuilder(&store, e) : BlockBuilder.init;
+	assert(!ecrs.context.hasComponent!(doir.core.components.ast.Block)(store, e), "doir.core.builders: a second block on one declaration");
+	return setType(store, e, type) && ecrs.context.addComponent!(doir.core.components.ast.Block)(store, e) !is null ? BlockBuilder(&store, e) : BlockBuilder.init;
 }
 
 /// Appends a block-valued declaration to `b`'s block and returns a builder for its contents; see `attachBlock`.
@@ -334,13 +334,13 @@ BlockBuilder attachBlock(T)(ref ecrs.context.Context store, EntityId e, T type) 
 /// Examples:
 /// ---
 /// static import ecrs.context;
-/// static import doir.components.ast;
+/// static import doir.core.components.ast;
 /// auto store = ecrs.context.create();
 /// scope(exit) ecrs.context.free(store);
 /// auto root = createRoot(store);
 /// auto body_ = pushBlock(root, StringId(0), StringId(1));
 /// auto inner = pushValueless(body_, StringId(2), StringId(3));
-/// assert(ecrs.context.getComponent!(doir.components.ast.Parent)(store, inner).parent == body_.block);
+/// assert(ecrs.context.getComponent!(doir.core.components.ast.Parent)(store, inner).parent == body_.block);
 /// ---
 BlockBuilder pushBlock(T)(ref BlockBuilder b, StringId name, T type) {
 	immutable e = pushDeclaration(b, name);
@@ -357,15 +357,15 @@ BlockBuilder pushBlock(T)(ref BlockBuilder b, StringId name, T type) {
 /// Examples:
 /// ---
 /// static import ecrs.context;
-/// static import doir.components.ast;
+/// static import doir.core.components.ast;
 /// auto store = ecrs.context.create();
 /// scope(exit) ecrs.context.free(store);
 /// auto e = ecrs.context.addEntity(store);
 /// cast(void) attachAggregate(store, e, StringId(0));
-/// assert(ecrs.context.getComponent!(doir.components.ast.TypeDefinition)(store, e).unique == doir.components.ast.ReservedUnique.structural);
+/// assert(ecrs.context.getComponent!(doir.core.components.ast.TypeDefinition)(store, e).unique == doir.core.components.ast.ReservedUnique.structural);
 /// ---
 BlockBuilder attachAggregate(T)(ref ecrs.context.Context store, EntityId e, T type) {
-	return attachBlock(store, e, type).block != invalidEntity && ecrs.context.addComponent!(doir.components.ast.TypeDefinition)(store, e) !is null ? BlockBuilder(&store, e) : BlockBuilder.init;
+	return attachBlock(store, e, type).block != invalidEntity && ecrs.context.addComponent!(doir.core.components.ast.TypeDefinition)(store, e) !is null ? BlockBuilder(&store, e) : BlockBuilder.init;
 }
 
 /// Appends an aggregate type to `b`'s block and returns a builder for its fields; see `attachAggregate`.
@@ -374,12 +374,12 @@ BlockBuilder attachAggregate(T)(ref ecrs.context.Context store, EntityId e, T ty
 /// Examples:
 /// ---
 /// static import ecrs.context;
-/// static import doir.components.ast;
+/// static import doir.core.components.ast;
 /// auto store = ecrs.context.create();
 /// scope(exit) ecrs.context.free(store);
 /// auto root = createRoot(store);
 /// auto vec = pushAggregate(root, StringId(0), StringId(1));
-/// assert(ecrs.context.getComponent!(doir.components.ast.TypeDefinition)(store, vec.block).unique == doir.components.ast.ReservedUnique.structural);
+/// assert(ecrs.context.getComponent!(doir.core.components.ast.TypeDefinition)(store, vec.block).unique == doir.core.components.ast.ReservedUnique.structural);
 /// ---
 BlockBuilder pushAggregate(T)(ref BlockBuilder b, StringId name, T type) {
 	immutable e = pushDeclaration(b, name);
@@ -392,19 +392,19 @@ BlockBuilder pushAggregate(T)(ref BlockBuilder b, StringId name, T type) {
 /// Examples:
 /// ---
 /// static import ecrs.context;
-/// static import doir.components.ast;
+/// static import doir.core.components.ast;
 /// auto store = ecrs.context.create();
 /// scope(exit) ecrs.context.free(store);
 /// auto e = ecrs.context.addEntity(store);
-/// assert(attachBuiltinType(store, e, e, doir.components.ast.ReservedUnique.type));
-/// assert(ecrs.context.getComponent!(doir.components.ast.TypeOf)(store, e).type == e);
+/// assert(attachBuiltinType(store, e, e, doir.core.components.ast.ReservedUnique.type));
+/// assert(ecrs.context.getComponent!(doir.core.components.ast.TypeOf)(store, e).type == e);
 /// ---
-bool attachBuiltinType(T)(ref ecrs.context.Context store, EntityId e, T type, doir.components.ast.ReservedUnique unique) {
-	assert(unique != doir.components.ast.ReservedUnique.structural && unique < doir.components.ast.ReservedUnique.firstFresh, "doir.builders: a builtin type's identity outside the reserved ones");
+bool attachBuiltinType(T)(ref ecrs.context.Context store, EntityId e, T type, doir.core.components.ast.ReservedUnique unique) {
+	assert(unique != doir.core.components.ast.ReservedUnique.structural && unique < doir.core.components.ast.ReservedUnique.firstFresh, "doir.core.builders: a builtin type's identity outside the reserved ones");
 	if (attachAggregate(store, e, type).block == invalidEntity) return false;
-	ecrs.context.getForWriting!(doir.components.ast.TypeDefinition)(store, e).unique = unique;
-	assert(ecrs.context.getComponent!(doir.components.ast.TypeDefinition)(store, e).unique == unique, "doir.builders: a builtin type that lost its identity");
-	return addFlags(store, e, doir.components.ast.Flags.Comptime | doir.components.ast.Flags.AlwaysComptime);
+	ecrs.context.getForWriting!(doir.core.components.ast.TypeDefinition)(store, e).unique = unique;
+	assert(ecrs.context.getComponent!(doir.core.components.ast.TypeDefinition)(store, e).unique == unique, "doir.core.builders: a builtin type that lost its identity");
+	return addFlags(store, e, doir.core.components.ast.Flags.Comptime | doir.core.components.ast.Flags.AlwaysComptime);
 }
 
 /// Appends a builtin type to `b`'s block; see `attachBuiltinType`.
@@ -413,14 +413,14 @@ bool attachBuiltinType(T)(ref ecrs.context.Context store, EntityId e, T type, do
 /// Examples:
 /// ---
 /// static import ecrs.context;
-/// static import doir.components.ast;
+/// static import doir.core.components.ast;
 /// auto store = ecrs.context.create();
 /// scope(exit) ecrs.context.free(store);
 /// auto root = createRoot(store);
-/// auto t = pushBuiltinType(root, StringId(0), StringId(0), doir.components.ast.ReservedUnique.deducedType);
-/// assert(ecrs.context.getComponent!(doir.components.ast.TypeDefinition)(store, t).unique == doir.components.ast.ReservedUnique.deducedType);
+/// auto t = pushBuiltinType(root, StringId(0), StringId(0), doir.core.components.ast.ReservedUnique.deducedType);
+/// assert(ecrs.context.getComponent!(doir.core.components.ast.TypeDefinition)(store, t).unique == doir.core.components.ast.ReservedUnique.deducedType);
 /// ---
-EntityId pushBuiltinType(T)(ref BlockBuilder b, StringId name, T type, doir.components.ast.ReservedUnique unique) {
+EntityId pushBuiltinType(T)(ref BlockBuilder b, StringId name, T type, doir.core.components.ast.ReservedUnique unique) {
 	immutable e = pushDeclaration(b, name);
 	return e != invalidEntity && attachBuiltinType(*b.store, e, type, unique) ? e : invalidEntity;
 }
@@ -431,16 +431,16 @@ EntityId pushBuiltinType(T)(ref BlockBuilder b, StringId name, T type, doir.comp
 /// Examples:
 /// ---
 /// static import ecrs.context;
-/// static import doir.components.ast;
+/// static import doir.core.components.ast;
 /// auto store = ecrs.context.create();
 /// scope(exit) ecrs.context.free(store);
 /// auto e = ecrs.context.addEntity(store);
 /// assert(attachFunctionType(store, e, StringId(0)));
-/// assert(ecrs.context.hasComponent!(doir.components.ast.FunctionInputs)(store, e));
+/// assert(ecrs.context.hasComponent!(doir.core.components.ast.FunctionInputs)(store, e));
 /// ---
 bool attachFunctionType(T)(ref ecrs.context.Context store, EntityId e, T type) {
-	assert(!ecrs.context.hasComponent!(doir.components.ast.FunctionInputs)(store, e), "doir.builders: a second function type on one entity");
-	return setType(store, e, type) && ecrs.context.addComponent!(doir.components.ast.TypeDefinition)(store, e) !is null && ecrs.context.addComponent!(doir.components.ast.FunctionInputs)(store, e) !is null;
+	assert(!ecrs.context.hasComponent!(doir.core.components.ast.FunctionInputs)(store, e), "doir.core.builders: a second function type on one entity");
+	return setType(store, e, type) && ecrs.context.addComponent!(doir.core.components.ast.TypeDefinition)(store, e) !is null && ecrs.context.addComponent!(doir.core.components.ast.FunctionInputs)(store, e) !is null;
 }
 
 /// Appends the named function type `add_t : type = (a: std.u8, b: std.u8) -> std.u8` to `b`'s block; see `attachFunctionType`.
@@ -449,12 +449,12 @@ bool attachFunctionType(T)(ref ecrs.context.Context store, EntityId e, T type) {
 /// Examples:
 /// ---
 /// static import ecrs.context;
-/// static import doir.components.ast;
+/// static import doir.core.components.ast;
 /// auto store = ecrs.context.create();
 /// scope(exit) ecrs.context.free(store);
 /// auto root = createRoot(store);
 /// auto functionType = pushFunctionType(root, StringId(0), StringId(1));
-/// assert(ecrs.context.hasComponent!(doir.components.ast.TypeDefinition)(store, functionType));
+/// assert(ecrs.context.hasComponent!(doir.core.components.ast.TypeDefinition)(store, functionType));
 /// ---
 EntityId pushFunctionType(T)(ref BlockBuilder b, StringId name, T type) {
 	immutable e = pushDeclaration(b, name);
@@ -468,17 +468,17 @@ EntityId pushFunctionType(T)(ref BlockBuilder b, StringId name, T type) {
 /// Examples:
 /// ---
 /// static import ecrs.context;
-/// static import doir.components.ast;
+/// static import doir.core.components.ast;
 /// auto store = ecrs.context.create();
 /// scope(exit) ecrs.context.free(store);
 /// auto root = createRoot(store);
 /// auto x = pushDeclaration(root, StringId(0));
 /// auto functionType = createFunctionType(store, x, StringId(1));
 /// assert(setType(store, x, functionType));
-/// assert(ecrs.context.getComponent!(doir.components.ast.Parent)(store, functionType).parent == x);
+/// assert(ecrs.context.getComponent!(doir.core.components.ast.Parent)(store, functionType).parent == x);
 /// ---
 EntityId createFunctionType(T)(ref ecrs.context.Context store, EntityId owner, T type) {
-	assert(owner != invalidEntity, "doir.builders: a function type written in place of no declaration");
+	assert(owner != invalidEntity, "doir.core.builders: a function type written in place of no declaration");
 	immutable e = ecrs.context.addEntity(store);
 	if (e == invalidEntity) return invalidEntity;
 	if (attachInPlaceFunctionType(store, e, owner, type)) return e;
@@ -493,16 +493,16 @@ EntityId createFunctionType(T)(ref ecrs.context.Context store, EntityId owner, T
 /// Examples:
 /// ---
 /// static import ecrs.context;
-/// static import doir.components.ast;
+/// static import doir.core.components.ast;
 /// auto store = ecrs.context.create();
 /// scope(exit) ecrs.context.free(store);
 /// auto owner = ecrs.context.addEntity(store), functionType = ecrs.context.addEntity(store);
 /// assert(attachInPlaceFunctionType(store, functionType, owner, StringId(1)));
-/// assert(ecrs.context.getComponent!(doir.components.ast.Parent)(store, functionType).parent == owner);
+/// assert(ecrs.context.getComponent!(doir.core.components.ast.Parent)(store, functionType).parent == owner);
 /// ---
 bool attachInPlaceFunctionType(T)(ref ecrs.context.Context store, EntityId e, EntityId owner, T type) {
-	assert(e != invalidEntity && owner != invalidEntity && e != owner, "doir.builders: a function type that owns itself (WF-Par)");
-	return ecrs.context.setComponent!(doir.components.ast.Parent)(store, e, doir.components.ast.Parent([owner])) && attachFunctionType(store, e, type);
+	assert(e != invalidEntity && owner != invalidEntity && e != owner, "doir.core.builders: a function type that owns itself (WF-Par)");
+	return ecrs.context.setComponent!(doir.core.components.ast.Parent)(store, e, doir.core.components.ast.Parent([owner])) && attachFunctionType(store, e, type);
 }
 
 /// Appends parameter `name : type` to function type `functionType` (`R-Param`) and returns it, valueless; give it a default with `setDefault`.
@@ -512,17 +512,17 @@ bool attachInPlaceFunctionType(T)(ref ecrs.context.Context store, EntityId e, En
 /// Examples:
 /// ---
 /// static import ecrs.context;
-/// static import doir.components.ast;
+/// static import doir.core.components.ast;
 /// auto store = ecrs.context.create();
 /// scope(exit) ecrs.context.free(store);
 /// auto e = ecrs.context.addEntity(store);
 /// assert(attachFunctionType(store, e, StringId(2)));
 /// auto a = pushParameter(store, e, StringId(0), StringId(1));
-/// assert(ecrs.context.getComponent!(doir.components.ast.FunctionInputs)(store, e).related[0] == a);
-/// assert(ecrs.context.getComponent!(doir.components.ast.Parent)(store, a).parent == e);
+/// assert(ecrs.context.getComponent!(doir.core.components.ast.FunctionInputs)(store, e).related[0] == a);
+/// assert(ecrs.context.getComponent!(doir.core.components.ast.Parent)(store, a).parent == e);
 /// ---
 EntityId pushParameter(T)(ref ecrs.context.Context store, EntityId functionType, StringId name, T type) {
-	assert(ecrs.context.hasComponent!(doir.components.ast.FunctionInputs)(store, functionType), "doir.builders: a parameter of something that is not a function type (R-Param)");
+	assert(ecrs.context.hasComponent!(doir.core.components.ast.FunctionInputs)(store, functionType), "doir.core.builders: a parameter of something that is not a function type (R-Param)");
 	immutable e = ecrs.context.addEntity(store);
 	if (e == invalidEntity) return invalidEntity;
 	if (attachParameter(store, e, functionType, name, type)) return e;
@@ -537,21 +537,21 @@ EntityId pushParameter(T)(ref ecrs.context.Context store, EntityId functionType,
 /// Examples:
 /// ---
 /// static import ecrs.context;
-/// static import doir.components.ast;
+/// static import doir.core.components.ast;
 /// auto store = ecrs.context.create();
 /// scope(exit) ecrs.context.free(store);
 /// auto functionType = ecrs.context.addEntity(store), p = ecrs.context.addEntity(store);
 /// assert(attachFunctionType(store, functionType, StringId(0)));
 /// assert(attachParameter(store, p, functionType, StringId(1), StringId(2)));
-/// assert(ecrs.context.getComponent!(doir.components.ast.FunctionInputs)(store, functionType).related[0] == p);
+/// assert(ecrs.context.getComponent!(doir.core.components.ast.FunctionInputs)(store, functionType).related[0] == p);
 /// ---
 bool attachParameter(T)(ref ecrs.context.Context store, EntityId e, EntityId functionType, StringId name, T type) {
-	assert(e != invalidEntity && e != functionType && ecrs.context.hasComponent!(doir.components.ast.FunctionInputs)(store, functionType), "doir.builders: a parameter of something that is not a function type (R-Param)");
-	immutable attached = (name == unnamed || ecrs.context.setComponent!(doir.components.ast.Name)(store, e, doir.components.ast.Name(name)))
-		&& ecrs.context.setComponent!(doir.components.ast.Parent)(store, e, doir.components.ast.Parent([functionType]))
+	assert(e != invalidEntity && e != functionType && ecrs.context.hasComponent!(doir.core.components.ast.FunctionInputs)(store, functionType), "doir.core.builders: a parameter of something that is not a function type (R-Param)");
+	immutable attached = (name == unnamed || ecrs.context.setComponent!(doir.core.components.ast.Name)(store, e, doir.core.components.ast.Name(name)))
+		&& ecrs.context.setComponent!(doir.core.components.ast.Parent)(store, e, doir.core.components.ast.Parent([functionType]))
 		&& attachValueless(store, e, type)
-		&& fp.dynarray.pushBack(ecrs.context.getForWriting!(doir.components.ast.FunctionInputs)(store, functionType).related, e);
-	assert(!attached || *fp.dynarray.back(ecrs.context.getComponent!(doir.components.ast.FunctionInputs)(store, functionType).related) == e, "doir.builders: a parameter missing from the end of its inputs (R-Param)");
+		&& fp.dynarray.pushBack(ecrs.context.getForWriting!(doir.core.components.ast.FunctionInputs)(store, functionType).related, e);
+	assert(!attached || *fp.dynarray.back(ecrs.context.getComponent!(doir.core.components.ast.FunctionInputs)(store, functionType).related) == e, "doir.core.builders: a parameter missing from the end of its inputs (R-Param)");
 	return attached;
 }
 
@@ -561,30 +561,30 @@ bool attachParameter(T)(ref ecrs.context.Context store, EntityId e, EntityId fun
 /// Examples:
 /// ---
 /// static import ecrs.context;
-/// static import doir.components.ast;
+/// static import doir.core.components.ast;
 /// auto store = ecrs.context.create();
 /// scope(exit) ecrs.context.free(store);
 /// auto functionType = ecrs.context.addEntity(store);
 /// assert(attachFunctionType(store, functionType, StringId(2)));
 /// auto p = pushParameter(store, functionType, StringId(0), StringId(1));
-/// assert(setDefault(store, p, doir.components.ast.ConstantVal.integer(5)));
-/// assert(ecrs.context.getComponent!(doir.components.ast.Flags)(store, p).flags == doir.components.ast.Flags.Comptime);
+/// assert(setDefault(store, p, doir.core.components.ast.ConstantVal.integer(5)));
+/// assert(ecrs.context.getComponent!(doir.core.components.ast.Flags)(store, p).flags == doir.core.components.ast.Flags.Comptime);
 /// ---
-bool setDefault(ref ecrs.context.Context store, EntityId p, doir.components.ast.ConstantVal value) {
-	assert(ecrs.context.hasComponent!(doir.components.ast.Parent)(store, p) && ecrs.context.hasComponent!(doir.components.ast.Flags)(store, p), "doir.builders: a default for something that is not a parameter (F-Default)");
-	if (!ecrs.context.setComponent!(doir.components.ast.ConstantVal)(store, p, value)) return false;
-	auto set = &ecrs.context.getForWriting!(doir.components.ast.Flags)(store, p);
-	set.flags = (set.flags & ~doir.components.ast.Flags.Valueless) | doir.components.ast.Flags.Comptime;
-	assert(!(set.flags & doir.components.ast.Flags.Valueless), "doir.builders: a parameter with a default that is still valueless");
+bool setDefault(ref ecrs.context.Context store, EntityId p, doir.core.components.ast.ConstantVal value) {
+	assert(ecrs.context.hasComponent!(doir.core.components.ast.Parent)(store, p) && ecrs.context.hasComponent!(doir.core.components.ast.Flags)(store, p), "doir.core.builders: a default for something that is not a parameter (F-Default)");
+	if (!ecrs.context.setComponent!(doir.core.components.ast.ConstantVal)(store, p, value)) return false;
+	auto set = &ecrs.context.getForWriting!(doir.core.components.ast.Flags)(store, p);
+	set.flags = (set.flags & ~doir.core.components.ast.Flags.Valueless) | doir.core.components.ast.Flags.Comptime;
+	assert(!(set.flags & doir.core.components.ast.Flags.Valueless), "doir.core.builders: a parameter with a default that is still valueless");
 	return true;
 }
 
 /// Ditto
 bool setDefault(ref ecrs.context.Context store, EntityId p, StringId value) {
-	assert(ecrs.context.hasComponent!(doir.components.ast.Parent)(store, p) && ecrs.context.hasComponent!(doir.components.ast.Flags)(store, p), "doir.builders: a default for something that is not a parameter (F-Default)");
-	if (!ecrs.context.setComponent!(doir.components.ast.LookupValue)(store, p, doir.components.ast.LookupValue(value))) return false;
-	ecrs.context.getForWriting!(doir.components.ast.Flags)(store, p).flags &= ~doir.components.ast.Flags.Valueless;
-	assert(!(ecrs.context.getComponent!(doir.components.ast.Flags)(store, p).flags & doir.components.ast.Flags.Valueless), "doir.builders: a parameter with a default that is still valueless");
+	assert(ecrs.context.hasComponent!(doir.core.components.ast.Parent)(store, p) && ecrs.context.hasComponent!(doir.core.components.ast.Flags)(store, p), "doir.core.builders: a default for something that is not a parameter (F-Default)");
+	if (!ecrs.context.setComponent!(doir.core.components.ast.LookupValue)(store, p, doir.core.components.ast.LookupValue(value))) return false;
+	ecrs.context.getForWriting!(doir.core.components.ast.Flags)(store, p).flags &= ~doir.core.components.ast.Flags.Valueless;
+	assert(!(ecrs.context.getComponent!(doir.core.components.ast.Flags)(store, p).flags & doir.core.components.ast.Flags.Valueless), "doir.core.builders: a parameter with a default that is still valueless");
 	return true;
 }
 
@@ -595,24 +595,24 @@ bool setDefault(ref ecrs.context.Context store, EntityId p, StringId value) {
 /// Examples:
 /// ---
 /// static import ecrs.context;
-/// static import doir.components.ast;
+/// static import doir.core.components.ast;
 /// auto store = ecrs.context.create();
 /// scope(exit) ecrs.context.free(store);
 /// auto functionType = ecrs.context.addEntity(store);
 /// assert(attachFunctionType(store, functionType, StringId(1)));
 /// assert(setReturnType(store, functionType, StringId(2)));
-/// assert(ecrs.context.getComponent!(doir.components.ast.LookupFunctionReturn)(store, functionType).name == StringId(2));
+/// assert(ecrs.context.getComponent!(doir.core.components.ast.LookupFunctionReturn)(store, functionType).name == StringId(2));
 /// ---
 bool setReturnType(ref ecrs.context.Context store, EntityId functionType, StringId type) {
-	assert(ecrs.context.hasComponent!(doir.components.ast.FunctionInputs)(store, functionType), "doir.builders: a return type for something that is not a function type");
-	return ecrs.context.setComponent!(doir.components.ast.LookupFunctionReturn)(store, functionType, doir.components.ast.LookupFunctionReturn(type));
+	assert(ecrs.context.hasComponent!(doir.core.components.ast.FunctionInputs)(store, functionType), "doir.core.builders: a return type for something that is not a function type");
+	return ecrs.context.setComponent!(doir.core.components.ast.LookupFunctionReturn)(store, functionType, doir.core.components.ast.LookupFunctionReturn(type));
 }
 
 // wrapper: as above
 /// Ditto
 bool setReturnType(ref ecrs.context.Context store, EntityId functionType, EntityId type) {
-	assert(ecrs.context.hasComponent!(doir.components.ast.FunctionInputs)(store, functionType) && type != invalidEntity && type != functionType, "doir.builders: a return type for something that is not a function type");
-	return ecrs.context.setComponent!(doir.components.ast.FunctionReturn)(store, functionType, doir.components.ast.FunctionReturn([type]));
+	assert(ecrs.context.hasComponent!(doir.core.components.ast.FunctionInputs)(store, functionType) && type != invalidEntity && type != functionType, "doir.core.builders: a return type for something that is not a function type");
+	return ecrs.context.setComponent!(doir.core.components.ast.FunctionReturn)(store, functionType, doir.core.components.ast.FunctionReturn([type]));
 }
 
 
@@ -624,17 +624,17 @@ bool setReturnType(ref ecrs.context.Context store, EntityId functionType, Entity
 /// Examples:
 /// ---
 /// static import ecrs.context;
-/// static import doir.components.ast;
+/// static import doir.core.components.ast;
 /// auto store = ecrs.context.create();
 /// scope(exit) ecrs.context.free(store);
 /// auto root = createRoot(store);
 /// auto e = pushAlias(root, StringId(0), StringId(1));
-/// assert(!ecrs.context.hasComponent!(doir.components.ast.LookupTypeOf)(store, e));
+/// assert(!ecrs.context.hasComponent!(doir.core.components.ast.LookupTypeOf)(store, e));
 /// ---
 EntityId pushAlias(ref BlockBuilder b, StringId name, StringId target) {
-	assert(target != unnamed, "doir.builders: an alias of no name");
+	assert(target != unnamed, "doir.core.builders: an alias of no name");
 	immutable e = pushDeclaration(b, name);
-	return e != invalidEntity && ecrs.context.setComponent!(doir.components.ast.LookupAlias)(*b.store, e, doir.components.ast.LookupAlias(target)) ? e : invalidEntity;
+	return e != invalidEntity && ecrs.context.setComponent!(doir.core.components.ast.LookupAlias)(*b.store, e, doir.core.components.ast.LookupAlias(target)) ? e : invalidEntity;
 }
 
 /// Makes `e` the namespace `math : namespace = { ... }`, which carries no type (`WF-Kind`).
@@ -644,17 +644,17 @@ EntityId pushAlias(ref BlockBuilder b, StringId name, StringId target) {
 /// Examples:
 /// ---
 /// static import ecrs.context;
-/// static import doir.components.ast;
+/// static import doir.core.components.ast;
 /// auto store = ecrs.context.create();
 /// scope(exit) ecrs.context.free(store);
 /// auto e = ecrs.context.addEntity(store);
 /// auto math = attachNamespace(store, e);
-/// assert(ecrs.context.getComponent!(doir.components.ast.Flags)(store, math.block).flags == doir.components.ast.Flags.Namespace);
+/// assert(ecrs.context.getComponent!(doir.core.components.ast.Flags)(store, math.block).flags == doir.core.components.ast.Flags.Namespace);
 /// ---
 BlockBuilder attachNamespace(ref ecrs.context.Context store, EntityId e) {
-	assert(e != invalidEntity, "doir.builders: building on no entity");
-	assert(!ecrs.context.hasComponent!(doir.components.ast.Block)(store, e), "doir.builders: a namespace over a declaration that has a block");
-	return addFlags(store, e, doir.components.ast.Flags.Namespace) && ecrs.context.addComponent!(doir.components.ast.Block)(store, e) !is null ? BlockBuilder(&store, e) : BlockBuilder.init;
+	assert(e != invalidEntity, "doir.core.builders: building on no entity");
+	assert(!ecrs.context.hasComponent!(doir.core.components.ast.Block)(store, e), "doir.core.builders: a namespace over a declaration that has a block");
+	return addFlags(store, e, doir.core.components.ast.Flags.Namespace) && ecrs.context.addComponent!(doir.core.components.ast.Block)(store, e) !is null ? BlockBuilder(&store, e) : BlockBuilder.init;
 }
 
 /// Appends a namespace to `b`'s block and returns a builder for its contents; see `attachNamespace`.
@@ -664,12 +664,12 @@ BlockBuilder attachNamespace(ref ecrs.context.Context store, EntityId e) {
 /// Examples:
 /// ---
 /// static import ecrs.context;
-/// static import doir.components.ast;
+/// static import doir.core.components.ast;
 /// auto store = ecrs.context.create();
 /// scope(exit) ecrs.context.free(store);
 /// auto root = createRoot(store);
 /// auto math = pushNamespace(root, StringId(0));
-/// assert(ecrs.context.getComponent!(doir.components.ast.Parent)(store, math.block).parent == root.block);
+/// assert(ecrs.context.getComponent!(doir.core.components.ast.Parent)(store, math.block).parent == root.block);
 /// ---
 BlockBuilder pushNamespace(ref BlockBuilder b, StringId name) {
 	immutable e = pushDeclaration(b, name);
@@ -678,80 +678,80 @@ BlockBuilder pushNamespace(ref BlockBuilder b, StringId name) {
 
 
 unittest {
-	static import doir.strings;
-	doir.strings.Strings strings;
-	scope(exit) doir.strings.free(strings);
+	static import doir.core.strings;
+	doir.core.strings.Strings strings;
+	scope(exit) doir.core.strings.free(strings);
 	auto store = ecrs.context.create();
 	scope(exit) ecrs.context.free(store);
 
 	// identity : type = (T: deduced type, value: T) -> T ; id : identity
 	auto root = createRoot(store);
-	auto functionType = pushFunctionType(root, doir.strings.intern(strings, "identity"), doir.strings.intern(strings, "type"));
-	auto t = pushParameter(store, functionType, doir.strings.intern(strings, "T"), doir.strings.intern(strings, doir.components.ast.deducedTypeName));
-	auto value = pushParameter(store, functionType, doir.strings.intern(strings, "value"), doir.strings.intern(strings, "T"));
-	assert(setReturnType(store, functionType, doir.strings.intern(strings, "T")));
-	auto id = pushValueless(root, doir.strings.intern(strings, "id"), doir.strings.intern(strings, "identity"));
-	assert(ecrs.context.getComponent!(doir.components.ast.FunctionInputs)(store, functionType).related[0 .. 2] == [t, value]);
-	assert(doir.strings.text(strings, ecrs.context.getComponent!(doir.components.ast.LookupTypeOf)(store, t).name) == "deduced type");
-	assert(ecrs.context.getComponent!(doir.components.ast.Block)(store, root.block).related[0 .. 2] == [functionType, id]);
+	auto functionType = pushFunctionType(root, doir.core.strings.intern(strings, "identity"), doir.core.strings.intern(strings, "type"));
+	auto t = pushParameter(store, functionType, doir.core.strings.intern(strings, "T"), doir.core.strings.intern(strings, doir.core.components.ast.deducedTypeName));
+	auto value = pushParameter(store, functionType, doir.core.strings.intern(strings, "value"), doir.core.strings.intern(strings, "T"));
+	assert(setReturnType(store, functionType, doir.core.strings.intern(strings, "T")));
+	auto id = pushValueless(root, doir.core.strings.intern(strings, "id"), doir.core.strings.intern(strings, "identity"));
+	assert(ecrs.context.getComponent!(doir.core.components.ast.FunctionInputs)(store, functionType).related[0 .. 2] == [t, value]);
+	assert(doir.core.strings.text(strings, ecrs.context.getComponent!(doir.core.components.ast.LookupTypeOf)(store, t).name) == "deduced type");
+	assert(ecrs.context.getComponent!(doir.core.components.ast.Block)(store, root.block).related[0 .. 2] == [functionType, id]);
 
 	// Attaching to a declared entity matches pushing the same form.
-	auto later = pushDeclaration(root, doir.strings.intern(strings, "later"));
-	auto inner = attachBlock(store, later, doir.strings.intern(strings, "block"));
-	assert(inner.block == later && ecrs.context.getComponent!(doir.components.ast.Block)(store, root.block).related[2] == later);
-	assert(ecrs.context.getComponent!(doir.components.ast.LookupTypeOf)(store, later).name == doir.strings.intern(strings, "block"));
+	auto later = pushDeclaration(root, doir.core.strings.intern(strings, "later"));
+	auto inner = attachBlock(store, later, doir.core.strings.intern(strings, "block"));
+	assert(inner.block == later && ecrs.context.getComponent!(doir.core.components.ast.Block)(store, root.block).related[2] == later);
+	assert(ecrs.context.getComponent!(doir.core.components.ast.LookupTypeOf)(store, later).name == doir.core.strings.intern(strings, "block"));
 
 	// Renumbering rewrites every entity-valued component (E-Remap).
 	assert(ecrs.context.swapEntities(store, functionType, value));
-	assert(ecrs.context.getComponent!(doir.components.ast.Parent)(store, functionType).parent == value);
-	assert(ecrs.context.getComponent!(doir.components.ast.FunctionInputs)(store, value).related[0 .. 2] == [t, functionType]);
-	assert(ecrs.context.getComponent!(doir.components.ast.Block)(store, root.block).related[0] == value);
+	assert(ecrs.context.getComponent!(doir.core.components.ast.Parent)(store, functionType).parent == value);
+	assert(ecrs.context.getComponent!(doir.core.components.ast.FunctionInputs)(store, value).related[0 .. 2] == [t, functionType]);
+	assert(ecrs.context.getComponent!(doir.core.components.ast.Block)(store, root.block).related[0] == value);
 	assert(ecrs.context.swapEntities(store, functionType, value));
 
 	// Builtin types are distinct by discriminator, deduced type included.
 	auto builtin = createRoot(store);
-	auto type = pushBuiltinType(builtin, doir.strings.intern(strings, "type"), doir.strings.intern(strings, "type"), doir.components.ast.ReservedUnique.type);
-	auto deduced = pushBuiltinType(builtin, doir.strings.intern(strings, "deduced_type"), doir.strings.intern(strings, "type"), doir.components.ast.ReservedUnique.deducedType);
-	assert(ecrs.context.getComponent!(doir.components.ast.TypeDefinition)(store, type).unique != ecrs.context.getComponent!(doir.components.ast.TypeDefinition)(store, deduced).unique);
+	auto type = pushBuiltinType(builtin, doir.core.strings.intern(strings, "type"), doir.core.strings.intern(strings, "type"), doir.core.components.ast.ReservedUnique.type);
+	auto deduced = pushBuiltinType(builtin, doir.core.strings.intern(strings, "deduced_type"), doir.core.strings.intern(strings, "type"), doir.core.components.ast.ReservedUnique.deducedType);
+	assert(ecrs.context.getComponent!(doir.core.components.ast.TypeDefinition)(store, type).unique != ecrs.context.getComponent!(doir.core.components.ast.TypeDefinition)(store, deduced).unique);
 
 	// A `_` parameter has no name; a default replaces Valueless.
-	auto anonymous = pushParameter(store, functionType, unnamed, doir.strings.intern(strings, "std.u8"));
-	assert(!ecrs.context.hasComponent!(doir.components.ast.Name)(store, anonymous));
-	assert(setDefault(store, anonymous, doir.strings.intern(strings, "zero")));
-	assert(ecrs.context.getComponent!(doir.components.ast.Flags)(store, anonymous).flags == doir.components.ast.Flags.None);
+	auto anonymous = pushParameter(store, functionType, unnamed, doir.core.strings.intern(strings, "std.u8"));
+	assert(!ecrs.context.hasComponent!(doir.core.components.ast.Name)(store, anonymous));
+	assert(setDefault(store, anonymous, doir.core.strings.intern(strings, "zero")));
+	assert(ecrs.context.getComponent!(doir.core.components.ast.Flags)(store, anonymous).flags == doir.core.components.ast.Flags.None);
 
 	// Types may be given resolved, as entities; a literal default makes the parameter comptime (C-Constant, F-Default).
-	auto typed = pushValueless(root, doir.strings.intern(strings, "typed"), type);
-	assert(ecrs.context.getComponent!(doir.components.ast.TypeOf)(store, typed).type == type);
+	auto typed = pushValueless(root, doir.core.strings.intern(strings, "typed"), type);
+	assert(ecrs.context.getComponent!(doir.core.components.ast.TypeOf)(store, typed).type == type);
 	assert(setReturnType(store, functionType, type));
-	assert(ecrs.context.getComponent!(doir.components.ast.FunctionReturn)(store, functionType).type == type);
-	auto five = pushParameter(store, functionType, doir.strings.intern(strings, "five"), doir.strings.intern(strings, "std.u8"));
-	assert(setDefault(store, five, doir.components.ast.ConstantVal.integer(5)));
-	assert(ecrs.context.getComponent!(doir.components.ast.Flags)(store, five).flags == doir.components.ast.Flags.Comptime);
-	assert(ecrs.context.getComponent!(doir.components.ast.ConstantVal)(store, five).integerValue == 5);
+	assert(ecrs.context.getComponent!(doir.core.components.ast.FunctionReturn)(store, functionType).type == type);
+	auto five = pushParameter(store, functionType, doir.core.strings.intern(strings, "five"), doir.core.strings.intern(strings, "std.u8"));
+	assert(setDefault(store, five, doir.core.components.ast.ConstantVal.integer(5)));
+	assert(ecrs.context.getComponent!(doir.core.components.ast.Flags)(store, five).flags == doir.core.components.ast.Flags.Comptime);
+	assert(ecrs.context.getComponent!(doir.core.components.ast.ConstantVal)(store, five).integerValue == 5);
 
 	// Aliases and namespaces carry no type (WF-Kind); a namespace's contents go in its own block.
-	auto color = pushAlias(root, doir.strings.intern(strings, "color"), doir.strings.intern(strings, "vec3"));
-	assert(ecrs.context.getComponent!(doir.components.ast.LookupAlias)(store, color).name == doir.strings.intern(strings, "vec3"));
-	assert(!ecrs.context.hasComponent!(doir.components.ast.LookupTypeOf)(store, color));
-	auto math = pushNamespace(root, doir.strings.intern(strings, "math"));
-	auto pi = pushValueless(math, doir.strings.intern(strings, "pi"), doir.strings.intern(strings, "std.f64"));
-	assert(ecrs.context.getComponent!(doir.components.ast.Flags)(store, math.block).flags == doir.components.ast.Flags.Namespace);
-	assert(ecrs.context.getComponent!(doir.components.ast.Parent)(store, pi).parent == math.block);
-	assert(!ecrs.context.hasComponent!(doir.components.ast.LookupTypeOf)(store, math.block));
+	auto color = pushAlias(root, doir.core.strings.intern(strings, "color"), doir.core.strings.intern(strings, "vec3"));
+	assert(ecrs.context.getComponent!(doir.core.components.ast.LookupAlias)(store, color).name == doir.core.strings.intern(strings, "vec3"));
+	assert(!ecrs.context.hasComponent!(doir.core.components.ast.LookupTypeOf)(store, color));
+	auto math = pushNamespace(root, doir.core.strings.intern(strings, "math"));
+	auto pi = pushValueless(math, doir.core.strings.intern(strings, "pi"), doir.core.strings.intern(strings, "std.f64"));
+	assert(ecrs.context.getComponent!(doir.core.components.ast.Flags)(store, math.block).flags == doir.core.components.ast.Flags.Namespace);
+	assert(ecrs.context.getComponent!(doir.core.components.ast.Parent)(store, pi).parent == math.block);
+	assert(!ecrs.context.hasComponent!(doir.core.components.ast.LookupTypeOf)(store, math.block));
 
 	// A refused allocation is reported, and leaves the block or the function type without the declaration.
 	static import fp.dynarray;
 	bool refusedOnce = false;
 	foreach (n; 0 .. 8) {
-		immutable declarations = fp.dynarray.length(ecrs.context.getComponent!(doir.components.ast.Block)(store, root.block).related);
-		immutable parameters = fp.dynarray.length(ecrs.context.getComponent!(doir.components.ast.FunctionInputs)(store, functionType).related);
+		immutable declarations = fp.dynarray.length(ecrs.context.getComponent!(doir.core.components.ast.Block)(store, root.block).related);
+		immutable parameters = fp.dynarray.length(ecrs.context.getComponent!(doir.core.components.ast.FunctionInputs)(store, functionType).related);
 		auto previous = fp.testing.limitAllocations(n);
-		immutable d = pushDeclaration(root, doir.strings.intern(strings, "refused"));
-		immutable p = pushParameter(store, functionType, doir.strings.intern(strings, "refused"), doir.strings.intern(strings, "std.u8"));
+		immutable d = pushDeclaration(root, doir.core.strings.intern(strings, "refused"));
+		immutable p = pushParameter(store, functionType, doir.core.strings.intern(strings, "refused"), doir.core.strings.intern(strings, "std.u8"));
 		fp.testing.restoreAllocator(previous);
-		assert(fp.dynarray.length(ecrs.context.getComponent!(doir.components.ast.Block)(store, root.block).related) == declarations + (d != invalidEntity));
-		assert(fp.dynarray.length(ecrs.context.getComponent!(doir.components.ast.FunctionInputs)(store, functionType).related) == parameters + (p != invalidEntity));
+		assert(fp.dynarray.length(ecrs.context.getComponent!(doir.core.components.ast.Block)(store, root.block).related) == declarations + (d != invalidEntity));
+		assert(fp.dynarray.length(ecrs.context.getComponent!(doir.core.components.ast.FunctionInputs)(store, functionType).related) == parameters + (p != invalidEntity));
 		refusedOnce |= d == invalidEntity || p == invalidEntity;
 	}
 	assert(refusedOnce);
@@ -766,6 +766,6 @@ unittest {
 		fp.testing.restoreAllocator(previous);
 		if (made.block != invalidEntity) break;
 		assert(made.store is null);
-		assert(ecrs.context.entityCount(fresh) <= 1 || !ecrs.context.hasComponent!(doir.components.ast.Block)(fresh, 1));
+		assert(ecrs.context.entityCount(fresh) <= 1 || !ecrs.context.hasComponent!(doir.core.components.ast.Block)(fresh, 1));
 	}
 }

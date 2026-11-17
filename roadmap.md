@@ -29,7 +29,7 @@ Legacy behavior reference: [doir-lang/DOIR/tree/D](https://github.com/doir-lang/
    Every other name moves toward `std.meta`, never the other way.
 5. **The Editor Is a Consumer, Not an Afterthought:** Source locations, statement-level recovery, and token-level highlighting only pay for themselves if something reads them.
    The LSP is that consumer, and once its comptime-aware features land (Phase 7) it is the strictest test of position-keyed comptime state (`C-Order`, `L-Freeze`).
-6. **Components Are the Tree:** The parser builds binding entities directly through the builders (`source/doir/builders.d`).
+6. **Components Are the Tree:** The parser builds binding entities directly through the builders (`core/source/doir/core/builders.d`).
    There is no separate syntax tree.
    Components stay plain data with entity ids in place of pointers, and a node has one `Parent`: a shared, multi-parent green tree would bring back the duplication and serialization problems the ECS design avoids.
    Node kinds and states are valueless tags, and passes are systems over the entities carrying a component set.
@@ -132,8 +132,8 @@ Legacy behavior reference: [doir-lang/DOIR/tree/D](https://github.com/doir-lang/
     Whether a `Newline` is a `Terminator` depends on the production (`x : T` then `= 5` on the next line is one assignment, and newlines inside `(…)` are whitespace), so the parser decides it, skipping newlines where `doir.peg` has `_` and not where it has `wsc`.
     Characters below `0x80` are classified without decoding UTF-8 or searching the Unicode tables, which identifiers would otherwise spend most of the lexing time on.
     The commit keeps no token array after it finishes: highlighting re-lexes what it shows (Phase 3).
-  - A recursive-descent parser over that stream and `source/doir/builders.d`, rule names matching `doir.peg` so the two can be diffed.
-    Each declaration form becomes builder calls (`pushDeclaration`, `pushConstant`, `pushCall`, and the `Lookup*` components for names resolved later), with names interned by `source/doir/strings.d`.
+  - A recursive-descent parser over that stream and `core/source/doir/core/builders.d`, rule names matching `doir.peg` so the two can be diffed.
+    Each declaration form becomes builder calls (`pushDeclaration`, `pushConstant`, `pushCall`, and the `Lookup*` components for names resolved later), with names interned by `core/source/doir/core/strings.d`.
   - Parsing is an input commit, not a memoized query: like a Salsa input or a rustc `eval_always` query, the edit step reparses the file, matches declarations, writes the parsed components, and sets `ChangedAt` on what changed.
     Matching comes before building: the parse first yields a record per declaration (its key, its hash and its token range), and the builders run only for declarations that are new or whose hash changed, parsing their token range again, so a reparse that changes nothing writes nothing to the store.
     Blocks are still descended, since a declaration's hash leaves out its nested declarations.

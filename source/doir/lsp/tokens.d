@@ -20,7 +20,7 @@ static import fp.dynarray;
 static import fp.string.utf;
 
 static import doir.lsp.positions;
-static import doir.syntax.lexer;
+static import doir.core.syntax.lexer;
 
 @nogc nothrow:
 
@@ -64,7 +64,7 @@ private struct Encoder {
 }
 
 // Appends `token` as `type`, a line at a time, if it reaches into the requested range.
-private void emit(ref Encoder e, doir.syntax.lexer.Token token, uint type, uint modifiers) {
+private void emit(ref Encoder e, doir.core.syntax.lexer.Token token, uint type, uint modifiers) {
 	immutable from = token.start, to = token.start + token.length;
 	if (to <= e.start || from >= e.end || e.refused) return;
 	advance(e.text, e.encoding, e.place, from);
@@ -91,8 +91,8 @@ private void emit(ref Encoder e, doir.syntax.lexer.Token token, uint type, uint 
 }
 
 // The type a token that is not an identifier shows as, or uint.max for none.
-private uint typeOf(doir.syntax.lexer.TokenKind kind) {
-	final switch (kind) with (doir.syntax.lexer.TokenKind) {
+private uint typeOf(doir.core.syntax.lexer.TokenKind kind) {
+	final switch (kind) with (doir.core.syntax.lexer.TokenKind) {
 		case keyword: return Type.keyword;
 		case integer, float_: return Type.number;
 		case string_, rawString, character, languageBody: return Type.string_;
@@ -120,40 +120,40 @@ private uint typeOf(doir.syntax.lexer.TokenKind kind) {
 bool encode(const(char)[] text, doir.lsp.positions.Encoding encoding, size_t line, size_t character, size_t start, size_t end, ref uint* data) @trusted {
 	// The first token is placed from the file's start, as LSP counts it.
 	Encoder e = Encoder(text, encoding, start, end, Place(0, line, character), 0, 0, &data);
-	auto cursor = doir.syntax.lexer.Cursor(text);
+	auto cursor = doir.core.syntax.lexer.Cursor(text);
 	// An identifier waits for the next significant token, which says what it is; trivia after it waits with it, to keep the tokens in order.
-	doir.syntax.lexer.Token pending;
+	doir.core.syntax.lexer.Token pending;
 	bool hasPending;
-	doir.syntax.lexer.Token* held = null;
+	doir.core.syntax.lexer.Token* held = null;
 	scope(exit) fp.dynarray.free(held);
-	auto previous = doir.syntax.lexer.TokenKind.newline;
-	void settle(doir.syntax.lexer.TokenKind next) {
+	auto previous = doir.core.syntax.lexer.TokenKind.newline;
+	void settle(doir.core.syntax.lexer.TokenKind next) {
 		if (!hasPending) return;
-		immutable after = previous == doir.syntax.lexer.TokenKind.colon || previous == doir.syntax.lexer.TokenKind.arrow;
-		if (next == doir.syntax.lexer.TokenKind.colon) emit(e, pending, Type.variable, Modifier.declaration);
+		immutable after = previous == doir.core.syntax.lexer.TokenKind.colon || previous == doir.core.syntax.lexer.TokenKind.arrow;
+		if (next == doir.core.syntax.lexer.TokenKind.colon) emit(e, pending, Type.variable, Modifier.declaration);
 		else if (after) emit(e, pending, Type.type, 0);
-		else if (next == doir.syntax.lexer.TokenKind.leftParen) emit(e, pending, Type.function_, 0);
+		else if (next == doir.core.syntax.lexer.TokenKind.leftParen) emit(e, pending, Type.function_, 0);
 		else emit(e, pending, Type.variable, 0);
 		foreach (t; fp.dynarray.slice(held)) {
-			immutable type = typeOf(t.kind == doir.syntax.lexer.TokenKind.unterminated ? t.attempted : t.kind);
+			immutable type = typeOf(t.kind == doir.core.syntax.lexer.TokenKind.unterminated ? t.attempted : t.kind);
 			if (type != uint.max) emit(e, t, type, 0);
 		}
 		fp.dynarray.clear(held);
 		hasPending = false;
-		previous = doir.syntax.lexer.TokenKind.identifier;
+		previous = doir.core.syntax.lexer.TokenKind.identifier;
 	}
 	while (cursor.at < text.length && !e.refused) {
-		auto t = doir.syntax.lexer.next(cursor);
-		immutable kind = t.kind == doir.syntax.lexer.TokenKind.unterminated ? t.attempted : t.kind;
+		auto t = doir.core.syntax.lexer.next(cursor);
+		immutable kind = t.kind == doir.core.syntax.lexer.TokenKind.unterminated ? t.attempted : t.kind;
 		if (t.start >= end && !hasPending) break;
-		if (doir.syntax.lexer.isTrivia(kind) || kind == doir.syntax.lexer.TokenKind.newline) {
-			if (hasPending && doir.syntax.lexer.isTrivia(kind)) {
+		if (doir.core.syntax.lexer.isTrivia(kind) || kind == doir.core.syntax.lexer.TokenKind.newline) {
+			if (hasPending && doir.core.syntax.lexer.isTrivia(kind)) {
 				if (!fp.dynarray.pushBack(held, t)) e.refused = true;
 			} else if (typeOf(kind) != uint.max) emit(e, t, typeOf(kind), 0);
 			continue;
 		}
 		settle(kind);
-		if (kind == doir.syntax.lexer.TokenKind.identifier) {
+		if (kind == doir.core.syntax.lexer.TokenKind.identifier) {
 			pending = t;
 			hasPending = true;
 			continue;
@@ -161,7 +161,7 @@ bool encode(const(char)[] text, doir.lsp.positions.Encoding encoding, size_t lin
 		if (typeOf(kind) != uint.max) emit(e, t, typeOf(kind), 0);
 		previous = kind;
 	}
-	settle(doir.syntax.lexer.TokenKind.end);
+	settle(doir.core.syntax.lexer.TokenKind.end);
 	return !e.refused;
 }
 

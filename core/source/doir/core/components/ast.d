@@ -1,4 +1,4 @@
-/// The binding components of `doir.spec.md` Part II §1 that the parser writes through `doir.builders`, and the `Lookup*` components it writes in place of the names it does not resolve.
+/// The binding components of `doir.spec.md` Part II §1 that the parser writes through `doir.core.builders`, and the `Lookup*` components it writes in place of the names it does not resolve.
 /// Every one holding an entity id mixes in `ecrs.relation.Relates` (`E-Remap`).
 ///
 /// Examples:
@@ -10,7 +10,7 @@
 /// ecrs.context.addComponent!TypeOf(store, e).type = t;
 /// assert(ecrs.context.getComponent!TypeOf(store, e).type == t);
 /// ---
-module doir.components.ast;
+module doir.core.components.ast;
 
 static import fp.dynarray;
 static import fp.lifecycle;
@@ -20,7 +20,7 @@ static import ecrs.relation;
 static import ecrs.registry;
 
 public import ecrs.registry : EntityId, invalidEntity;
-public import doir.strings : StringId;
+public import doir.core.strings : StringId;
 
 @nogc nothrow:
 
@@ -204,7 +204,7 @@ unittest { // libECRS silently skips a holder whose hook is not `@nogc nothrow`;
 	static assert(ecrs.registry.hasRemapEntities!Parent && ecrs.registry.hasRemapEntities!Block && ecrs.registry.hasRemapEntities!TypeOf && ecrs.registry.hasRemapEntities!Alias && ecrs.registry.hasRemapEntities!FunctionInputs && ecrs.registry.hasRemapEntities!FunctionReturn && ecrs.registry.hasRemapEntities!Call);
 }
 
-version(unittest) static import doir.testing;
+version(unittest) static import doir.core.testing;
 
 unittest { // literal payloads, and unresolved arguments hashed by content and released with their component
 	assert(ConstantVal.integer(7).kind == ConstantVal.Kind.integer && ConstantVal.integer(7).integerValue == 7);
@@ -214,7 +214,7 @@ unittest { // literal payloads, and unresolved arguments hashed by content and r
 
 	auto store = ecrs.context.create();
 	scope(exit) ecrs.context.free(store);
-	immutable a = doir.testing.addEntity(store), b = doir.testing.addEntity(store);
+	immutable a = doir.core.testing.addEntity(store), b = doir.core.testing.addEntity(store);
 	assert(ecrs.context.addComponent!LookupFunctionInputs(store, a) !is null && ecrs.context.addComponent!LookupFunctionInputs(store, b) !is null);
 	auto x = &ecrs.context.getForWriting!LookupFunctionInputs(store, a), y = &ecrs.context.getForWriting!LookupFunctionInputs(store, b);
 	assert(fp.dynarray.pushBack(x.names.p, StringId(1)) && fp.dynarray.pushBack(y.names.p, StringId(1)));

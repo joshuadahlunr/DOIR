@@ -7,12 +7,12 @@ static import fp.tree;
 static import bc.json;
 static import ecrs.context;
 
-static import doir.components.ast;
-static import doir.components.source;
+static import doir.core.components.ast;
+static import doir.core.components.source;
 static import doir.lsp.session;
 static import doir.lsp.store;
 static import doir.source;
-static import doir.strings;
+static import doir.core.strings;
 
 public import ecrs.registry : EntityId;
 
@@ -29,16 +29,16 @@ private void symbols(ref doir.lsp.session.Session s, bc.json.Value list, const f
 	foreach (step; w) {
 		if (step.event != fp.tree.Event.enter || step.depth == 0) continue;
 		immutable child = step.index;
-		immutable span = ecrs.context.getComponent!(doir.components.source.SourceSpan)(*s.engine.store, child);
+		immutable span = ecrs.context.getComponent!(doir.core.components.source.SourceSpan)(*s.engine.store, child);
 		immutable start = starts[step.depth] = starts[step.depth - 1] + span.offset, end = start + span.length;
-		auto n = ecrs.context.findComponent!(doir.components.ast.Name)(*s.engine.store, child);
-		const name = n is null ? "_" : doir.strings.text(*s.strings, n.value);
+		auto n = ecrs.context.findComponent!(doir.core.components.ast.Name)(*s.engine.store, child);
+		const name = n is null ? "_" : doir.core.strings.text(*s.strings, n.value);
 		// The name is the declaration's first word, after `export` if it has one.
 		immutable at = !fp.rope.equalAt(text, start, name) && fp.rope.equalAt(text, start, "export ") ? start + 7 : start;
 		auto symbol = bc.json.appendObject(lists[step.depth - 1]);
 		bc.json.set(symbol, "name", name);
-		if (auto t = ecrs.context.findComponent!(doir.components.ast.LookupTypeOf)(*s.engine.store, child))
-			bc.json.set(symbol, "detail", doir.strings.text(*s.strings, t.name));
+		if (auto t = ecrs.context.findComponent!(doir.core.components.ast.LookupTypeOf)(*s.engine.store, child))
+			bc.json.set(symbol, "detail", doir.core.strings.text(*s.strings, t.name));
 		bc.json.set(symbol, "kind", doir.lsp.store.symbolKind(s, child));
 		// The selection first: it shares the range's first line, so the line found for one serves the other.
 		doir.lsp.session.range(s, bc.json.setObject(symbol, "selectionRange"), text, at, at + name.length < end ? at + name.length : end);

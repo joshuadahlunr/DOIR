@@ -3,7 +3,7 @@
 # requires-python = ">=3.11"
 # dependencies = ["pe>=0.6"]
 # ///
-"""Generates `source/doir/syntax/tables.d` from `doir.peg`: the code point ranges of `UnicodeIdentifierStart`, `UnicodeIdentifierContinue` and the non-newline whitespace of `wsc`, and the words of `Keywords`, so the lexer matches the grammar exactly (`roadmap.md` Phase 2).
+"""Generates DOIRcore's `core/source/doir/core/syntax/tables.d` from `doir.peg`: the code point ranges of `UnicodeIdentifierStart`, `UnicodeIdentifierContinue` and the non-newline whitespace of `wsc`, and the words of `Keywords`, so the lexer matches the grammar exactly (`roadmap.md` Phase 2).
 
     uv run tools/gen_tables.py            # rewrite the module
     uv run tools/gen_tables.py --check    # exit 1 if the module is out of date
@@ -17,7 +17,7 @@ import pe.operators
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 GRAMMAR = ROOT / "doir.peg"
-OUTPUT = ROOT / "source" / "doir" / "syntax" / "tables.d"
+OUTPUT = ROOT / "core" / "source" / "doir" / "core" / "syntax" / "tables.d"
 
 
 def classes(op, out):
@@ -80,8 +80,8 @@ Raises `pe.Error` if the grammar does not compile."""
 	keywords = "".join(f'\t"{w}",\n' for w in words)
 	return (
 		"/// Character tables generated from `doir.peg` by `tools/gen_tables.py`; do not edit.\n"
-		"/// Each table is sorted, non-overlapping inclusive code point ranges, searched by `doir.syntax.lexer`.\n"
-		"module doir.syntax.tables;\n\n"
+		"/// Each table is sorted, non-overlapping inclusive code point ranges, searched by `doir.core.syntax.lexer`.\n"
+		"module doir.core.syntax.tables;\n\n"
 		+ table("identifierStart", "`UnicodeIdentifierStart`.", merged(start)) + "\n"
 		+ table("identifierContinue", "`UnicodeIdentifierContinue`.", merged(cont)) + "\n"
 		+ table("whitespace", "The whitespace of `wsc`, which `_` extends with the newlines.", merged(space)) + "\n"

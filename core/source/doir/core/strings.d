@@ -8,7 +8,7 @@
 /// assert(a != refused && intern(strings, "add") == a);
 /// assert(text(strings, a) == "add");
 /// ---
-module doir.strings;
+module doir.core.strings;
 
 version(unittest) static import fp.testing;
 
@@ -86,7 +86,7 @@ StringId find(ref Strings strings, const(char)[] s) {
 /// ---
 StringId intern(ref Strings strings, const(char)[] s) {
 	immutable id = StringId(bc.interner.intern(strings.table, s));
-	assert(id == refused || text(strings, id) == s, "doir.strings: an id that does not spell what was interned");
+	assert(id == refused || text(strings, id) == s, "doir.core.strings: an id that does not spell what was interned");
 	return id;
 }
 

@@ -2,7 +2,7 @@
 ///
 /// It runs in two modes.
 /// `skim` parses a whole file into one `Record` per declaration, in preorder, with the declaration's tokens and its hash, and the syntax errors it recovered from; it reads only the tokens, so files can be skimmed in parallel.
-/// `describe` parses one record's tokens again into the writes that make its components, skipping its nested block, whose declarations have records of their own; it touches no store, so workers can run it, and `apply` replays the writes through `doir.builders`.
+/// `describe` parses one record's tokens again into the writes that make its components, skipping its nested block, whose declarations have records of their own; it touches no store, so workers can run it, and `apply` replays the writes through `doir.core.builders`.
 /// `build` is the two together.
 /// The input commit (`doir.source`) matches records against the previous parse and builds only the ones that are new or changed.
 ///
@@ -15,7 +15,7 @@
 /// assert(fp.dynarray.length(syntax.records) == 3 && syntax.records[1].end == 3);
 /// assert(fp.dynarray.length(syntax.errors) == 0);
 /// ---
-module doir.syntax.parser;
+module doir.core.syntax.parser;
 
 static import core.atomic;
 static import std.typecons;
@@ -33,15 +33,14 @@ version(unittest) static import bc.platform;
 static import diagnose;
 static import ecrs.context;
 
-static import doir.strings;
-static import doir.builders;
-static import doir.components.ast;
-static import doir.components.source;
-static import doir.engine.locations;
-static import doir.syntax.lexer;
+static import doir.core.strings;
+static import doir.core.builders;
+static import doir.core.components.ast;
+static import doir.core.components.source;
+static import doir.core.syntax.lexer;
 
 public import ecrs.registry : EntityId, invalidEntity;
-public import doir.syntax.lexer : Token, TokenKind;
+public import doir.core.syntax.lexer : Token, TokenKind;
 
 @nogc nothrow:
 
@@ -142,11 +141,11 @@ void free(ref Syntax syntax) {
 private size_t splitArrowHead(ref const Syntax syntax, const(char)[] source, SyntaxError error) {
 	if (error.kind != SyntaxError.Kind.syntax) return fp.pointer.notFound;
 	immutable t = syntax.tokens[error.token];
-	if (t.kind != TokenKind.invalid || doir.syntax.lexer.text(t, source) != "-") return fp.pointer.notFound;
+	if (t.kind != TokenKind.invalid || doir.core.syntax.lexer.text(t, source) != "-") return fp.pointer.notFound;
 	size_t i = error.token + 1;
-	while (doir.syntax.lexer.isTrivia(syntax.tokens[i].kind)) ++i;
+	while (doir.core.syntax.lexer.isTrivia(syntax.tokens[i].kind)) ++i;
 	immutable next = syntax.tokens[i];
-	if (next.kind != TokenKind.invalid || doir.syntax.lexer.text(next, source) != ">" || next.start == t.start + 1) return fp.pointer.notFound;
+	if (next.kind != TokenKind.invalid || doir.core.syntax.lexer.text(next, source) != ">" || next.start == t.start + 1) return fp.pointer.notFound;
 	foreach (c; source[t.start + 1 .. next.start])
 		if (c != ' ' && c != '\t') return fp.pointer.notFound;
 	return next.start;
@@ -175,13 +174,13 @@ char* describe(ref const Syntax syntax, const(char)[] source, SyntaxError error)
 			if (t.kind == TokenKind.unterminated) return fp.string.clone(unclosed[t.attempted] ? unclosed[t.attempted] : "syntax error, this token is never finished").get(null);
 			if (splitArrowHead(syntax, source, error) != fp.pointer.notFound) return fp.string.clone("syntax error, the arrow `->` is split by a space").get(null);
 			if (t.kind == TokenKind.invalid) return fp.string.clone("syntax error, DOIR has no use for this character").get(null);
-			auto spelled = doir.syntax.lexer.text(t, source);
+			auto spelled = doir.core.syntax.lexer.text(t, source);
 			if (spelled.length > 32) spelled = spelled[0 .. 32];
 			return fp.string.joined("syntax error, unexpected '", spelled, "' ", where).get(null);
 		case SyntaxError.Kind.nesting:
 			return fp.string.clone("IL-Nest: blocks and function types nest too deeply").get(null);
 		case SyntaxError.Kind.language:
-			return fp.string.joined("I-Language: no frontend is registered for language ", doir.syntax.lexer.text(syntax.tokens[error.token], source)).get(null);
+			return fp.string.joined("I-Language: no frontend is registered for language ", doir.core.syntax.lexer.text(syntax.tokens[error.token], source)).get(null);
 		case SyntaxError.Kind.literal:
 			return fp.string.clone(error.message).get(null);
 	}
@@ -206,7 +205,7 @@ private ContextHint contextHint(ref const Syntax syntax, SyntaxError error) {
 	immutable unexpected = syntax.tokens[error.token].kind;
 	// A name opening the next line more likely starts a declaration after a missing `)` than continues a list.
 	size_t before = error.token;
-	while (before > 0 && doir.syntax.lexer.isTrivia(syntax.tokens[before - 1].kind)) --before;
+	while (before > 0 && doir.core.syntax.lexer.isTrivia(syntax.tokens[before - 1].kind)) --before;
 	immutable sameLine = before > 0 && syntax.tokens[before - 1].kind != TokenKind.newline;
 	immutable ended = unexpected == TokenKind.newline || unexpected == TokenKind.end || unexpected == TokenKind.semicolon;
 	switch (error.where) {
@@ -392,14 +391,14 @@ char* hint(ref const Syntax syntax, const(char)[] source, SyntaxError error) {
 }
 
 // `text`, inserted at `at` in `source`, as a fix: `,` and `)` against the token before them, and a space on either side where DOIR is written with one, as `x : T = {`.
-private doir.components.source.SyntaxFix insertion(const(char)[] source, size_t reported, size_t at, string text) {
+private doir.core.components.source.SyntaxFix insertion(const(char)[] source, size_t reported, size_t at, string text) {
 	if (text == "," || text == ")")
 		while (at > 0 && (source[at - 1] == ' ' || source[at - 1] == '\t')) --at;
 	immutable before = at > 0 ? source[at - 1] : '\n', after = at < source.length ? source[at] : '\n';
 	immutable bracket = text == "(" || text == ")" || text == "}";
 	immutable separator = text == "," || text == ":" || text == ";";
 	immutable offset = cast(int) (cast(ptrdiff_t) at - cast(ptrdiff_t) reported);
-	return doir.components.source.SyntaxFix(offset, offset, text, !fp.string.ascii.isWhitespace(before) && !bracket && !separator, !fp.string.ascii.isWhitespace(after) && !bracket);
+	return doir.core.components.source.SyntaxFix(offset, offset, text, !fp.string.ascii.isWhitespace(before) && !bracket && !separator, !fp.string.ascii.isWhitespace(after) && !bracket);
 }
 
 /// The edits that `hint` states exactly for `error` in `syntax`, parsed from `source`: each token in backquotes it offers to insert, and a split arrow written together.
@@ -414,19 +413,19 @@ private doir.components.source.SyntaxFix insertion(const(char)[] source, size_t 
 /// const offered = fixes(syntax, source, syntax.errors[0]);
 /// assert(offered.length == 1 && offered.items[0].text == ")");
 /// ---
-doir.components.source.SyntaxFixes fixes(ref const Syntax syntax, const(char)[] source, SyntaxError error) {
+doir.core.components.source.SyntaxFixes fixes(ref const Syntax syntax, const(char)[] source, SyntaxError error) {
 	// Each token spelled as its text in backquotes, as `=`, is one a fix can insert; a hint lists at most all of them.
 	static assert(() {
 		size_t n = 0;
 		foreach (name; spelling) if (name.length && name[0] == '`') ++n;
 		return n;
-	}() <= doir.components.source.maxSyntaxFixes);
-	doir.components.source.SyntaxFixes out_;
+	}() <= doir.core.components.source.maxSyntaxFixes);
+	doir.core.components.source.SyntaxFixes out_;
 	if (error.kind != SyntaxError.Kind.syntax) return out_;
 	immutable t = syntax.tokens[error.token];
 	if (t.kind == TokenKind.unterminated || t.kind == TokenKind.invalid) {
 		immutable head = splitArrowHead(syntax, source, error);
-		if (head != fp.pointer.notFound) out_.items[out_.length++] = doir.components.source.SyntaxFix(cast(int) (t.start - error.at), cast(int) (head + 1 - error.at), "->");
+		if (head != fp.pointer.notFound) out_.items[out_.length++] = doir.core.components.source.SyntaxFix(cast(int) (t.start - error.at), cast(int) (head + 1 - error.at), "->");
 		return out_;
 	}
 	if (auto inserted = contextHint(syntax, error).inserted) {
@@ -497,7 +496,7 @@ char* explain(ref const Syntax syntax, const(char)[] source, SyntaxError error) 
 			if (startsValue(t.kind)) {
 				const written = writtenSoFar(syntax, source, error.declaration, error.at);
 				const what = t.kind == TokenKind.leftBrace ? "A block in braces is a value, and a declaration's value" : "A declaration's value";
-				const next = t.kind == TokenKind.leftBrace ? "{" : doir.syntax.lexer.text(t, source);
+				const next = t.kind == TokenKind.leftBrace ? "{" : doir.core.syntax.lexer.text(t, source);
 				if (written is null || next.length > 32) return fp.string.joined(what, " comes after `=`, as in `count : std.u8 = 5`.").get(null);
 				return fp.string.joined(what, " comes after `=`: write `", written, " = ", next, "`.").get(null);
 			}
@@ -635,22 +634,22 @@ private const(char)[] rawContent(const(char)[] s) {
 ///
 /// Examples:
 /// ---
-/// static import doir.strings;
-/// doir.strings.Strings strings;
-/// scope(exit) doir.strings.free(strings);
-/// assert(internSpelling(`%"a b"`, strings) == doir.strings.intern(strings, "a b"));
-/// assert(doir.strings.text(strings, internSpelling("std.u8", strings)) == "std.u8");
+/// static import doir.core.strings;
+/// doir.core.strings.Strings strings;
+/// scope(exit) doir.core.strings.free(strings);
+/// assert(internSpelling(`%"a b"`, strings) == doir.core.strings.intern(strings, "a b"));
+/// assert(doir.core.strings.text(strings, internSpelling("std.u8", strings)) == "std.u8");
 /// ---
-doir.strings.StringId internSpelling(const(char)[] spelled, ref doir.strings.Strings strings) {
-	doir.strings.StringId id;
+doir.core.strings.StringId internSpelling(const(char)[] spelled, ref doir.core.strings.Strings strings) {
+	doir.core.strings.StringId id;
 	if (spelled.length >= 3 && spelled[0] == '%' && spelled[1] == '"') {
 		char* decoded = null;
 		scope(exit) fp.string.free(decoded);
 		bool refused = false;
 		cast(void) decodeString(spelled[2 .. $ - 1], &decoded, refused);
-		if (refused) return doir.strings.refused;
-		id = doir.strings.intern(strings, fp.string.slice(decoded));
-	} else id = doir.strings.intern(strings, spelled);
+		if (refused) return doir.core.strings.refused;
+		id = doir.core.strings.intern(strings, fp.string.slice(decoded));
+	} else id = doir.core.strings.intern(strings, spelled);
 	return id;
 }
 
@@ -660,7 +659,7 @@ doir.strings.StringId internSpelling(const(char)[] spelled, ref doir.strings.Str
 /// What `build` writes into: the store, the declaration's entity, and the entities the parse made for it besides its nested declarations (its function types and parameters), reused in order so a rebuild keeps their ids.
 struct Builder {
 	ecrs.context.Context* store; /// The store.
-	doir.strings.Strings* strings; /// Where names and string literals are interned.
+	doir.core.strings.Strings* strings; /// Where names and string literals are interned.
 	EntityId declaration = invalidEntity; /// The declaration's entity, with no parsed components.
 	const(EntityId)[] reuse; /// Entities to build parts into before making new ones; each must have no parsed components.
 	EntityId* parts = null; /// Out: every part built, in order, parents first; an fp dynarray the caller frees.
@@ -675,11 +674,11 @@ enum EntityId firstPart = 2;
 
 /// A recorded write's type: an interned name, or one of the declaration's parts, a function type written in place.
 struct TypeRef {
-	doir.strings.StringId name; /// The type's name, when `part` is `invalidEntity`.
+	doir.core.strings.StringId name; /// The type's name, when `part` is `invalidEntity`.
 	EntityId part = invalidEntity; /// The function type, as a `Write` names a part.
 }
 
-/// One store write `describe` records and `apply` replays: which `doir.builders` call it is, on which of the declaration's entities, and with what.
+/// One store write `describe` records and `apply` replays: which `doir.core.builders` call it is, on which of the declaration's entities, and with what.
 struct Write {
 	/// The builder it replays.
 	enum Kind : ubyte { span, inPlaceFunctionType, parameter, defaultValue, defaultName, returnType, functionType, valueless, constant, namespace, aggregate, block, call, alias_, reference, flags }
@@ -687,8 +686,8 @@ struct Write {
 	EntityId target; /// `declarationRef` or a part.
 	EntityId other = invalidEntity; /// An in-place function type's owner, or a parameter's function type.
 	TypeRef type; /// The type, for the writes that give one.
-	doir.strings.StringId name; /// A parameter's name, a default's, alias's or reference's target, or a call's callee.
-	doir.components.ast.ConstantVal value; /// A constant, or a parameter's default.
+	doir.core.strings.StringId name; /// A parameter's name, a default's, alias's or reference's target, or a call's callee.
+	doir.core.components.ast.ConstantVal value; /// A constant, or a parameter's default.
 	uint flags; /// For `flags`.
 	uint from, count; /// A span's start and length from its parent's start; a call's arguments in `Description.arguments`.
 }
@@ -697,7 +696,7 @@ struct Write {
 /// Plain data, released by `free`; it holds no entity, so any thread may make one.
 struct Description {
 	Write* writes = null; /// In order; an fp dynarray.
-	doir.strings.StringId* arguments = null; /// Calls' arguments, which `Write.from` and `Write.count` slice; an fp dynarray.
+	doir.core.strings.StringId* arguments = null; /// Calls' arguments, which `Write.from` and `Write.count` slice; an fp dynarray.
 	uint parts; /// The part entities the writes name, from `firstPart`.
 	diagnose.LineColumnRange annotation; /// The declaration's `SourceAnnotation`, if `annotated`.
 	bool annotated; /// Whether it has one.
@@ -734,7 +733,7 @@ private struct Parser {
 	uint depth;
 	Syntax* syntax; // skimming
 	Description* description; // describing a record to build; null while skimming or validating
-	doir.strings.Strings* strings; // where a description's names are interned
+	doir.core.strings.Strings* strings; // where a description's names are interned
 	const(Record)* record; // the record being built
 	uint record_; // the record being skimmed
 }
@@ -746,7 +745,7 @@ private bool refuse(ref Parser parser) {
 
 private void note(ref Parser parser, TokenKind expected) {
 	static assert(TokenKind.max < SyntaxError.expected.sizeof * 8, "SyntaxError.expected holds a bit per TokenKind");
-	assert(parser.pos < parser.tokens.length, "doir.syntax.parser: a failure noted past the end token");
+	assert(parser.pos < parser.tokens.length, "doir.core.syntax.parser: a failure noted past the end token");
 	immutable t = parser.tokens[parser.pos];
 	// `_` and `wsc` try a comment between any two tokens, so an unclosed one fails at its end wherever it is.
 	immutable reached = t.attempted == expected || t.attempted == TokenKind.longComment;
@@ -760,46 +759,46 @@ private void note(ref Parser parser, TokenKind expected) {
 		parser.furthestDeclaration = parser.declaration;
 		parser.failed = true;
 	}
-	assert(parser.failed && (parser.expected & (1u << expected)) != 0 || at < parser.furthest, "doir.syntax.parser: a failure at the furthest point that forgot what was expected");
+	assert(parser.failed && (parser.expected & (1u << expected)) != 0 || at < parser.furthest, "doir.core.syntax.parser: a failure at the furthest point that forgot what was expected");
 }
 
 private bool currentIs(ref Parser parser, TokenKind kind) {
-	assert(parser.pos < parser.tokens.length, "doir.syntax.parser: reading past the end token");
+	assert(parser.pos < parser.tokens.length, "doir.core.syntax.parser: reading past the end token");
 	if (parser.tokens[parser.pos].kind == kind) return true;
 	note(parser, kind);
 	return false;
 }
 
 private bool atWord(ref Parser parser, TokenKind kind, const(char)[] word) {
-	assert(parser.pos < parser.tokens.length && word.length > 0, "doir.syntax.parser: reading past the end token, or for no word");
+	assert(parser.pos < parser.tokens.length && word.length > 0, "doir.core.syntax.parser: reading past the end token, or for no word");
 	immutable t = parser.tokens[parser.pos];
-	if (t.kind == kind && doir.syntax.lexer.text(t, parser.source) == word) return true;
+	if (t.kind == kind && doir.core.syntax.lexer.text(t, parser.source) == word) return true;
 	note(parser, kind);
 	return false;
 }
 
 // `wsc`
 private void skipTrivia(ref Parser parser) {
-	assert(parser.pos < parser.tokens.length, "doir.syntax.parser: skipping trivia past the end token");
-	while (doir.syntax.lexer.isTrivia(parser.tokens[parser.pos].kind)) ++parser.pos;
+	assert(parser.pos < parser.tokens.length, "doir.core.syntax.parser: skipping trivia past the end token");
+	while (doir.core.syntax.lexer.isTrivia(parser.tokens[parser.pos].kind)) ++parser.pos;
 	// The end token is no trivia, so the skip stops on it at the latest.
-	assert(parser.pos < parser.tokens.length, "doir.syntax.parser: skipped past the end token");
+	assert(parser.pos < parser.tokens.length, "doir.core.syntax.parser: skipped past the end token");
 }
 
 // `_`
 private void skipBlank(ref Parser parser) {
-	assert(parser.pos < parser.tokens.length, "doir.syntax.parser: skipping blanks past the end token");
-	while (doir.syntax.lexer.isTrivia(parser.tokens[parser.pos].kind) || parser.tokens[parser.pos].kind == TokenKind.newline) ++parser.pos;
-	assert(parser.pos < parser.tokens.length, "doir.syntax.parser: skipped past the end token");
+	assert(parser.pos < parser.tokens.length, "doir.core.syntax.parser: skipping blanks past the end token");
+	while (doir.core.syntax.lexer.isTrivia(parser.tokens[parser.pos].kind) || parser.tokens[parser.pos].kind == TokenKind.newline) ++parser.pos;
+	assert(parser.pos < parser.tokens.length, "doir.core.syntax.parser: skipped past the end token");
 }
 
 // The byte offset after the last non-trivia token before `parser.pos`.
 private uint lastEnd(ref Parser parser, size_t from) {
 	size_t i = parser.pos;
-	while (i > from && (doir.syntax.lexer.isTrivia(parser.tokens[i - 1].kind) || parser.tokens[i - 1].kind == TokenKind.newline)) --i;
-	assert(i > 0 && i <= parser.tokens.length, "doir.syntax.parser: the end of a statement before the first token");
+	while (i > from && (doir.core.syntax.lexer.isTrivia(parser.tokens[i - 1].kind) || parser.tokens[i - 1].kind == TokenKind.newline)) --i;
+	assert(i > 0 && i <= parser.tokens.length, "doir.core.syntax.parser: the end of a statement before the first token");
 	immutable t = parser.tokens[i - 1];
-	assert(t.start + t.length <= parser.source.length, "doir.syntax.parser: a token past the source");
+	assert(t.start + t.length <= parser.source.length, "doir.core.syntax.parser: a token past the source");
 	return t.start + t.length;
 }
 
@@ -809,13 +808,13 @@ private bool enter(ref Parser parser) {
 		return false;
 	}
 	++parser.depth;
-	assert(parser.depth <= maxNesting, "doir.syntax.parser: nested past maxNesting (IL-Nest)");
+	assert(parser.depth <= maxNesting, "doir.core.syntax.parser: nested past maxNesting (IL-Nest)");
 	return true;
 }
 
 private void error(ref Parser parser, SyntaxError.Kind kind, uint at, uint token, string message = null, string fix = null, uint expected = 0) {
 	if (parser.syntax is null) return;
-	assert(at <= parser.source.length && token < parser.tokens.length, "doir.syntax.parser: an error past the source or its tokens");
+	assert(at <= parser.source.length && token < parser.tokens.length, "doir.core.syntax.parser: an error past the source or its tokens");
 	auto e = SyntaxError(kind, at, token, message, fix, expected);
 	if (kind == SyntaxError.Kind.syntax) {
 		e.where = parser.furthestWhere;
@@ -825,26 +824,26 @@ private void error(ref Parser parser, SyntaxError.Kind kind, uint at, uint token
 }
 
 // The intern functions return `refused` and set `parser.refused` if allocation fails.
-private doir.strings.StringId intern(ref Parser parser, size_t token) {
-	assert(token < parser.tokens.length && parser.strings !is null, "doir.syntax.parser: interning a token past the end, or with no strings");
-	immutable id = internSpelling(doir.syntax.lexer.text(parser.tokens[token], parser.source), *parser.strings);
-	if (id == doir.strings.refused) parser.refused = true;
+private doir.core.strings.StringId intern(ref Parser parser, size_t token) {
+	assert(token < parser.tokens.length && parser.strings !is null, "doir.core.syntax.parser: interning a token past the end, or with no strings");
+	immutable id = internSpelling(doir.core.syntax.lexer.text(parser.tokens[token], parser.source), *parser.strings);
+	if (id == doir.core.strings.refused) parser.refused = true;
 	return id;
 }
 
-private doir.strings.StringId intern(ref Parser parser, const(char)[] spelled) {
-	immutable id = doir.strings.intern(*parser.strings, spelled);
-	if (id == doir.strings.refused) parser.refused = true;
+private doir.core.strings.StringId intern(ref Parser parser, const(char)[] spelled) {
+	immutable id = doir.core.strings.intern(*parser.strings, spelled);
+	if (id == doir.core.strings.refused) parser.refused = true;
 	return id;
 }
 
 private bool record(ref Parser parser, Write write) {
-	assert(parser.description !is null, "doir.syntax.parser: recording a write while not describing");
+	assert(parser.description !is null, "doir.core.syntax.parser: recording a write while not describing");
 	return fp.dynarray.pushBack(parser.description.writes, write) || refuse(parser);
 }
 
 private bool setSpan(ref Parser parser, EntityId e, uint parentStart, uint start, uint end) {
-	assert(parentStart <= start && start <= end && end <= parser.source.length, "doir.syntax.parser: a span before its parent, ending before it starts, or past the source");
+	assert(parentStart <= start && start <= end && end <= parser.source.length, "doir.core.syntax.parser: a span before its parent, ending before it starts, or past the source");
 	auto write = Write(kind: Write.Kind.span, target: e);
 	write.from = start - parentStart;
 	write.count = end - start;
@@ -858,27 +857,27 @@ private struct ParsedType {
 }
 
 private bool isName(ref Parser parser, ParsedType type, const(char)[] word) {
-	assert(type.name == unnamed || type.name < parser.tokens.length, "doir.syntax.parser: a type named by a token past the end");
-	return type.name != unnamed && doir.syntax.lexer.text(parser.tokens[type.name], parser.source) == word;
+	assert(type.name == unnamed || type.name < parser.tokens.length, "doir.core.syntax.parser: a type named by a token past the end");
+	return type.name != unnamed && doir.core.syntax.lexer.text(parser.tokens[type.name], parser.source) == word;
 }
 
 // Calls `f` with the type as a `Write` holds it: the interned name or function type part.
 // False on refused interning.
 private bool withType(alias f)(ref Parser parser, ParsedType type) {
-	if (type.entity != invalidEntity) return f(TypeRef(doir.strings.unnamed, type.entity));
+	if (type.entity != invalidEntity) return f(TypeRef(doir.core.strings.unnamed, type.entity));
 	immutable name = intern(parser, type.name);
-	return name != doir.strings.refused && f(TypeRef(name));
+	return name != doir.core.strings.refused && f(TypeRef(name));
 }
 
 /// A parsed constant's payload.
 private struct ParsedConstant {
-	doir.components.ast.ConstantVal value;
+	doir.core.components.ast.ConstantVal value;
 }
 
 // `Constant <- '-'? FloatConstant / '-'? IntegerConstant / RawString / '"' StringChar* '"' / '\'' StringChar '\''`
 private std.typecons.Nullable!ParsedConstant constant(ref Parser parser) {
 	immutable t = parser.tokens[parser.pos];
-	const spelled = doir.syntax.lexer.text(t, parser.source);
+	const spelled = doir.core.syntax.lexer.text(t, parser.source);
 	ParsedConstant out_;
 	switch (t.kind) {
 		case TokenKind.float_:
@@ -888,13 +887,13 @@ private std.typecons.Nullable!ParsedConstant constant(ref Parser parser) {
 				cast(void) refuse(parser);
 				return typeof(return).init;
 			}
-			out_.value = doir.components.ast.ConstantVal.float_(value.get.value);
+			out_.value = doir.core.components.ast.ConstantVal.float_(value.get.value);
 			break;
 		case TokenKind.integer:
 			bool overflow;
 			immutable negative = spelled.length > 0 && spelled[0] == '-';
 			immutable magnitude = integerValue(spelled, overflow);
-			out_.value = negative ? doir.components.ast.ConstantVal.negativeInteger(magnitude) : doir.components.ast.ConstantVal.integer(magnitude);
+			out_.value = negative ? doir.core.components.ast.ConstantVal.negativeInteger(magnitude) : doir.core.components.ast.ConstantVal.integer(magnitude);
 			if (overflow) error(parser, SyntaxError.Kind.literal, t.start, cast(uint) parser.pos, "V-Literal: an integer literal must fit in 64 bits", negative ? "write a value at or above -2^63" : "write a value below 2^64");
 			break;
 		case TokenKind.rawString, TokenKind.string_:
@@ -907,7 +906,7 @@ private std.typecons.Nullable!ParsedConstant constant(ref Parser parser) {
 				}
 				break;
 			}
-			doir.strings.StringId bytes;
+			doir.core.strings.StringId bytes;
 			if (t.kind == TokenKind.rawString) bytes = intern(parser, content);
 			else {
 				char* decoded = null;
@@ -920,13 +919,13 @@ private std.typecons.Nullable!ParsedConstant constant(ref Parser parser) {
 				}
 				bytes = intern(parser, fp.string.slice(decoded));
 			}
-			if (bytes == doir.strings.refused) return typeof(return).init;
-			out_.value = doir.components.ast.ConstantVal.bytes(bytes);
+			if (bytes == doir.core.strings.refused) return typeof(return).init;
+			out_.value = doir.core.components.ast.ConstantVal.bytes(bytes);
 			break;
 		case TokenKind.character:
 			size_t i = 1;
 			bool isByte, overflow;
-			out_.value = doir.components.ast.ConstantVal.integer(stringChar(spelled, i, isByte, overflow));
+			out_.value = doir.core.components.ast.ConstantVal.integer(stringChar(spelled, i, isByte, overflow));
 			if (overflow) error(parser, SyntaxError.Kind.literal, t.start, cast(uint) parser.pos, "V-Literal: a character literal must be a Unicode scalar value", "use a code point up to U+10FFFF, outside the surrogates U+D800 to U+DFFF");
 			break;
 		default:
@@ -958,7 +957,7 @@ private std.typecons.Nullable!ParsedType type(ref Parser parser, EntityId owner,
 			// The next part, which `apply` makes or reuses.
 			immutable e = cast(EntityId) (firstPart + parser.description.parts++);
 			immutable typeName = intern(parser, "type");
-			if (typeName == doir.strings.refused) return typeof(return).init;
+			if (typeName == doir.core.strings.refused) return typeof(return).init;
 			if (!record(parser, Write(kind: Write.Kind.inPlaceFunctionType, target: e, type: TypeRef(typeName), other: owner))) return typeof(return).init;
 			if (!functionType(parser, e, start)) {
 				assert(parser.refused, "doir.parser: a validated function type did not build");
@@ -1037,17 +1036,17 @@ private bool parameter(ref Parser parser, EntityId functionType, uint ftStart) {
 	}
 	if (parser.description is null) return true;
 
-	immutable unnamed = doir.syntax.lexer.text(parser.tokens[name], parser.source) == "_";
-	immutable named = unnamed ? doir.strings.unnamed : intern(parser, name);
+	immutable unnamed = doir.core.syntax.lexer.text(parser.tokens[name], parser.source) == "_";
+	immutable named = unnamed ? doir.core.strings.unnamed : intern(parser, name);
 	if (parser.refused) return false;
 	bool ok;
 	if (deduced) {
-		immutable deducedType = intern(parser, doir.components.ast.deducedTypeName);
-		ok = deducedType != doir.strings.refused && record(parser, Write(kind: Write.Kind.parameter, target: e, type: TypeRef(deducedType), name: named, other: functionType));
+		immutable deducedType = intern(parser, doir.core.components.ast.deducedTypeName);
+		ok = deducedType != doir.core.strings.refused && record(parser, Write(kind: Write.Kind.parameter, target: e, type: TypeRef(deducedType), name: named, other: functionType));
 	} else ok = withType!(t => record(parser, Write(kind: Write.Kind.parameter, target: e, type: t, name: named, other: functionType)))(parser, paramType);
 	if (ok && hasDefault && defaultName != noToken) {
 		immutable value = intern(parser, defaultName);
-		ok = value != doir.strings.refused && record(parser, Write(kind: Write.Kind.defaultName, target: e, name: value));
+		ok = value != doir.core.strings.refused && record(parser, Write(kind: Write.Kind.defaultName, target: e, name: value));
 	} else if (ok && hasDefault) {
 		auto write = Write(kind: Write.Kind.defaultValue, target: e);
 		write.value = defaultConstant.value;
@@ -1114,10 +1113,10 @@ private struct ParsedCall {
 private bool functionCall(ref Parser parser, ref ParsedCall out_) {
 	immutable start = parser.pos;
 	if (parser.tokens[parser.pos].kind == TokenKind.keyword) {
-		const word = doir.syntax.lexer.text(parser.tokens[parser.pos], parser.source);
-		if (word == "flatten") out_.flags = doir.components.ast.Flags.Flatten;
-		else if (word == "inline") out_.flags = doir.components.ast.Flags.Inline;
-		else if (word == "tail") out_.flags = doir.components.ast.Flags.Tail;
+		const word = doir.core.syntax.lexer.text(parser.tokens[parser.pos], parser.source);
+		if (word == "flatten") out_.flags = doir.core.components.ast.Flags.Flatten;
+		else if (word == "inline") out_.flags = doir.core.components.ast.Flags.Inline;
+		else if (word == "tail") out_.flags = doir.core.components.ast.Flags.Tail;
 		if (out_.flags) {
 			++parser.pos;
 			skipBlank(parser);
@@ -1231,9 +1230,9 @@ ulong hashTokens(ulong h, ref const Syntax syntax, const(char)[] source, size_t 
 			continue;
 		}
 		immutable token = syntax.tokens[t++];
-		if (doir.syntax.lexer.isTrivia(token.kind) || token.kind == TokenKind.newline || token.kind == TokenKind.semicolon) continue;
+		if (doir.core.syntax.lexer.isTrivia(token.kind) || token.kind == TokenKind.newline || token.kind == TokenKind.semicolon) continue;
 		h = fp.algorithms.combine(h, token.kind);
-		h = fp.algorithms.combine(h, fp.algorithms.hashShortBytes(doir.syntax.lexer.text(token, source)));
+		h = fp.algorithms.combine(h, fp.algorithms.hashShortBytes(doir.core.syntax.lexer.text(token, source)));
 	}
 	return h;
 }
@@ -1260,14 +1259,14 @@ private AnnotationText readAnnotation(const(char)[] s) {
 		i = colon + 1;
 	}
 	foreach (part; 0 .. 2) {
-		immutable first = doir.syntax.lexer.integerEnd(s, i);
+		immutable first = doir.core.syntax.lexer.integerEnd(s, i);
 		bool overflow; // `integerValue` clears it, so each number's is gathered into `read`
 		read.values[part * 2] = integerValue(s[i .. first], overflow);
 		read.overflow |= overflow;
 		i = first;
 		read.values[part * 2 + 1] = read.values[part * 2];
 		if (s[i] == '-') {
-			immutable second = doir.syntax.lexer.integerEnd(s, i + 1);
+			immutable second = doir.core.syntax.lexer.integerEnd(s, i + 1);
 			if (second != fp.pointer.notFound) {
 				read.values[part * 2 + 1] = integerValue(s[i + 1 .. second], overflow);
 				read.overflow |= overflow;
@@ -1282,10 +1281,10 @@ private AnnotationText readAnnotation(const(char)[] s) {
 // SourceInfo's location, its file name interned.
 // Null if interning is refused.
 private std.typecons.Nullable!(diagnose.LineColumnRange) annotation(ref Parser parser, size_t token) {
-	const read = readAnnotation(doir.syntax.lexer.text(parser.tokens[token], parser.source));
+	const read = readAnnotation(doir.core.syntax.lexer.text(parser.tokens[token], parser.source));
 	immutable name = intern(parser, read.file);
-	if (name == doir.strings.refused) return typeof(return).init;
-	return typeof(return)(diagnose.LineColumnRange(doir.strings.text(*parser.strings, name),
+	if (name == doir.core.strings.refused) return typeof(return).init;
+	return typeof(return)(diagnose.LineColumnRange(doir.core.strings.text(*parser.strings, name),
 		diagnose.LineColumn(cast(size_t) read.values[0], cast(size_t) read.values[2]), diagnose.LineColumn(cast(size_t) read.values[1], cast(size_t) read.values[3])));
 }
 
@@ -1342,13 +1341,13 @@ private Value assignmentValue(ref Parser parser, EntityId e, ParsedType declared
 
 // Fills skimmed record `r`, the assignment from token `first` to `terminator`, named by token `name`, its source annotation token `info` checked (`AT-Source`).
 private void fillRecord(ref Parser parser, uint r, uint first, uint terminator, uint name, uint info, size_t spanStart, size_t spanEnd) {
-	if (info != noToken && readAnnotation(doir.syntax.lexer.text(parser.tokens[info], parser.source)).overflow)
+	if (info != noToken && readAnnotation(doir.core.syntax.lexer.text(parser.tokens[info], parser.source)).overflow)
 		error(parser, SyntaxError.Kind.literal, parser.tokens[info].start, info, "AT-Source: a source annotation's lines and columns must fit in 64 bits", "write the line and column where the declaration is in its file");
 	auto record = &parser.syntax.records[r];
 	record.first = first;
 	record.terminator = terminator;
 	record.end = cast(uint) fp.dynarray.length(parser.syntax.records);
-	record.name = doir.syntax.lexer.text(parser.tokens[name], parser.source) == "_" ? unnamed : name;
+	record.name = doir.core.syntax.lexer.text(parser.tokens[name], parser.source) == "_" ? unnamed : name;
 	record.spanStart = cast(uint) spanStart;
 	record.spanEnd = cast(uint) spanEnd;
 	record.hash = hashTokens(hashStart, *parser.syntax, parser.source, record.first, record.terminator, r + 1 < record.end ? r + 1 : noToken);
@@ -1378,10 +1377,10 @@ private bool describeAssignment(ref Parser parser, EntityId e, Value value, Pars
 			immutable from = cast(uint) fp.dynarray.length(parser.description.arguments);
 			foreach (a; fp.dynarray.slice(parsed.call.arguments)) {
 				immutable argument = intern(parser, a);
-				if (argument == doir.strings.refused || !fp.dynarray.pushBack(parser.description.arguments, argument)) return refuse(parser);
+				if (argument == doir.core.strings.refused || !fp.dynarray.pushBack(parser.description.arguments, argument)) return refuse(parser);
 			}
 			immutable callee = intern(parser, parsed.call.callee);
-			if (callee == doir.strings.refused) return false;
+			if (callee == doir.core.strings.refused) return false;
 			ok = withType!((t) {
 				auto write = Write(kind: Write.Kind.call, target: e, type: t, name: callee);
 				write.from = from;
@@ -1396,7 +1395,7 @@ private bool describeAssignment(ref Parser parser, EntityId e, Value value, Pars
 			break;
 		case Value.reference:
 			immutable target = intern(parser, parsed.reference);
-			if (target == doir.strings.refused) return false;
+			if (target == doir.core.strings.refused) return false;
 			if (isName(parser, declared, "alias")) ok = record(parser, Write(kind: Write.Kind.alias_, target: e, name: target));
 			else ok = withType!(t => record(parser, Write(kind: Write.Kind.reference, target: e, type: t, name: target)))(parser, declared);
 			break;
@@ -1405,7 +1404,7 @@ private bool describeAssignment(ref Parser parser, EntityId e, Value value, Pars
 	}
 	if (ok && exported) {
 		auto write = Write(kind: Write.Kind.flags, target: e);
-		write.flags = doir.components.ast.Flags.Export;
+		write.flags = doir.core.components.ast.Flags.Export;
 		ok = record(parser, write);
 	}
 	if (!ok) return refuse(parser);
@@ -1539,7 +1538,7 @@ private void statement(ref Parser parser) {
 /// ---
 bool skim(const(char)[] source, ref Syntax out_, uint depth = 0) {
 	assert(out_.tokens is null && out_.records is null && out_.errors is null);
-	out_.tokens = doir.syntax.lexer.lex(source);
+	out_.tokens = doir.core.syntax.lexer.lex(source);
 	if (out_.tokens is null) return false;
 	Parser parser;
 	parser.source = source;
@@ -1562,19 +1561,19 @@ bool skim(const(char)[] source, ref Syntax out_, uint depth = 0) {
 /// Examples:
 /// ---
 /// static import fp.dynarray;
-/// static import doir.strings;
+/// static import doir.core.strings;
 /// Syntax syntax;
 /// scope(exit) free(syntax);
 /// immutable source = "f : (a: T) -> U\n";
 /// assert(skim(source, syntax));
-/// doir.strings.Strings strings;
-/// scope(exit) doir.strings.free(strings);
+/// doir.core.strings.Strings strings;
+/// scope(exit) doir.core.strings.free(strings);
 /// Description d;
 /// scope(exit) free(d);
 /// assert(describe(syntax, source, 0, strings, d));
 /// assert(d.parts == 2 && d.writes[0].kind == Write.Kind.inPlaceFunctionType); // the function type and its parameter
 /// ---
-bool describe(ref const Syntax syntax, const(char)[] source, size_t r, ref doir.strings.Strings strings, ref Description out_) {
+bool describe(ref const Syntax syntax, const(char)[] source, size_t r, ref doir.core.strings.Strings strings, ref Description out_) {
 	version(unittest) core.atomic.atomicOp!"+="(bc.platform.asShared(builds), 1);
 	Parser parser;
 	parser.source = source;
@@ -1593,7 +1592,7 @@ private bool withRef(alias f)(TypeRef type, const(EntityId)[] parts) {
 	return type.part == invalidEntity ? f(type.name) : f(parts[type.part - firstPart]);
 }
 
-/// Writes `d` into `builder.declaration` through `doir.builders`, making or reusing its parts as `build` does.
+/// Writes `d` into `builder.declaration` through `doir.core.builders`, making or reusing its parts as `build` does.
 /// It must run where the store may be changed, and may not run on several threads at once.
 ///
 /// Returns false if allocation fails, leaving the declaration and `builder.parts` partly built; the parts taken so far are still listed there.
@@ -1602,23 +1601,23 @@ private bool withRef(alias f)(TypeRef type, const(EntityId)[] parts) {
 /// ---
 /// static import ecrs.context;
 /// static import fp.dynarray;
-/// static import doir.strings;
-/// static import doir.components.ast;
+/// static import doir.core.strings;
+/// static import doir.core.components.ast;
 /// Syntax syntax;
 /// scope(exit) free(syntax);
 /// immutable source = "x : T = 5\n";
 /// assert(skim(source, syntax));
 /// auto store = ecrs.context.create();
 /// scope(exit) ecrs.context.free(store);
-/// doir.strings.Strings strings;
-/// scope(exit) doir.strings.free(strings);
+/// doir.core.strings.Strings strings;
+/// scope(exit) doir.core.strings.free(strings);
 /// Description d;
 /// scope(exit) free(d);
 /// assert(describe(syntax, source, 0, strings, d));
 /// Builder b = Builder(&store, &strings, ecrs.context.addEntity(store));
 /// scope(exit) fp.dynarray.free(b.parts);
 /// assert(apply(d, b));
-/// assert(ecrs.context.getComponent!(doir.components.ast.ConstantVal)(store, b.declaration).integerValue == 5);
+/// assert(ecrs.context.getComponent!(doir.core.components.ast.ConstantVal)(store, b.declaration).integerValue == 5);
 /// ---
 bool apply(ref const Description d, ref Builder builder) @trusted {
 	auto store = builder.store;
@@ -1640,23 +1639,23 @@ bool apply(ref const Description d, ref Builder builder) @trusted {
 		final switch (write.kind) with (Write.Kind) {
 			case span:
 				// Set rather than written in place: a reused part keeps its span, and the commit's transaction must be able to restore it.
-				ok = ecrs.context.setComponent!(doir.components.source.SourceSpan)(*store, e, doir.components.source.SourceSpan(write.from, write.count));
+				ok = ecrs.context.setComponent!(doir.core.components.source.SourceSpan)(*store, e, doir.core.components.source.SourceSpan(write.from, write.count));
 				break;
-			case inPlaceFunctionType: ok = withRef!(t => doir.builders.attachInPlaceFunctionType(*store, e, entity(write.other), t))(write.type, parts); break;
-			case parameter: ok = withRef!(t => doir.builders.attachParameter(*store, e, entity(write.other), write.name, t))(write.type, parts); break;
-			case defaultValue: ok = doir.builders.setDefault(*store, e, write.value); break;
-			case defaultName: ok = doir.builders.setDefault(*store, e, write.name); break;
-			case returnType: ok = withRef!(t => doir.builders.setReturnType(*store, e, t))(write.type, parts); break;
-			case functionType: ok = withRef!(t => doir.builders.attachFunctionType(*store, e, t))(write.type, parts); break;
-			case valueless: ok = withRef!(t => doir.builders.attachValueless(*store, e, t))(write.type, parts); break;
-			case constant: ok = withRef!(t => doir.builders.attachConstant(*store, e, t, write.value))(write.type, parts); break;
-			case namespace: ok = doir.builders.attachNamespace(*store, e).block != invalidEntity; break;
-			case aggregate: ok = withRef!(t => doir.builders.attachAggregate(*store, e, t).block != invalidEntity)(write.type, parts); break;
-			case block: ok = withRef!(t => doir.builders.attachBlock(*store, e, t).block != invalidEntity)(write.type, parts); break;
-			case call: ok = withRef!(t => doir.builders.attachCall(*store, e, t, write.name, d.arguments[write.from .. write.from + write.count]))(write.type, parts); break;
-			case alias_: ok = ecrs.context.setComponent!(doir.components.ast.LookupAlias)(*store, e, doir.components.ast.LookupAlias(write.name)); break;
-			case reference: ok = withRef!(t => doir.builders.attachReference(*store, e, t, write.name))(write.type, parts); break;
-			case flags: ok = doir.builders.addFlags(*store, e, write.flags); break;
+			case inPlaceFunctionType: ok = withRef!(t => doir.core.builders.attachInPlaceFunctionType(*store, e, entity(write.other), t))(write.type, parts); break;
+			case parameter: ok = withRef!(t => doir.core.builders.attachParameter(*store, e, entity(write.other), write.name, t))(write.type, parts); break;
+			case defaultValue: ok = doir.core.builders.setDefault(*store, e, write.value); break;
+			case defaultName: ok = doir.core.builders.setDefault(*store, e, write.name); break;
+			case returnType: ok = withRef!(t => doir.core.builders.setReturnType(*store, e, t))(write.type, parts); break;
+			case functionType: ok = withRef!(t => doir.core.builders.attachFunctionType(*store, e, t))(write.type, parts); break;
+			case valueless: ok = withRef!(t => doir.core.builders.attachValueless(*store, e, t))(write.type, parts); break;
+			case constant: ok = withRef!(t => doir.core.builders.attachConstant(*store, e, t, write.value))(write.type, parts); break;
+			case namespace: ok = doir.core.builders.attachNamespace(*store, e).block != invalidEntity; break;
+			case aggregate: ok = withRef!(t => doir.core.builders.attachAggregate(*store, e, t).block != invalidEntity)(write.type, parts); break;
+			case block: ok = withRef!(t => doir.core.builders.attachBlock(*store, e, t).block != invalidEntity)(write.type, parts); break;
+			case call: ok = withRef!(t => doir.core.builders.attachCall(*store, e, t, write.name, d.arguments[write.from .. write.from + write.count]))(write.type, parts); break;
+			case alias_: ok = ecrs.context.setComponent!(doir.core.components.ast.LookupAlias)(*store, e, doir.core.components.ast.LookupAlias(write.name)); break;
+			case reference: ok = withRef!(t => doir.core.builders.attachReference(*store, e, t, write.name))(write.type, parts); break;
+			case flags: ok = doir.core.builders.addFlags(*store, e, write.flags); break;
 		}
 		if (!ok) return false;
 	}
@@ -1665,7 +1664,7 @@ bool apply(ref const Description d, ref Builder builder) @trusted {
 	return true;
 }
 
-/// Writes record `r` of `syntax`, skimmed from `source`, into `builder.declaration` through `doir.builders`: `describe`, then `apply`.
+/// Writes record `r` of `syntax`, skimmed from `source`, into `builder.declaration` through `doir.core.builders`: `describe`, then `apply`.
 /// Parts reuse `builder.reuse` in order before new entities are made; each gets its `SourceSpan`.
 ///
 /// Returns false if allocation fails, leaving the declaration and `builder.parts` partly built; the parts taken so far are still listed there.
@@ -1674,21 +1673,21 @@ bool apply(ref const Description d, ref Builder builder) @trusted {
 /// ---
 /// static import ecrs.context;
 /// static import fp.dynarray;
-/// static import doir.strings;
-/// static import doir.components.ast;
+/// static import doir.core.strings;
+/// static import doir.core.components.ast;
 /// Syntax syntax;
 /// scope(exit) free(syntax);
 /// immutable source = "f : (a: T) -> U\n";
 /// assert(skim(source, syntax));
 /// auto store = ecrs.context.create();
 /// scope(exit) ecrs.context.free(store);
-/// doir.strings.Strings strings;
-/// scope(exit) doir.strings.free(strings);
+/// doir.core.strings.Strings strings;
+/// scope(exit) doir.core.strings.free(strings);
 /// Builder b = Builder(&store, &strings, ecrs.context.addEntity(store));
 /// scope(exit) fp.dynarray.free(b.parts);
 /// assert(build(syntax, source, 0, b));
 /// assert(fp.dynarray.length(b.parts) == 2); // the function type and its parameter
-/// assert(ecrs.context.getComponent!(doir.components.ast.TypeOf)(store, b.declaration).type == b.parts[0]);
+/// assert(ecrs.context.getComponent!(doir.core.components.ast.TypeOf)(store, b.declaration).type == b.parts[0]);
 /// ---
 bool build(ref const Syntax syntax, const(char)[] source, size_t r, ref Builder builder) {
 	Description d;
@@ -1698,7 +1697,7 @@ bool build(ref const Syntax syntax, const(char)[] source, size_t r, ref Builder 
 
 /// The components `build` writes, which a rebuild removes first.
 /// `Name` and `Parent` are among them, written by the builders on parts and by the commit on declarations.
-alias ParsedComponents = imported!"std.meta".AliasSeq!(doir.components.ast.Name, doir.components.ast.Parent, doir.components.ast.Block, doir.components.ast.TypeOf, doir.components.ast.TypeDefinition, doir.components.ast.FunctionInputs, doir.components.ast.FunctionReturn, doir.components.ast.ConstantVal, doir.components.ast.Flags, doir.components.ast.LookupTypeOf, doir.components.ast.LookupFunctionReturn, doir.components.ast.LookupCall, doir.components.ast.LookupFunctionInputs, doir.components.ast.LookupAlias, doir.components.ast.LookupValue, doir.components.source.SourceAnnotation);
+alias ParsedComponents = imported!"std.meta".AliasSeq!(doir.core.components.ast.Name, doir.core.components.ast.Parent, doir.core.components.ast.Block, doir.core.components.ast.TypeOf, doir.core.components.ast.TypeDefinition, doir.core.components.ast.FunctionInputs, doir.core.components.ast.FunctionReturn, doir.core.components.ast.ConstantVal, doir.core.components.ast.Flags, doir.core.components.ast.LookupTypeOf, doir.core.components.ast.LookupFunctionReturn, doir.core.components.ast.LookupCall, doir.core.components.ast.LookupFunctionInputs, doir.core.components.ast.LookupAlias, doir.core.components.ast.LookupValue, doir.core.components.source.SourceAnnotation);
 
 /// Removes every component the parse wrote on `e`, leaving what queries produced on it.
 ///
@@ -1707,13 +1706,13 @@ alias ParsedComponents = imported!"std.meta".AliasSeq!(doir.components.ast.Name,
 /// Examples:
 /// ---
 /// static import ecrs.context;
-/// static import doir.components.ast;
+/// static import doir.core.components.ast;
 /// auto store = ecrs.context.create();
 /// scope(exit) ecrs.context.free(store);
 /// immutable e = ecrs.context.addEntity(store);
-/// ecrs.context.addComponent!(doir.components.ast.Flags)(store, e).flags = 1;
+/// ecrs.context.addComponent!(doir.core.components.ast.Flags)(store, e).flags = 1;
 /// assert(removeParsed(store, e));
-/// assert(!ecrs.context.hasComponent!(doir.components.ast.Flags)(store, e));
+/// assert(!ecrs.context.hasComponent!(doir.core.components.ast.Flags)(store, e));
 /// ---
 bool removeParsed(ref ecrs.context.Context store, EntityId e) {
 	static foreach (C; ParsedComponents)
@@ -1729,7 +1728,7 @@ version(unittest) {
 
 	private struct Built {
 		ecrs.context.Context store;
-		doir.strings.Strings strings;
+		doir.core.strings.Strings strings;
 		Syntax syntax;
 		Builder builder;
 	}
@@ -1745,7 +1744,7 @@ version(unittest) {
 	private void release(ref Built b) {
 		fp.dynarray.free(b.builder.parts);
 		free(b.syntax);
-		doir.strings.free(b.strings);
+		doir.core.strings.free(b.strings);
 		ecrs.context.free(b.store);
 	}
 
@@ -2032,37 +2031,37 @@ unittest { // building: each declaration form writes its builder components
 		assert(skim(source, b.syntax) && fp.dynarray.length(b.syntax.records) == 1 && fp.dynarray.length(b.syntax.errors) == 1);
 		b.builder = Builder(&b.store, &b.strings, ecrs.context.addEntity(b.store));
 		assert(build(b.syntax, source, 0, b.builder));
-		assert(!ecrs.context.hasComponent!(doir.components.ast.Block)(b.store, b.builder.declaration));
+		assert(!ecrs.context.hasComponent!(doir.core.components.ast.Block)(b.store, b.builder.declaration));
 	}
 	{
 		Built b;
 		scope(exit) release(b);
 		buildOne(b, "export six : std.u8 = 6\n");
-		assert(ecrs.context.getComponent!(doir.components.ast.ConstantVal)(b.store, b.builder.declaration).integerValue == 6);
-		assert(ecrs.context.getComponent!(doir.components.ast.Flags)(b.store, b.builder.declaration).flags == (doir.components.ast.Flags.Comptime | doir.components.ast.Flags.Export));
-		assert(doir.strings.text(b.strings, ecrs.context.getComponent!(doir.components.ast.LookupTypeOf)(b.store, b.builder.declaration).name) == "std.u8");
+		assert(ecrs.context.getComponent!(doir.core.components.ast.ConstantVal)(b.store, b.builder.declaration).integerValue == 6);
+		assert(ecrs.context.getComponent!(doir.core.components.ast.Flags)(b.store, b.builder.declaration).flags == (doir.core.components.ast.Flags.Comptime | doir.core.components.ast.Flags.Export));
+		assert(doir.core.strings.text(b.strings, ecrs.context.getComponent!(doir.core.components.ast.LookupTypeOf)(b.store, b.builder.declaration).name) == "std.u8");
 	}
 	{
 		// Negative constants keep their sign, as a two's-complement integer or a negative float.
 		Built b;
 		scope(exit) release(b);
 		buildOne(b, "negative : i32 = -42\n");
-		auto value = ecrs.context.getComponent!(doir.components.ast.ConstantVal)(b.store, b.builder.declaration);
-		assert(value.kind == doir.components.ast.ConstantVal.Kind.negativeInteger && value.integerValue == ulong.max - 41);
+		auto value = ecrs.context.getComponent!(doir.core.components.ast.ConstantVal)(b.store, b.builder.declaration);
+		assert(value.kind == doir.core.components.ast.ConstantVal.Kind.negativeInteger && value.integerValue == ulong.max - 41);
 	}
 	{
 		Built b;
 		scope(exit) release(b);
 		buildOne(b, "negative : f64 = -1.5\n");
-		auto value = ecrs.context.getComponent!(doir.components.ast.ConstantVal)(b.store, b.builder.declaration);
-		assert(value.kind == doir.components.ast.ConstantVal.Kind.float_ && value.floatValue == -1.5);
+		auto value = ecrs.context.getComponent!(doir.core.components.ast.ConstantVal)(b.store, b.builder.declaration);
+		assert(value.kind == doir.core.components.ast.ConstantVal.Kind.float_ && value.floatValue == -1.5);
 	}
 	{
 		Built b;
 		scope(exit) release(b);
 		buildOne(b, "s : p = \"a\\tb\\u00e9\" <\"gen.doir\":3-4:5>\n");
-		auto bytes = ecrs.context.getComponent!(doir.components.ast.ConstantVal)(b.store, b.builder.declaration).bytesValue;
-		assert(doir.strings.text(b.strings, bytes) == "a\tb\xC3\xA9");
+		auto bytes = ecrs.context.getComponent!(doir.core.components.ast.ConstantVal)(b.store, b.builder.declaration).bytesValue;
+		assert(doir.core.strings.text(b.strings, bytes) == "a\tb\xC3\xA9");
 		assert(b.builder.annotated && b.builder.annotation.file == "gen.doir");
 		assert(b.builder.annotation.start == diagnose.LineColumn(3, 5) && b.builder.annotation.end == diagnose.LineColumn(4, 5));
 	}
@@ -2070,21 +2069,21 @@ unittest { // building: each declaration form writes its builder components
 		Built b;
 		scope(exit) release(b);
 		buildOne(b, "r : p = \"\"\"raw \\n\"\"\" ; c : u = 'x'\n");
-		assert(doir.strings.text(b.strings, ecrs.context.getComponent!(doir.components.ast.ConstantVal)(b.store, b.builder.declaration).bytesValue) == "raw \\n");
+		assert(doir.core.strings.text(b.strings, ecrs.context.getComponent!(doir.core.components.ast.ConstantVal)(b.store, b.builder.declaration).bytesValue) == "raw \\n");
 	}
 	{
 		Built b;
 		scope(exit) release(b);
 		buildOne(b, `e : p = "\a\b\f\n\r\v\"\?\\\%"` ~ "\n");
-		assert(doir.strings.text(b.strings, ecrs.context.getComponent!(doir.components.ast.ConstantVal)(b.store, b.builder.declaration).bytesValue) == "\a\b\f\n\r\v\"?\\%");
+		assert(doir.core.strings.text(b.strings, ecrs.context.getComponent!(doir.core.components.ast.ConstantVal)(b.store, b.builder.declaration).bytesValue) == "\a\b\f\n\r\v\"?\\%");
 	}
 	{
 		// A float, and an unquoted source annotation.
 		Built b;
 		scope(exit) release(b);
 		buildOne(b, "h : f32 = 1.5 <f.doir:7:2>\n");
-		auto value = ecrs.context.getComponent!(doir.components.ast.ConstantVal)(b.store, b.builder.declaration);
-		assert(value.kind == doir.components.ast.ConstantVal.Kind.float_ && value.floatValue == 1.5);
+		auto value = ecrs.context.getComponent!(doir.core.components.ast.ConstantVal)(b.store, b.builder.declaration);
+		assert(value.kind == doir.core.components.ast.ConstantVal.Kind.float_ && value.floatValue == 1.5);
 		assert(b.builder.annotation.file == "f.doir" && b.builder.annotation.start == diagnose.LineColumn(7, 2));
 	}
 	{
@@ -2092,36 +2091,36 @@ unittest { // building: each declaration form writes its builder components
 		Built b;
 		scope(exit) release(b);
 		buildOne(b, "w : f64 = 2.50000000000000000000000000000000000000000000000000000000000000000000\n");
-		assert(ecrs.context.getComponent!(doir.components.ast.ConstantVal)(b.store, b.builder.declaration).floatValue == 2.5);
+		assert(ecrs.context.getComponent!(doir.core.components.ast.ConstantVal)(b.store, b.builder.declaration).floatValue == 2.5);
 	}
 	{
 		// V-Literal: a float too large for a double rounds to the nearest, an infinity, rather than failing.
 		Built b;
 		scope(exit) release(b);
 		buildOne(b, "i : f64 = -1e999\n");
-		assert(ecrs.context.getComponent!(doir.components.ast.ConstantVal)(b.store, b.builder.declaration).floatValue == -double.infinity);
+		assert(ecrs.context.getComponent!(doir.core.components.ast.ConstantVal)(b.store, b.builder.declaration).floatValue == -double.infinity);
 	}
 	{
 		Built b;
 		scope(exit) release(b);
 		buildOne(b, "sum : std.u8 = tail std.add(a, %\"b c\")\n");
-		assert(doir.strings.text(b.strings, ecrs.context.getComponent!(doir.components.ast.LookupCall)(b.store, b.builder.declaration).name) == "std.add");
-		auto args = ecrs.context.getComponent!(doir.components.ast.LookupFunctionInputs)(b.store, b.builder.declaration).names.p;
-		assert(fp.dynarray.length(args) == 2 && doir.strings.text(b.strings, args[1]) == "b c");
-		assert(ecrs.context.getComponent!(doir.components.ast.Flags)(b.store, b.builder.declaration).flags == doir.components.ast.Flags.Tail);
+		assert(doir.core.strings.text(b.strings, ecrs.context.getComponent!(doir.core.components.ast.LookupCall)(b.store, b.builder.declaration).name) == "std.add");
+		auto args = ecrs.context.getComponent!(doir.core.components.ast.LookupFunctionInputs)(b.store, b.builder.declaration).names.p;
+		assert(fp.dynarray.length(args) == 2 && doir.core.strings.text(b.strings, args[1]) == "b c");
+		assert(ecrs.context.getComponent!(doir.core.components.ast.Flags)(b.store, b.builder.declaration).flags == doir.core.components.ast.Flags.Tail);
 	}
 	{
 		Built b;
 		scope(exit) release(b);
 		buildOne(b, "color : alias = vec3\n");
-		assert(ecrs.context.hasComponent!(doir.components.ast.LookupAlias)(b.store, b.builder.declaration));
-		assert(!ecrs.context.hasComponent!(doir.components.ast.LookupTypeOf)(b.store, b.builder.declaration));
+		assert(ecrs.context.hasComponent!(doir.core.components.ast.LookupAlias)(b.store, b.builder.declaration));
+		assert(!ecrs.context.hasComponent!(doir.core.components.ast.LookupTypeOf)(b.store, b.builder.declaration));
 	}
 	{
 		Built b;
 		scope(exit) release(b);
 		buildOne(b, "x : T = y\n");
-		assert(doir.strings.text(b.strings, ecrs.context.getComponent!(doir.components.ast.LookupValue)(b.store, b.builder.declaration).name) == "y");
+		assert(doir.core.strings.text(b.strings, ecrs.context.getComponent!(doir.core.components.ast.LookupValue)(b.store, b.builder.declaration).name) == "y");
 	}
 	{
 		// A named function type: the declaration is the function type; a deduced parameter, a default, and a function-typed parameter.
@@ -2129,18 +2128,18 @@ unittest { // building: each declaration form writes its builder components
 		scope(exit) release(b);
 		buildOne(b, "id_t : type = (T: deduced type, v: T = 0, f: (x: T) -> T, _: u8 = z) -> T\n");
 		immutable e = b.builder.declaration;
-		auto inputs = ecrs.context.getComponent!(doir.components.ast.FunctionInputs)(b.store, b.builder.declaration).related;
+		auto inputs = ecrs.context.getComponent!(doir.core.components.ast.FunctionInputs)(b.store, b.builder.declaration).related;
 		assert(fp.dynarray.length(inputs) == 4);
-		assert(doir.strings.text(b.strings, ecrs.context.getComponent!(doir.components.ast.LookupTypeOf)(b.store, inputs[0]).name) == doir.components.ast.deducedTypeName);
-		assert(ecrs.context.getComponent!(doir.components.ast.ConstantVal)(b.store, inputs[1]).integerValue == 0);
-		immutable functionType = ecrs.context.getComponent!(doir.components.ast.TypeOf)(b.store, inputs[2]).type;
-		assert(ecrs.context.getComponent!(doir.components.ast.Parent)(b.store, functionType).parent == e);
-		assert(!ecrs.context.hasComponent!(doir.components.ast.Name)(b.store, inputs[3]));
-		assert(doir.strings.text(b.strings, ecrs.context.getComponent!(doir.components.ast.LookupValue)(b.store, inputs[3]).name) == "z");
-		assert(doir.strings.text(b.strings, ecrs.context.getComponent!(doir.components.ast.LookupFunctionReturn)(b.store, b.builder.declaration).name) == "T");
+		assert(doir.core.strings.text(b.strings, ecrs.context.getComponent!(doir.core.components.ast.LookupTypeOf)(b.store, inputs[0]).name) == doir.core.components.ast.deducedTypeName);
+		assert(ecrs.context.getComponent!(doir.core.components.ast.ConstantVal)(b.store, inputs[1]).integerValue == 0);
+		immutable functionType = ecrs.context.getComponent!(doir.core.components.ast.TypeOf)(b.store, inputs[2]).type;
+		assert(ecrs.context.getComponent!(doir.core.components.ast.Parent)(b.store, functionType).parent == e);
+		assert(!ecrs.context.hasComponent!(doir.core.components.ast.Name)(b.store, inputs[3]));
+		assert(doir.core.strings.text(b.strings, ecrs.context.getComponent!(doir.core.components.ast.LookupValue)(b.store, inputs[3]).name) == "z");
+		assert(doir.core.strings.text(b.strings, ecrs.context.getComponent!(doir.core.components.ast.LookupFunctionReturn)(b.store, b.builder.declaration).name) == "T");
 		// Parts come parents first: the parameters, and the function type before its own parameter.
 		assert(fp.dynarray.length(b.builder.parts) == 6 && b.builder.parts[3] == functionType);
-		auto span = ecrs.context.getComponent!(doir.components.source.SourceSpan)(b.store, inputs[1]);
+		auto span = ecrs.context.getComponent!(doir.core.components.source.SourceSpan)(b.store, inputs[1]);
 		assert(b.syntax.tokens !is null);
 		immutable source = "id_t : type = (T: deduced type, v: T = 0, f: (x: T) -> T, _: u8 = z) -> T\n";
 		assert(source[span.offset .. span.offset + span.length] == "v: T = 0");
@@ -2151,23 +2150,23 @@ unittest { // building: each declaration form writes its builder components
 		scope(exit) release(b);
 		buildOne(b, "f : (a: T) -> U = {\n\t_ : _ = std.return(a)\n}\n");
 		immutable e = b.builder.declaration;
-		assert(ecrs.context.hasComponent!(doir.components.ast.Block)(b.store, e));
-		assert(fp.dynarray.length(ecrs.context.getComponent!(doir.components.ast.Block)(b.store, b.builder.declaration).related) == 0);
-		assert(ecrs.context.getComponent!(doir.components.ast.TypeOf)(b.store, b.builder.declaration).type == b.builder.parts[0]);
+		assert(ecrs.context.hasComponent!(doir.core.components.ast.Block)(b.store, e));
+		assert(fp.dynarray.length(ecrs.context.getComponent!(doir.core.components.ast.Block)(b.store, b.builder.declaration).related) == 0);
+		assert(ecrs.context.getComponent!(doir.core.components.ast.TypeOf)(b.store, b.builder.declaration).type == b.builder.parts[0]);
 	}
 	{
 		Built b;
 		scope(exit) release(b);
 		buildOne(b, "vec : type = {\n\tx : f32\n}\n");
-		assert(ecrs.context.hasComponent!(doir.components.ast.TypeDefinition)(b.store, b.builder.declaration));
+		assert(ecrs.context.hasComponent!(doir.core.components.ast.TypeDefinition)(b.store, b.builder.declaration));
 	}
 	{
 		Built b;
 		scope(exit) release(b);
 		buildOne(b, "m : namespace = {\n}\n");
-		assert(ecrs.context.getComponent!(doir.components.ast.Flags)(b.store, b.builder.declaration).flags == doir.components.ast.Flags.Namespace);
+		assert(ecrs.context.getComponent!(doir.core.components.ast.Flags)(b.store, b.builder.declaration).flags == doir.core.components.ast.Flags.Namespace);
 		assert(removeParsed(b.store, b.builder.declaration));
-		assert(!ecrs.context.hasComponent!(doir.components.ast.Flags)(b.store, b.builder.declaration));
+		assert(!ecrs.context.hasComponent!(doir.core.components.ast.Flags)(b.store, b.builder.declaration));
 	}
 
 	// A refused allocation at any step of any form fails the build, rather than asserting or writing through a missing component.

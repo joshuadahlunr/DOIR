@@ -14,7 +14,7 @@
 /// assert(tokens[0].kind == TokenKind.identifier && tokens[1].kind == TokenKind.colon);
 /// assert(text(tokens[fp.dynarray.length(tokens) - 2], "x : std.u8 = 5\n") == "\n");
 /// ---
-module doir.syntax.lexer;
+module doir.core.syntax.lexer;
 
 static import fp.dynarray;
 static import fp.string;
@@ -22,7 +22,7 @@ static import fp.string.ascii;
 static import fp.string.utf;
 version(unittest) static import fp.testing;
 
-static import doir.syntax.tables;
+static import doir.core.syntax.tables;
 
 @nogc nothrow:
 
@@ -110,7 +110,7 @@ private immutable ubyte[0x80] ascii = () {
 /// ---
 bool isIdentifierStart(uint c) {
 	if (c < 0x80) return (ascii[c] & startBit) != 0;
-	return fp.string.utf.inRanges(doir.syntax.tables.identifierStart[], c);
+	return fp.string.utf.inRanges(doir.core.syntax.tables.identifierStart[], c);
 }
 
 /// Whether code point `c` may continue an identifier (`UnicodeIdentifierContinue`); `.` may too, but is not in this class.
@@ -121,7 +121,7 @@ bool isIdentifierStart(uint c) {
 /// ---
 bool isIdentifierContinue(uint c) {
 	if (c < 0x80) return (ascii[c] & continueBit) != 0;
-	return fp.string.utf.inRanges(doir.syntax.tables.identifierContinue[], c);
+	return fp.string.utf.inRanges(doir.core.syntax.tables.identifierContinue[], c);
 }
 
 /// Whether code point `c` is `wsc` whitespace; newlines are not.
@@ -132,14 +132,14 @@ bool isIdentifierContinue(uint c) {
 /// ---
 bool isWhitespace(uint c) {
 	if (c < 0x80) return (ascii[c] & spaceBit) != 0;
-	return fp.string.utf.inRanges(doir.syntax.tables.whitespace[], c);
+	return fp.string.utf.inRanges(doir.core.syntax.tables.whitespace[], c);
 }
 
 private enum size_t failed = size_t.max;
 
 // The code point at `i` and the index after it; an invalid byte decodes as one code point no class contains.
 private uint decode(const(char)[] s, ref size_t i) {
-	assert(i < s.length, "doir.syntax.lexer: decoding past the source");
+	assert(i < s.length, "doir.core.syntax.lexer: decoding past the source");
 	if (s[i] < 0x80) return s[i++];
 	bool valid;
 	immutable start = i;
@@ -148,7 +148,7 @@ private uint decode(const(char)[] s, ref size_t i) {
 		i = start + 1;
 		return uint.max;
 	}
-	assert(i > start + 1 && i <= s.length && i - start <= 4, "doir.syntax.lexer: a sequence that did not advance by its length");
+	assert(i > start + 1 && i <= s.length && i - start <= 4, "doir.core.syntax.lexer: a sequence that did not advance by its length");
 	return c;
 }
 
@@ -186,12 +186,12 @@ size_t integerEnd(const(char)[] s, size_t i) {
 
 // `[pP][-+]? [0-9]+` or `[eE][-+]? [0-9]+`, or `i` itself when it is absent, as `?` makes it.
 private size_t exponentEnd(const(char)[] s, size_t i, char lower, char upper) {
-	assert(i <= s.length, "doir.syntax.lexer: an exponent past the source");
+	assert(i <= s.length, "doir.core.syntax.lexer: an exponent past the source");
 	if (!charAt(s, i, lower) && !charAt(s, i, upper)) return i;
 	size_t j = i + 1;
 	if (charAt(s, j, '+') || charAt(s, j, '-')) ++j;
 	immutable end = digitAt(s, j) ? skipDigits(s, j) : i;
-	assert(end == i || (end > j && end <= s.length), "doir.syntax.lexer: an exponent with no digits");
+	assert(end == i || (end > j && end <= s.length), "doir.core.syntax.lexer: an exponent with no digits");
 	return end;
 }
 
@@ -255,12 +255,12 @@ size_t stringCharEnd(const(char)[] s, size_t i) {
 
 // `'"' StringChar* '"'` from `i`, at its opening quote: its end, or the negated position it failed at.
 private size_t quotedEnd(const(char)[] s, size_t i, ref size_t failedAt) {
-	assert(charAt(s, i, '"'), "doir.syntax.lexer: a quoted string that does not open with a quote");
+	assert(charAt(s, i, '"'), "doir.core.syntax.lexer: a quoted string that does not open with a quote");
 	size_t j = i + 1;
 	for (;;) {
 		immutable next = stringCharEnd(s, j);
 		if (next == failed) break;
-		assert(next > j, "doir.syntax.lexer: a string character that did not advance");
+		assert(next > j, "doir.core.syntax.lexer: a string character that did not advance");
 		j = next;
 	}
 	if (charAt(s, j, '"')) return j + 1;
@@ -270,7 +270,7 @@ private size_t quotedEnd(const(char)[] s, size_t i, ref size_t failedAt) {
 
 // RawString: an opening run of n >= 3 quotes, closed by the first run of n quotes not followed by another.
 private size_t rawStringEnd(const(char)[] s, size_t i) {
-	assert(i < s.length, "doir.syntax.lexer: a raw string past the source");
+	assert(i < s.length, "doir.core.syntax.lexer: a raw string past the source");
 	size_t n = 0;
 	while (charAt(s, i + n, '"')) ++n;
 	if (n < 3) return failed;
@@ -278,7 +278,7 @@ private size_t rawStringEnd(const(char)[] s, size_t i) {
 		if (s[j] != '"') continue;
 		size_t run = 0;
 		while (charAt(s, j + run, '"')) ++run;
-		assert(run >= 1 && j + run <= s.length, "doir.syntax.lexer: a run of quotes past the source");
+		assert(run >= 1 && j + run <= s.length, "doir.core.syntax.lexer: a run of quotes past the source");
 		if (run >= n) return j + run;
 		j += run - 1;
 	}
@@ -320,18 +320,18 @@ private size_t sourceInfoEnd(const(char)[] s, size_t i, ref size_t failedAt) {
 		}
 		++p;
 	}
-	assert(p > i && p <= s.length && s[p - 1] == '>', "doir.syntax.lexer: source info that does not end at its `>`");
+	assert(p > i && p <= s.length && s[p - 1] == '>', "doir.core.syntax.lexer: source info that does not end at its `>`");
 	return p;
 }
 
 // `matching_braces` from `i`, at its `{`; braces inside it count whatever surrounds them.
 private size_t matchingBracesEnd(const(char)[] s, size_t i) {
-	assert(charAt(s, i, '{'), "doir.syntax.lexer: matching braces from something that is not a `{`");
+	assert(charAt(s, i, '{'), "doir.core.syntax.lexer: matching braces from something that is not a `{`");
 	size_t depth = 0;
 	foreach (j; i .. s.length) {
 		if (s[j] == '{') ++depth;
 		else if (s[j] == '}' && --depth == 0) return j + 1;
-		assert(depth > 0, "doir.syntax.lexer: a brace count that fell to zero without closing");
+		assert(depth > 0, "doir.core.syntax.lexer: a brace count that fell to zero without closing");
 	}
 	return failed;
 }
@@ -340,7 +340,7 @@ private size_t matchingBracesEnd(const(char)[] s, size_t i) {
 private size_t wordEnd(const(char)[] s, size_t i) {
 	immutable start = i;
 	cast(void) decode(s, i);
-	assert(i > start, "doir.syntax.lexer: a word of no characters");
+	assert(i > start, "doir.core.syntax.lexer: a word of no characters");
 	while (i < s.length) {
 		immutable b = s[i];
 		if (b < 0x80) {
@@ -357,7 +357,7 @@ private size_t wordEnd(const(char)[] s, size_t i) {
 
 // `([.] / UnicodeIdentifierContinue)*` from `i`.
 private size_t dottedEnd(const(char)[] s, size_t i) {
-	assert(i <= s.length, "doir.syntax.lexer: a dotted name past the source");
+	assert(i <= s.length, "doir.core.syntax.lexer: a dotted name past the source");
 	while (i < s.length) {
 		immutable b = s[i];
 		if (b < 0x80) {
@@ -374,7 +374,7 @@ private size_t dottedEnd(const(char)[] s, size_t i) {
 
 // `Keywords`: a whole word, which no identifier character follows.
 private bool isKeyword(const(char)[] word) {
-	foreach (k; doir.syntax.tables.keywords) if (word == k) return true;
+	foreach (k; doir.core.syntax.tables.keywords) if (word == k) return true;
 	return false;
 }
 
@@ -592,9 +592,9 @@ version(unittest) {
 
 unittest { // the ASCII fast paths classify as the generated tables do
 	foreach (uint c; 0 .. 0x80) {
-		assert(isIdentifierStart(c) == fp.string.utf.inRanges(doir.syntax.tables.identifierStart[], c));
-		assert(isIdentifierContinue(c) == fp.string.utf.inRanges(doir.syntax.tables.identifierContinue[], c));
-		assert(isWhitespace(c) == fp.string.utf.inRanges(doir.syntax.tables.whitespace[], c));
+		assert(isIdentifierStart(c) == fp.string.utf.inRanges(doir.core.syntax.tables.identifierStart[], c));
+		assert(isIdentifierContinue(c) == fp.string.utf.inRanges(doir.core.syntax.tables.identifierContinue[], c));
+		assert(isWhitespace(c) == fp.string.utf.inRanges(doir.core.syntax.tables.whitespace[], c));
 	}
 }
 

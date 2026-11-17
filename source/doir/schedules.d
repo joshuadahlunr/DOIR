@@ -438,7 +438,7 @@ struct System(S) if (isSystem!S) {
 
 version(unittest) {
 	static import ecrs.relation;
-	static import doir.testing;
+	static import doir.core.testing;
 
 	private struct Gauge {
 		int value;
@@ -513,8 +513,8 @@ unittest { // demanding: batches as steps of a schedule, on workers or not
 	engine.workers = pool;
 	Polarity.Key[32] keys;
 	foreach (i, ref k; keys) {
-		immutable e = doir.testing.addEntity(store);
-		doir.testing.addComponent!Gauge(store, e).value = cast(int) i - 16;
+		immutable e = doir.core.testing.addEntity(store);
+		doir.core.testing.addComponent!Gauge(store, e).value = cast(int) i - 16;
 		k = Polarity.Key([e]);
 	}
 	assert(ecrs.schedules.sequential(engine, demanding!Polarity(keys[0 .. 16]), ecrs.schedules.parallel(null, demanding!Polarity(keys[16 .. $]))));
@@ -526,8 +526,8 @@ unittest { // whenChangedAt: runs on a newer ChangedAt, follows early cutoff thr
 	scope(exit) ecrs.context.free(store);
 	auto engine = doir.query.create(store);
 	scope(exit) doir.query.free(engine);
-	immutable input = doir.testing.addEntity(store), other = doir.testing.addEntity(store);
-	doir.testing.addComponent!Gauge(store, input).value = 1;
+	immutable input = doir.core.testing.addEntity(store), other = doir.core.testing.addEntity(store);
+	doir.core.testing.addComponent!Gauge(store, input).value = 1;
 	assert(*doir.query.query!Polarity(engine, Polarity.Key([input])) == 1);
 	immutable polarity = doir.query.find!Polarity(engine, Polarity.Key([input]));
 	immutable EntityId[1] watchInput = [input], watchPolarity = [polarity];
@@ -592,13 +592,13 @@ unittest { // runSystem: visits the domain whole, then what changes reach, enter
 		// Levels: -2, -1, 0, 1, ... so entities 1 and 2 report.
 		EntityId[8] es;
 		foreach (i, ref e; es) {
-			e = doir.testing.addEntity(store);
-			doir.testing.addComponent!Level(store, e).value = cast(int) i - 2;
+			e = doir.core.testing.addEntity(store);
+			doir.core.testing.addComponent!Level(store, e).value = cast(int) i - 2;
 		}
-		immutable outsider = doir.testing.addEntity(store); // no Level, so never visited
-		immutable gauge = doir.testing.addEntity(store);
-		doir.testing.addComponent!Gauge(store, gauge).value = 1;
-		doir.testing.addComponent!Watch(store, es[2]) = Watch([gauge]); // level 0, plus the gauge's sign
+		immutable outsider = doir.core.testing.addEntity(store); // no Level, so never visited
+		immutable gauge = doir.core.testing.addEntity(store);
+		doir.core.testing.addComponent!Gauge(store, gauge).value = 1;
+		doir.core.testing.addComponent!Watch(store, es[2]) = Watch([gauge]); // level 0, plus the gauge's sign
 		alias M = Memo!Levels;
 		void record() {
 			foreach (ref d; fp.dynarray.slice(manager.diagnostics)) {
@@ -638,8 +638,8 @@ unittest { // runSystem: visits the domain whole, then what changes reach, enter
 
 		// One enters, as a commit marks a new entity, and one leaves, its report going with it.
 		doir.query.beginRevision(engine);
-		immutable entered = doir.testing.addEntity(store);
-		doir.testing.addComponent!Level(store, entered).value = -9;
+		immutable entered = doir.core.testing.addEntity(store);
+		doir.core.testing.addComponent!Level(store, entered).value = -9;
 		assert(doir.query.markChanged(engine, entered));
 		assert(ecrs.context.removeComponent!Level(store, es[0]));
 		assert(doir.query.markChanged(engine, es[0]));
@@ -666,8 +666,8 @@ unittest { // runSystem: visits the domain whole, then what changes reach, enter
 		assert(doir.query.buildDependents(engine));
 		record();
 		doir.query.beginRevision(engine);
-		immutable late = doir.testing.addEntity(store);
-		doir.testing.addComponent!Level(store, late).value = -1;
+		immutable late = doir.core.testing.addEntity(store);
+		doir.core.testing.addComponent!Level(store, late).value = -1;
 		foreach (_; 0 .. 2 * ecrs.context.entityCount(store)) assert(doir.query.markChanged(engine, late));
 		doir.query.beginRevision(engine);
 		assert(!doir.query.changesSince(engine, ecrs.context.findSingletonForWriting!(doir.components.query.SystemState!Levels)(*engine.store).cursor).complete);

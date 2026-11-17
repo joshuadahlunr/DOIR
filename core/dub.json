@@ -1,0 +1,62 @@
+{
+	"name": "doir-core",
+	"description": "DOIRcore: the embeddable waterfall compiler and JIT for DOIR, with std built in, for -betterC D, built on libECRS and libdiagnose",
+	"license": "MIT",
+	"targetType": "sourceLibrary",
+	"sourcePaths": [
+		"source"
+	],
+	"importPaths": [
+		"source"
+	],
+	"dependencies": {
+		"libecrs": {
+			"repository": "git+https://github.com/doir-lang/libECRS.git",
+			"version": "9a95e53d2c9a2218cd384324d992289f14b0931f"
+		},
+		"bc-threads": {
+			"repository": "git+https://github.com/doir-lang/bc-threads.git",
+			"version": "0ca5577fce88be9e2505b5adf459562c3d0d3801"
+		},
+		"libfp": {
+			"repository": "git+https://github.com/doir-lang/libfp.git",
+			"version": "8979c94e32829db1f6a0c3ca50456296c8474c3d"
+		},
+		"libdiagnose": {
+			"repository": "git+https://github.com/doir-lang/libdiagnose.git",
+			"version": "c3d9bef9595de2fee319bfac9b7ca57097d34a7a"
+		}
+	},
+	"dflags-ldc": [
+		"-betterC",
+		"-checkaction=C"
+	],
+	"dflags-dmd": [
+		"-betterC",
+		"-checkaction=C"
+	],
+	"configurations": [
+		{
+			"name": "library",
+			"targetType": "sourceLibrary"
+		},
+		{
+			"name": "unittest",
+			"targetType": "executable",
+			"mainSourceFile": "tests/runner.d",
+			"sourcePaths": [
+				"source",
+				"tests"
+			],
+			"importPaths": [
+				"source",
+				"tests"
+			],
+			"targetPath": "bin",
+			"targetName": "doir-core-tests"
+		}
+	],
+	"subConfigurations": {
+		"bc-threads": "library"
+	}
+}

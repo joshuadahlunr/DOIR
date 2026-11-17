@@ -6,18 +6,18 @@
 /// static import ecrs.context;
 /// static import doir.query;
 /// static import doir.source;
-/// static import doir.strings;
+/// static import doir.core.strings;
 /// auto store = ecrs.context.create();
 /// scope(exit) ecrs.context.free(store);
 /// auto engine = doir.query.create(store);
 /// scope(exit) doir.query.free(engine);
-/// doir.strings.Strings strings;
-/// scope(exit) doir.strings.free(strings);
+/// doir.core.strings.Strings strings;
+/// scope(exit) doir.core.strings.free(strings);
 /// engine.strings = &strings;
 /// immutable file = doir.source.addFile(engine, strings, "a.doir");
 /// assert(doir.source.commit(engine, strings, file, "x : T = 1\ny : T = 2\n") == 0);
 /// immutable root = doir.source.rootOf(engine, file);
-/// assert(entryNamed(engine, root, doir.strings.intern(strings, "y")) != invalidEntity);
+/// assert(entryNamed(engine, root, doir.core.strings.intern(strings, "y")) != invalidEntity);
 /// ---
 module doir.names;
 
@@ -28,9 +28,9 @@ static import fp.dynarray;
 static import ecrs.context;
 static import ecrs.relation;
 
-static import doir.components.ast;
+static import doir.core.components.ast;
 static import doir.query;
-static import doir.strings;
+static import doir.core.strings;
 
 public import ecrs.registry : EntityId, invalidEntity;
 
@@ -46,16 +46,16 @@ struct Entries {
 
 // A named entry and where it stands in its block, for sorting.
 private struct Named {
-	doir.strings.StringId name;
+	doir.core.strings.StringId name;
 	uint index;
 	EntityId e;
 }
 
 // The name of `e`, or `unnamed` for `_`.
 // Reparse matches a named entry by name, so its name never changes in place.
-private doir.strings.StringId nameOf(ref doir.query.QueryEngine engine, EntityId e) {
-	auto n = ecrs.context.findComponent!(doir.components.ast.Name)(*engine.store, e);
-	return n is null ? doir.strings.unnamed : n.value;
+private doir.core.strings.StringId nameOf(ref doir.query.QueryEngine engine, EntityId e) {
+	auto n = ecrs.context.findComponent!(doir.core.components.ast.Name)(*engine.store, e);
+	return n is null ? doir.core.strings.unnamed : n.value;
 }
 
 
@@ -86,13 +86,13 @@ struct EntriesByName {
 	/// static import fp.dynarray;
 	/// static import doir.query;
 	/// static import doir.source;
-	/// static import doir.strings;
+	/// static import doir.core.strings;
 	/// auto store = ecrs.context.create();
 	/// scope(exit) ecrs.context.free(store);
 	/// auto engine = doir.query.create(store);
 	/// scope(exit) doir.query.free(engine);
-	/// doir.strings.Strings strings;
-	/// scope(exit) doir.strings.free(strings);
+	/// doir.core.strings.Strings strings;
+	/// scope(exit) doir.core.strings.free(strings);
 	/// engine.strings = &strings;
 	/// immutable file = doir.source.addFile(engine, strings, "a.doir");
 	/// assert(doir.source.commit(engine, strings, file, "x : T = 1\n_ : T = 2\n") == 0);
@@ -103,13 +103,13 @@ struct EntriesByName {
 		immutable block = key.related[0];
 		Entries out_;
 		if (!doir.query.read(engine, block)) return out_;
-		auto b = ecrs.context.findComponent!(doir.components.ast.Block)(*engine.store, block);
+		auto b = ecrs.context.findComponent!(doir.core.components.ast.Block)(*engine.store, block);
 		if (b is null) return out_;
 		Named* named = null;
 		scope(exit) fp.dynarray.free(named);
 		foreach (i, e; fp.dynarray.slice(b.related)) {
 			immutable name = nameOf(engine, e);
-			if (name != doir.strings.unnamed && !fp.dynarray.pushBack(named, Named(name, cast(uint) i, e))) {
+			if (name != doir.core.strings.unnamed && !fp.dynarray.pushBack(named, Named(name, cast(uint) i, e))) {
 				doir.query.fail(engine);
 				return out_;
 			}
@@ -135,20 +135,20 @@ struct EntriesByName {
 /// static import ecrs.context;
 /// static import doir.query;
 /// static import doir.source;
-/// static import doir.strings;
+/// static import doir.core.strings;
 /// auto store = ecrs.context.create();
 /// scope(exit) ecrs.context.free(store);
 /// auto engine = doir.query.create(store);
 /// scope(exit) doir.query.free(engine);
-/// doir.strings.Strings strings;
-/// scope(exit) doir.strings.free(strings);
+/// doir.core.strings.Strings strings;
+/// scope(exit) doir.core.strings.free(strings);
 /// engine.strings = &strings;
 /// immutable file = doir.source.addFile(engine, strings, "a.doir");
 /// assert(doir.source.commit(engine, strings, file, "x : T = 1\n") == 0);
-/// assert(entryNamed(engine, doir.source.rootOf(engine, file), doir.strings.intern(strings, "z")) == invalidEntity);
+/// assert(entryNamed(engine, doir.source.rootOf(engine, file), doir.core.strings.intern(strings, "z")) == invalidEntity);
 /// ---
-EntityId entryNamed(ref doir.query.QueryEngine engine, EntityId block, doir.strings.StringId name) {
-	if (name == doir.strings.unnamed) return invalidEntity;
+EntityId entryNamed(ref doir.query.QueryEngine engine, EntityId block, doir.core.strings.StringId name) {
+	if (name == doir.core.strings.unnamed) return invalidEntity;
 	auto entries = doir.query.query!EntriesByName(engine, EntriesByName.Key([block]));
 	if (entries is null) return invalidEntity;
 	auto sorted = fp.dynarray.slice(entries.related);
@@ -170,25 +170,25 @@ unittest { // the last entry of a name wins; an edit that replaces only `_` entr
 	scope(exit) ecrs.context.free(store);
 	auto engine = doir.query.create(store);
 	scope(exit) doir.query.free(engine);
-	doir.strings.Strings strings;
-	scope(exit) doir.strings.free(strings);
+	doir.core.strings.Strings strings;
+	scope(exit) doir.core.strings.free(strings);
 	engine.strings = &strings;
 	immutable file = doir.source.addFile(engine, strings, "a.doir");
 	assert(doir.source.commit(engine, strings, file, "b : T = 1\n_ : T = 2\na : T = 3\nb : T = 4\n") == 0);
 	immutable root = doir.source.rootOf(engine, file);
-	auto entries = ecrs.context.getComponent!(doir.components.ast.Block)(store, root).related;
-	assert(entryNamed(engine, root, doir.strings.intern(strings, "a")) == entries[2]);
-	assert(entryNamed(engine, root, doir.strings.intern(strings, "b")) == entries[3]);
-	assert(entryNamed(engine, root, doir.strings.intern(strings, "c")) == invalidEntity);
-	assert(entryNamed(engine, root, doir.strings.unnamed) == invalidEntity);
+	auto entries = ecrs.context.getComponent!(doir.core.components.ast.Block)(store, root).related;
+	assert(entryNamed(engine, root, doir.core.strings.intern(strings, "a")) == entries[2]);
+	assert(entryNamed(engine, root, doir.core.strings.intern(strings, "b")) == entries[3]);
+	assert(entryNamed(engine, root, doir.core.strings.intern(strings, "c")) == invalidEntity);
+	assert(entryNamed(engine, root, doir.core.strings.unnamed) == invalidEntity);
 	immutable index = doir.query.find!EntriesByName(engine, EntriesByName.Key([root]));
 	immutable changed = ecrs.context.getComponent!(doir.components.query.ChangedAt)(store, index).revision;
 	assert(doir.source.commit(engine, strings, file, "b : T = 1\n_ : T = 5\na : T = 3\nb : T = 4\n") == 0);
-	assert(entryNamed(engine, root, doir.strings.intern(strings, "a")) == entries[2]);
+	assert(entryNamed(engine, root, doir.core.strings.intern(strings, "a")) == entries[2]);
 	assert(ecrs.context.getComponent!(doir.components.query.ChangedAt)(store, index).revision == changed);
 	assert(doir.source.commit(engine, strings, file, "b : T = 1\n_ : T = 5\nc : T = 3\nb : T = 4\n") == 0);
-	assert(entryNamed(engine, root, doir.strings.intern(strings, "a")) == invalidEntity);
-	assert(entryNamed(engine, root, doir.strings.intern(strings, "c")) != invalidEntity);
+	assert(entryNamed(engine, root, doir.core.strings.intern(strings, "a")) == invalidEntity);
+	assert(entryNamed(engine, root, doir.core.strings.intern(strings, "c")) != invalidEntity);
 	assert(ecrs.context.getComponent!(doir.components.query.ChangedAt)(store, index).revision != changed);
 
 	// A refused allocation fails the index, which the next demand builds.
@@ -208,7 +208,7 @@ unittest { // the last entry of a name wins; an edit that replaces only `_` entr
 		if (built is null) {
 			assert(rationed.refused);
 			rationed.refused = false;
-			assert(entryNamed(rationed, rationedRoot, doir.strings.intern(strings, "g")) != invalidEntity);
+			assert(entryNamed(rationed, rationedRoot, doir.core.strings.intern(strings, "g")) != invalidEntity);
 			continue;
 		}
 		assert(fp.dynarray.length(built.related) == 7);

@@ -10,12 +10,12 @@ static import fp.string;
 static import bc.json;
 static import ecrs.context;
 
-static import doir.components.ast;
+static import doir.core.components.ast;
 static import doir.lsp.positions;
 static import doir.lsp.session;
 static import doir.lsp.store;
 static import doir.source;
-static import doir.syntax.lexer;
+static import doir.core.syntax.lexer;
 
 public import ecrs.registry : invalidEntity;
 
@@ -33,13 +33,13 @@ private std.typecons.Nullable!Comment lineCommentIn(const fp.rope.Rope text, siz
 	buffer = fp.rope.text(text, start, end).get(null);
 	if (buffer is null) return typeof(return).init;
 	auto source = buffer[0 .. end - start];
-	auto cursor = doir.syntax.lexer.Cursor(source);
+	auto cursor = doir.core.syntax.lexer.Cursor(source);
 	typeof(return) comment;
 	while (cursor.at < source.length) {
-		immutable t = doir.syntax.lexer.next(cursor);
-		if (t.kind == doir.syntax.lexer.TokenKind.whitespace || t.kind == doir.syntax.lexer.TokenKind.newline) continue;
-		if (t.kind != doir.syntax.lexer.TokenKind.lineComment || !comment.isNull) return typeof(return).init;
-		auto body_ = doir.syntax.lexer.text(t, source);
+		immutable t = doir.core.syntax.lexer.next(cursor);
+		if (t.kind == doir.core.syntax.lexer.TokenKind.whitespace || t.kind == doir.core.syntax.lexer.TokenKind.newline) continue;
+		if (t.kind != doir.core.syntax.lexer.TokenKind.lineComment || !comment.isNull) return typeof(return).init;
+		auto body_ = doir.core.syntax.lexer.text(t, source);
 		body_ = body_[body_[0] == '#' ? 1 : 2 .. $];
 		comment = Comment(body_.length && body_[0] == ' ' ? body_[1 .. $] : body_);
 	}
@@ -79,14 +79,14 @@ private bool appendHeader(ref doir.lsp.session.Session s, const fp.rope.Rope tex
 	if (bytes is null) return found.end <= found.start;
 	auto source = bytes[0 .. found.end - found.start];
 	auto header = source;
-	if (ecrs.context.hasComponent!(doir.components.ast.Block)(*s.engine.store, found.e)) {
-		auto cursor = doir.syntax.lexer.Cursor(source);
+	if (ecrs.context.hasComponent!(doir.core.components.ast.Block)(*s.engine.store, found.e)) {
+		auto cursor = doir.core.syntax.lexer.Cursor(source);
 		int depth = 0;
 		while (cursor.at < source.length) {
-			immutable t = doir.syntax.lexer.next(cursor);
-			if (t.kind == doir.syntax.lexer.TokenKind.leftParen) ++depth;
-			else if (t.kind == doir.syntax.lexer.TokenKind.rightParen) --depth;
-			else if (t.kind == doir.syntax.lexer.TokenKind.leftBrace && depth == 0) {
+			immutable t = doir.core.syntax.lexer.next(cursor);
+			if (t.kind == doir.core.syntax.lexer.TokenKind.leftParen) ++depth;
+			else if (t.kind == doir.core.syntax.lexer.TokenKind.rightParen) --depth;
+			else if (t.kind == doir.core.syntax.lexer.TokenKind.leftBrace && depth == 0) {
 				header = source[0 .. t.start];
 				break;
 			}
