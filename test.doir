@@ -1,4 +1,4 @@
-// Machine-level (Mizu) test. Needs `mizu.doir` and `standard.mizu.doir`, ported from tree/D (roadmap Phase 5). The latter also supplies `std.u64`, `std.u1`, `std.debug_print` and `std.execute_if`, which are Mizu extensions beyond the `standard.doir` interface.
+// Machine-level (Mizu) test. Needs `mizu.doir` and `standard.mizu.doir`, ported from tree/D (roadmap Phase 7). The latter also supplies `std.u64`, `std.u1`, `std.debug_print` and `std.execute_if`, which are Mizu extensions beyond the `standard.doir` interface.
 path : compiler.byte_pointer = "./standard.mizu.doir"
 _ : compiler.pointer_sized = compiler.paste_file(path)
 _ : compiler.assembler.register = compiler.assembler.begin_register_allocation()

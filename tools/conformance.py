@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run the conformance corpus (`roadmap.md` Phase 10) through `doir_check`.
+"""Run the conformance corpus (`roadmap.md` Phase 15) through `doir_check`.
 
 Each file in `tests/conformance` is named `<Rule-Tag>.<case>.accept.doir` or `<Rule-Tag>.<case>.reject.doir`, and its first line is a comment saying what it tests. The `<case>` prefix gives the file's place in its build:
 

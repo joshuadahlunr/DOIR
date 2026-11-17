@@ -6,6 +6,10 @@ This file provides architectural rules and guidance for building the query-based
 
 This project is a clean-sheet, query-driven DOIR compiler. It replaces the legacy linear waterfall pipeline with an incremental, query-evaluated compiler architecture.
 
+It is two libraries, which the spec's profiles separate (`P-Core`, `P-Full`):
+- **DOIRcore** (`core/`, dub package `doir-core`, modules `doir.core.*`) is the embeddable one: the builders, a one-shot parser, the semantics run once in lexical order, a native JIT for the machine it runs on, and `std` built in as native code (`T-Intrinsic`, `L-Embed`). Its own rules are in `core/AGENTS.md`.
+- **DOIR** (everything else here) is the full compiler built on it: the query engine, incremental commits, the language server, the tower of levels, DOIR-source backends, several targets, and output to files.
+
 Three reference codebases guide implementation (`rustc-architecture.md` summarizes rustc and where DOIR departs from it):
 1. **Query-Based Architecture:** [rustc (`rust-lang/rust`, `compiler/`)](https://github.com/rust-lang/rust)
    - Consult for the query engine (`rustc_middle/src/query`), cycle reporting, the red/green dep graph, entity creation inside queries (`create_def`/`TyCtxtFeed`), the comptime interpreter (`rustc_const_eval`, `Machine` trait), and mono-item collection and codegen units.
@@ -16,7 +20,13 @@ Three reference codebases guide implementation (`rustc-architecture.md` summariz
 
 ## Architectural Mandates
 
-1. **Demand-Driven Queries (rustc Model):**
+0. **The Core Is a Waterfall (`roadmap.md` Principle 10):**
+   - DOIRcore evaluates in lexical order, once, with no query engine, revisions or dependency edges; a forward reference evaluates its declaration on demand, and a stack of declarations being evaluated reports cycles (`Q-Cycle`).
+   - Every core entry point works on one declaration and takes an optional read log of the entities it read, null when the core runs alone; DOIR's queries call it and record the log as `Reads`. Write a semantic rule once, in the core; DOIR adds memoization, incrementality and the full profile around it.
+   - No `doir.core` module imports another `doir` module, and neither package has a `doir/package.d`; `tools/lint.py` enforces the first.
+   - The incremental commit, the query engine, positioned-log ownership by queries, the printer and formatter, and the language server stay in DOIR.
+
+1. **Demand-Driven Queries (rustc Model, DOIR):**
    - The compiler is a collection of pure, memoized queries (`query(Key) -> Value`).
    - Query instances are entities. Their keys, values, dependencies and revisions are components, and every component a query writes is listed in its `Produces` component and removed when the query re-runs with a new value or is evicted.
    - Every semantic pass, type check, lowering, and comptime execution runs on demand.
@@ -38,6 +48,7 @@ Three reference codebases guide implementation (`rustc-architecture.md` summariz
    - Comptime is not bound to VM opcode hacks.
    - Host services (memory allocation, entity queries, type creation, diagnostics) form a C-compatible thunk table.
    - The Mizu VM reaches it through hook instructions whose handlers call the table; native JIT hosts call the same entries as indirect function pointers.
+   - The table is DOIRcore's (`roadmap.md` Phase 5); Mizu is the first comptime host to call it (Phase 7) and the core's native JIT the second (Phase 10), and `H-Det` is tested between them.
 
 5. **Bootstrap versus Interface (`H-Boot`, spec Part II §11):**
    - `compiler` holds the bootstrap, functions the compiler treewalk-interprets itself before any target code exists (the minimum that builds types and emits bytes), and the floor, what code that cannot name `std` needs: the levels below `std`, and builds without `standard.doir`, since DOIR must not depend on `std` existing.

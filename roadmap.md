@@ -1,6 +1,6 @@
-# Roadmap: Query-Driven DOIR Compiler
+# Roadmap: DOIRcore and the Query-Driven DOIR Compiler
 
-Phased construction plan for the query-driven DOIR compiler.
+Phased construction plan for two libraries. **DOIRcore** (`core/`, modules `doir.core.*`) is the embeddable one: a small, fast waterfall compiler that takes the IR the builders write (or a whole file it parses in one pass), does the full semantics in lexical order with no query engine, and JITs the whole program or one function for the machine it runs on, with `std` built in as native code (`P-Core`, `T-Intrinsic`, `L-Embed`). It is what a program links to get DOIR scripting. **DOIR** (this directory) is the full compiler built on it: queries, incremental edits, the language server, the tower of levels, backends written in DOIR, several targets per build, and output to files (`P-Full`). Phases 1–3 built DOIR's front end. The core's phases (4, 5, 8, 10 and 11) are interleaved with DOIR's (6, 7, 9 and 12–17), each placed where the first phase that needs it can use it: Phase 5's semantics come before DOIR's emission and comptime (Phases 6 and 7), and the native backend, the built-in `std` and embedding (Phases 8, 10 and 11) wait until Phase 7 has made the host ABI callable, which the graphics backend (Phase 14) and its chapter wait on.
 
 Architectural reference: [rust-lang/rust](https://github.com/rust-lang/rust) (`compiler/`; see `rustc-architecture.md`).  
 Data-structure reference: Dahl & Harris, *An Argument for the Practicality of Entity Component Systems as the Primary Data Structure for an Interpreter or Compiler*, Onward! '25 ([doi:10.1145/3759429.3762622](https://doi.org/10.1145/3759429.3762622)).  
@@ -12,52 +12,44 @@ Legacy behavior reference: [doir-lang/DOIR/tree/D](https://github.com/doir-lang/
 
 ## Architectural Principles
 
-1. **Pull, Don't Push:** Results are requested via memoized queries (`query(Key)`), calculated on demand, and cached. A query instance is itself an entity: its key, value, dependencies and revisions are components, so the store holds the engine's state along with the program's.
+1. **Pull, Don't Push (DOIR):** Results are requested via memoized queries (`query(Key)`), calculated on demand, and cached. A query instance is itself an entity: its key, value, dependencies and revisions are components, so the store holds the engine's state along with the program's.
 2. **Names Denote Bindings; Registers Are Internal:** Source declarations bind entity ids (`EntityId`, a natural number) representing bindings. Virtual registers (temporaries) and physical registers are allocated and coalesced internally.
-3. **Levels Are Stratified:** Ascent (sema/comptime) and descent (lowering/emission) are strictly level-indexed (`L-Stage`, `L-Freeze`, `L-Erase`).
+3. **Levels Are Stratified:** Ascent (sema/comptime) and descent (lowering/emission) are strictly level-indexed (`L-Stage`, `L-Freeze`, `L-Erase`). Mizu is the first comptime host (Phase 7) and the core's JIT the second (Phase 10), both over the core's table (Phase 5), and `H-Det` is tested between them.
 4. **Bootstrap Is Not the Interface (`H-Boot`):** `compiler` is the treewalk-interpreted minimum that gets a first implementation off the ground; `std.meta` is the hook surface every comptime host implements once, as `HostServices` entries that a mizu instruction or a JIT call reaches (`H-Hook`). `compiler` keeps only that minimum and the floor that code unable to name `std` needs, since DOIR must work without `std`. Every other name moves toward `std.meta`, never the other way.
-5. **The Editor Is a Consumer, Not an Afterthought:** Source locations, statement-level recovery, and token-level highlighting only pay for themselves if something reads them. The LSP is that consumer, and once its comptime-aware features land (Phase 5) it is the strictest test of position-keyed comptime state (`C-Order`, `L-Freeze`).
+5. **The Editor Is a Consumer, Not an Afterthought:** Source locations, statement-level recovery, and token-level highlighting only pay for themselves if something reads them. The LSP is that consumer, and once its comptime-aware features land (Phase 7) it is the strictest test of position-keyed comptime state (`C-Order`, `L-Freeze`).
 6. **Components Are the Tree:** The parser builds binding entities directly through the builders (`reference/builders.d`). There is no separate syntax tree. Components stay plain data with entity ids in place of pointers, and a node has one `Parent`: a shared, multi-parent green tree would bring back the duplication and serialization problems the ECS design avoids. Node kinds and states are valueless tags, and passes are systems over the entities carrying a component set. Every IR lives in this one store: its nodes are entities, its edges are relation components, and every component that was not written by an input commit (a parse and the location pass that follows it, or a level freeze) is owned by the query that produced it. Source-visible relations (block contents, scopes) hold only declarations. Trivia never becomes an entity.
 7. **Edits Preserve Identity:** A reparse keeps the entity id of every declaration it can match to the previous parse and replaces only the components of declarations that changed, so memos keyed by unchanged entities stay valid without any change marking. Declaration order is an order key rather than an ordinal, so an insertion reorders nothing else, and source spans are untracked reads, so moving text re-runs only the comptime evaluations that read their own source location (`AT-Source`). Absolute locations are derived, and only diagnostics, the editor and those evaluations read them.
-8. **A Target Is a Library, Not a Fork:** A backend is an ordinary DOIR namespace over the host ABI (`T-Sig`, `H-Hook`), and the tower is values too: `compiler.levels.make` makes the backend a level, `compiler.levels.check` adds to the semantic analysis a level runs over its own entities (`L-Sema`), and `compiler.levels.lower_to` edges with their own passes lower one level onto another (`T-Value`, `L-Lower`). Adding a target means writing a backend and its edges, not editing the compiler, and a build may have several targets at once.
+8. **A Target Is a Library, Not a Fork:** A backend is an ordinary DOIR namespace over the host ABI (`T-Sig`, `H-Hook`), and the tower is values too: `compiler.levels.make` makes the backend a level, `compiler.levels.check` adds to the semantic analysis a level runs over its own entities (`L-Sema`), and `compiler.levels.lower_to` edges with their own passes lower one level onto another (`T-Value`, `L-Lower`). Adding a target means writing a backend and its edges, not editing the compiler, and a build may have several targets at once. The one exception is the target the core builds in for the machine it runs on (`T-Intrinsic`), which the core profile runs on and which is the full compiler's default.
 9. **Every Claim Names the Chapter That Measures It:** A design property is stated with the rule tag that defines it and the phase that produces the artifact that tests it. A claim with no phase behind it is future work, not a goal.
+10. **Core Is a Waterfall, DOIR Is Its Memo:** DOIRcore evaluates a file in lexical order, once, with no query engine, no revisions and no dependency edges, because a JIT pays for every structure it builds. Each of its entry points works on one declaration and takes an optional read log, a list of the entities it read, which is null when the core runs alone. DOIR calls those entry points from inside its queries and turns the read log into the query's `Reads`, so the semantics are written once, in the core, and DOIR adds only memoization, incrementality and the parts of the language the core profile leaves out. Nothing in the core imports a DOIR module; the incremental commit, the query engine and the language server stay in DOIR.
 
 ## Architecture Blueprint
 
 ```
-                         [ Source Files ]
-                                 │
-                                 ▼
-                      [ Lexer / RD Parser ] ───────► [ Editor Front-End (LSP) ]
-                                 │                              ▲
-                                 ▼                              │
-                  [ Reparse Match: ChangedAt, E-Remap ]         │
-                                 │                              │
-                                 ▼                              │
-                   ┌───────────────────────────┐                │
-                   │       Entity Store        │                │
-                   │  - EntityId (ℕ) Handles   │                │
-                   │  - Component Slot Maps    │                │
-                   │  - Query Entities, Spans  │ ── absolute ───┘
-                   └─────────────┬─────────────┘    locations
-                                 │
-                                 ▼
-                   ┌───────────────────────────┐
-                   │       Query Engine        │
-                   │  - Memoized Queries       │
-                   │  - Cycle/Recursion Guard  │
-                   │  - Revisions, Cutoff      │
-                   └─────────────┬─────────────┘
-                                 │
-               Ascent ───►  [ L-Stage Tower ]  ───► Descent
-            (Sema & VM)     builtin: Compiler        (Rewrites & Lowering)
-                            Backends τ₁, τ₂ …  (targets: lower_to builtin)
-                            Standard            (lower_to each backend)
-                            Source Languages    (implicit edges)
-                            a DAG, found by the scan (L-Scan)
-                                 │
-                                 ▼
-                      [ Byte Emission / JIT ]  (one artifact per target)
+ DOIR (full profile, P-Full)
+ ┌──────────────────────────────────────────────────────────────────────────┐
+ │  [ Source Files ] ─► [ Rope, Per-Block Reparse, Reparse Match ] ─► [ LSP ] │
+ │                                   │  ChangedAt, E-Remap                    │
+ │                                   ▼                                        │
+ │                 [ Query Engine: memos, Reads, cutoff, workers ]            │
+ │                                   │                                        │
+ │      [ L-Scan Tower ]  ascent (sema, comptime)  ·  descent (passes)        │
+ │      DOIR-source backends τ₁, τ₂ …, bundles, sections, files (O-*)         │
+ └───────────────────────────────────┬──────────────────────────────────────┘
+                                     │ per-declaration calls, read logs → Reads
+ DOIRcore (core profile, P-Core)     ▼
+ ┌──────────────────────────────────────────────────────────────────────────┐
+ │  [ Builders ] ◄─ [ One-Shot Lexer / RD Parser ]      Entity Store (libECRS)│
+ │        │                                                                   │
+ │        ▼                                                                   │
+ │  [ Waterfall Sema: resolve, deduce, layout, effect logs, comptime ]        │
+ │        │                    ▲ HostServices (H-Services)                    │
+ │        ▼                    │                                              │
+ │  [ Linear IR ─► Register Allocation ─► Native Encoder ] ─► JIT memory      │
+ │        intrinsic host target and intrinsic std (T-Intrinsic)               │
+ │        Mizu lowering as the portable fallback and second host (H-Det)      │
+ │  JIT API: compile all · compile one function, callees lazily (L-Embed)     │
+ └──────────────────────────────────────────────────────────────────────────┘
 ```
 
 ---
@@ -107,43 +99,77 @@ Legacy behavior reference: [doir-lang/DOIR/tree/D](https://github.com/doir-lang/
   - `initialize`, `didOpen`/`didChange`, `publishDiagnostics` wired to those checks and to the parser's recovery diagnostics.
   - `documentSymbol` from `Name`/`Parent`/`Block`; hover from the position index.
 - **Verification:** A file with a deliberate syntax error still highlights, still lists its symbols, and still reports every other rule violation in it. The ported checks report the same violations as `doir_check` on the corpus. Typing inside one declaration re-runs the checks for that declaration and its dependents only.
-- **Deferred:** hover with deduced types, and references and rename, once deduction (`D-Deduce`), comptime evaluation and the `std.meta` entity queries exist (Phase 5). Whole-file reparse is cheap enough for v1 — the current checker parses the whole corpus in under 100 ms — and reparse matching already keeps unchanged entities and their memos. If parsing itself becomes the cost, reparse only the innermost changed `{}` block and match within it.
+- **Deferred:** hover with deduced types, and references and rename, once deduction (`D-Deduce`), comptime evaluation and the `std.meta` entity queries exist (Phase 7). Whole-file reparse is cheap enough for v1 — the current checker parses the whole corpus in under 100 ms — and reparse matching already keeps unchanged entities and their memos. If parsing itself becomes the cost, reparse only the innermost changed `{}` block and match within it.
 
-### Phase 4: Level 0 (`compiler`) & Emission Base
-- **Goal:** Query-driven byte emission of lowest-level binding primitives.
+### Phase 4: The Split
+- **Goal:** Two packages where there is one, with no change in behaviour.
+- **Deliverables:**
+  - `core/`, the dub package `doir-core`, with its own `AGENTS.md`, `tests/runner.d`, `tools/lint.py` and `tools/doctest.py`; DOIR depends on it by path, as on Mizu.
+  - The modules that hold no query state move to it as `doir.core.*`: the interned strings, the binding components and `Lookup*` (`doir.core.components.ast`, `types`), the builders, the lexer, the generated tables and the parser, and the components the parser writes (`SourceSpan`, `SourceAnnotation`, syntax errors and their fixes).
+  - `doir.core.parse`: a one-shot whole-file parse, lexing, parsing and building with spans, with no rope, matching, order keys or `ChangedAt`.
+  - Everything incremental stays: the query engine, the commit and its matching and chunking, positioned logs, imports, checks, schedules, the printer and formatter, the simulation and the language server.
+  - The two packages share the root package `doir`, so neither has a `doir/package.d`, and each copy of `tools/lint.py` rejects an import from `doir.core` of any other `doir` module.
+- **Verification:** Every test that passed before passes, the moved modules' tests run in the core's runner, `tools/gen_tables.py --check` passes against the core's tables, the parser differential, conformance corpus, simulation and language server harness pass unchanged, and the core builds for wasm32-wasi.
+- **Where it stands (2026-11-16):** done but for the wasm32-wasi build, which needs the core's own `tools/wasi.py`. The core is a `sourceLibrary`, as libECRS is, since a static library would carry a second copy of libECRS into DOIR's link. A test in `doir.source` checks that `doir.core.parse` builds the same declarations as the incremental commit over the corpus. On a million-line file in a release build, the one-shot parse takes 516 ms and peaks at 342 MB, against 1.22 s and 448 MB for DOIR's first commit on one thread (871 ms and 515 MB on 12); DOIR's pays for the bookkeeping that lets an edit commit in 0.2 ms.
+
+### Phase 5: Core Semantics
+- **Goal:** The semantics of Part II, minus the full profile's tower, run once in lexical order over the builders' IR.
+- **Deliverables:**
+  - Resolution: each `Lookup*` component replaced by the entity-valued one it names (`R-Unqual`, `R-Order`, `A-Res`, `R-Merge`, `R-Shadow`), a forward reference evaluating its declaration on demand.
+  - Deduction (`D-Deduce`, `D-Assert`), structural identity (`S-Struct`), layout (`S-Field`), former memoization (`TF-Memo`), and modifiers over positioned effect logs folded at each read and frozen at the end (`M-Flag`, `M-Freeze`, `C-Order`, `L-Freeze`). The positioned logs and order keys move here from DOIR, which keeps only the query that owns each entry.
+  - A stack of declarations being evaluated, which reports a cycle with its chain (`Q-Cycle`), and every limit of `IL-Limit` named and asserted.
+  - Each entry point works on one declaration and takes an optional read log, null when the core runs alone (Principle 10).
+  - The `P-Core` diagnostics: each call the core profile rejects, annotated, with a hint naming the full compiler.
+  - The bootstrap (`H-Boot`) folded as it is reached: `compiler.base_type`, `pointer` and the other level-0 builtins Phase 6 and Phase 7 call, with constant arguments, in lexical order (`C-Order`).
+  - The `HostServices` table (`H-Services`, `H-ABI`), versioned and looked up by name, so Mizu (Phase 7) and the JIT (Phase 10) share its layout and every hook has one implementation.
+  - The comptime bodies of the machine primitives (`C-Interpret`): arithmetic, comparisons, conversions and memory operations as native D functions with the semantics of §13 and §14 at the target's widths (`H-Target`), which Phase 7's Mizu host calls and Phase 10 binds as `std`'s.
+- **Verification:** The conformance corpus's core cases pass in the core, with every annotation and hint; a seeded test compares the core's answers with and without read logs, and with declarations evaluated in a random demand order, against lexical order; the primitives' answers match `tests/software_float.py`'s model and the spec's integer rules on seeded operands at every width.
+
+### Phase 6: Level 0 (`compiler`) & Emission Base
+- **Goal:** Query-driven byte emission of lowest-level binding primitives. This phase and every one after it build DOIR, in the full profile (`P-Full`); the core profile rejects the output builtins (`P-Core`). The primitive types `base_type` and `pointer` build are the core's (Phase 5), and the queries here call it per declaration.
 - **Reference:** `source/doir/pipeline/opt/byte_emiter.d` in `tree/D`.
 - **Deliverables:**
-  - Queries: `type_of(EntityId)` and `emit_object(Target)`, one artifact per target. A build with no target gets the default one (`T-Value`), but no backend exists to supply it until Phase 5, so here the default lowers nothing and its artifact is the bytes comptime emitted. `lower_level` waits for Phase 5.
-  - Output sections (`O-Section`): `compiler.section` and `compiler.sections.make`, and `compiler.emit_artifact`, which writes a section to a path under the output directory once the build succeeds, as many files as the build makes (`O-Artifact`). `compiler.emit`, `emit_bytes`, `emit_bits` and `reserve` append to a section, bit by bit in the order `compiler.assembler.bit_order` declares (`O-Bits`), and `position` and `patch` work within the current contribution (`O-Fixup`). These are bootstrap builtins the compiler runs itself, not host hooks (`H-Boot`, `H-Hook`), so the `HostServices` table waits for Phase 5.
+  - Queries: `type_of(EntityId)` and `emit_object(Target)`, one artifact per target. A build with no target gets the default one (`T-Value`), but no backend exists to supply it until Phase 7, so here the default lowers nothing and its artifact is the bytes comptime emitted. `lower_level` waits for Phase 7.
+  - Output sections (`O-Section`): `compiler.section` and `compiler.sections.make`, and `compiler.emit_artifact`, which writes a section to a path under the output directory once the build succeeds, as many files as the build makes (`O-Artifact`). `compiler.emit`, `emit_bytes`, `emit_bits` and `reserve` append to a section, bit by bit in the order `compiler.assembler.bit_order` declares (`O-Bits`), and `position` and `patch` work within the current contribution (`O-Fixup`). These are bootstrap builtins the compiler runs itself, not host hooks (`H-Boot`, `H-Hook`), so the `HostServices` table waits for Phase 7.
   - `format.flat.doir`, the format with no header (`O-Format`), so the first backend writes an image with no ELF to get right first.
   - The `compiler` namespace at its minimum (`H-Boot`): primitive type creation (`base_type`, and `pointer`, which builds `compiler.byte_pointer`) and byte emission only. Every other builtin-block name waits until a level-1 runner exists.
-- **Verification:** Compile `test_string.doir`, which emits into a section and writes it to `res.bin` itself with `compiler.emit_artifact`. A ModRM byte written as fields of 2, 3 and 3 bits most significant first equals the byte written whole, and a 32-bit word written least significant first equals its little-endian bytes; each `O-Section`, `O-Bits`, `O-Fixup` and `O-Artifact` reject case fails with its annotation and hint, and a failed build writes no file. The build makes no target and there is no backend yet to supply the default, so nothing runs the root as a script (`L-Entry`): every line folds, and the root needs no terminator until Phase 5.
+- **Verification:** Compile `test_string.doir`, which emits into a section and writes it to `res.bin` itself with `compiler.emit_artifact`. A ModRM byte written as fields of 2, 3 and 3 bits most significant first equals the byte written whole, and a 32-bit word written least significant first equals its little-endian bytes; each `O-Section`, `O-Bits`, `O-Fixup` and `O-Artifact` reject case fails with its annotation and hint, and a failed build writes no file. The build makes no target and there is no backend yet to supply the default, so nothing runs the root as a script (`L-Entry`): every line folds, and the root needs no terminator until Phase 7.
 
-### Phase 5: Comptime Host ABI & Level 1 (`mizu`)
+### Phase 7: Comptime Host ABI & Level 1 (`mizu`)
 - **Goal:** Implement two-level ascent/descent and VM comptime execution via the host ABI.
 - **Reference:** `source/doir/pipeline/opt/mizu/comptime_evaluate.d` and `mizu/instructions.d` in `tree/D`; `rustc_const_eval/src/interpret` (`InterpCx<M: Machine>`, abstract memory) in rustc for the host-services split.
 - **Deliverables:**
   - `mizu.doir` and `standard.mizu.doir` ported from `tree/D` (not yet in this repository): the mizu backend this phase runs, imported into a backend namespace, made a target and lowered onto `compiler.levels.builtin` as `reference/backends.doir` does, and what `test.doir` and `test_call.doir` include. `reference/machine.doir` states what the port has to satisfy.
   - The `compiler` names a backend needs before level 1 can run (`H-Boot`): `compiler.signed_base_type`, `float_base_type`, `comptime_base_type`, the modifiers `never_comptime`, `always_inline` and `share_body_across_values`, the encoder helpers `shift_right` and `truncate_to_byte`, `indicate_return`, `return`, `block_result`, the `compiler.level` type and `levels.make`, `this_file`, `lower_to`, `check`, `set_host` and `builtin`, and `compiler.paste_file`, which the backends file pastes `machine.doir` in with (`I-Paste`). These are what the Mizu port and its backends file call; each system in the port's `run_schedule` calls becomes a `compiler.levels.check` on the target whose entities it analyses (`L-Sema`), and its `override_fallback_schedule` becomes the passes of the Mizu edges, onto `builtin` and from `std`, which both run the legacy schedule as it stands.
-  - The tower scan (`L-Scan`, `L-Tower`): before ascent, read every `make`, `this_file` and `lower_to` call, resolve their arguments by name across the build's files, add the implicit edges (`L-Lower`), reject cycles, and rank the levels. This phase needs only the conventional tower, one target under `std` and the program; Phase 7 exercises the rest.
-  - C-compatible `HostServices` thunk table (store queries, type builder, allocator, diagnostics), versioned and looked up by name from the start (`H-Services`, `H-ABI`), so the deferred JIT host does not change its layout.
-  - Comptime bodies of the machine primitives (`C-Interpret`): the host runs the arithmetic, conversions and memory operations with the spec's semantics at the target's widths, rather than interpreting the machine's body.
+  - The tower scan (`L-Scan`, `L-Tower`): before ascent, read every `make`, `this_file` and `lower_to` call, resolve their arguments by name across the build's files, add the implicit edges (`L-Lower`), reject cycles, and rank the levels. This phase needs only the conventional tower, one target under `std` and the program; Phase 12 exercises the rest.
+  - The `HostServices` table and the comptime bodies of the machine primitives are the core's (Phase 5, `C-Interpret`); this phase points DOIR's comptime at them.
   - The `std.meta.*` prototypes of `standard.doir` bound to that table (`H-Boot`), so comptime code stops reaching into `compiler`.
-  - Embedded Mizu VM whose hook instructions dispatch through `HostServices` (`H-Hook`), so Mizu and a later JIT share one implementation of every hook.
-  - Bidirectional type deduction (`D-Deduce`) and in-place modifiers (`M-Flag`, `M-Freeze`) over the positioned effect logs. `standard.doir` cannot load without them: its first lines apply modifiers, and `std.meta.entity_of` has a deduced parameter.
-  - Ascent query `evaluate_comptime(EntityId, Position)`, keyed by ⟨entity, lexical position⟩ inside a level and by entity alone once it is frozen (`L-Freeze`, `M-Lexical`).
+  - Mizu as the comptime host, its hook instructions dispatching through the core's `HostServices` (`H-Hook`); the JIT joins it as the second host in Phase 10, sharing every hook's implementation, and `H-Det` compares them.
+  - Deduction (`D-Deduce`) and in-place modifiers (`M-Flag`, `M-Freeze`) are the core's (Phase 5); DOIR memoizes them as queries per declaration, recording the core's read log as `Reads`, and owns each effect-log entry by the evaluation that wrote it. `standard.doir` cannot load without them: its first lines apply modifiers, and `std.meta.entity_of` has a deduced parameter.
+  - Ascent query `evaluate_comptime(EntityId, Position)`, wrapping the core's evaluation of one declaration, keyed by ⟨entity, lexical position⟩ inside a level and by entity alone once it is frozen (`L-Freeze`, `M-Lexical`).
   - Level freeze transition `freeze_level(Level)`: an engine state change and an input commit, not a memoized query, that makes cross-level queries defined (`L-Freeze`). An edit to a frozen level marks it and every level above it unfrozen, a per-level flag that walks no dependency edge; re-freezing writes the folded components as inputs and sets `ChangedAt` only where a folded value changed, so early cutoff reaches across levels.
   - Lowering query `lower_level(EntityId, Level, Target)` from level 1 to 0. The lowering query for τ adds τ to the `Lowered` relation of each entity it retires and lists that entry, not the whole component, in its `Produces`, so an edit that re-runs one target's lowering clears only that target's entry.
-  - The `L-Erase` read barrier as a dependency-graph check (`rustc-architecture.md` D6): a query below level n for target τ that records a read of an entity whose `Lowered` relation holds τ is reported as a compiler bug. Phase 10 extends it to the full `T-Legal` verifier.
+  - The `L-Erase` read barrier as a dependency-graph check (`rustc-architecture.md` D6): a query below level n for target τ that records a read of an entity whose `Lowered` relation holds τ is reported as a compiler bug. Phase 15 extends it to the full `T-Legal` verifier.
   - The comptime-aware LSP features Phase 3 deferred: hover with deduced types, and references and rename over the `std.meta` entity queries. Hover at a position reads the comptime state at that position (`L-Freeze`).
 - **Verification:** `standard.doir` loads over the mizu level; fold compile-time expressions; after lowering, every Level 1 entity's `Lowered` relation holds the target, still answers queries, and is read by no level-0 rewrite or emission; editing a machine-level constant re-runs only the `std` queries that read it; hovering a type on a line above a modifier applied to it shows the type unmodified.
 
-### Phase 6: Internal Virtual & Physical Register Allocation
+### Phase 8: Core Lowering and the Native Backend
+- **Goal:** Native code, fast to produce, for the machine the core runs on.
+- **Deliverables:**
+  - A compact linear IR built from resolved entities, one function at a time, with blocks, block results and calls (§7, §9).
+  - A linear-scan register allocator keeping `REG-Virt`, `REG-Share` and `REG-Phys`, which DOIR's backends later reach through `compiler.assembler.*` (Phase 9).
+  - An x86-64 encoder writing into executable memory; executable pages and the instruction-cache flush are libfp's, since only libfp calls the operating system.
+  - Jitted code reaching the host through Phase 5's `HostServices` table as direct calls (`H-Hook`).
+  - The JIT API: compile every declaration, or compile one function with a stub in front of each callee that compiles it on its first call (`L-Embed`); find a compiled function by name; free.
+  - A Mizu lowering beside the native one, for machines with no encoder and for wasm.
+- **Verification:** A corpus of core-profile programs over the builtin block's types (calls, blocks, loops, memory) compiles and runs natively and on Mizu with the same results; a seeded test calls random functions of a generated file in random order and checks each result against Mizu's; JIT time per function is measured and a budget set from it.
+
+### Phase 9: Internal Virtual & Physical Register Allocation
 - **Goal:** Manage internal virtual registers (temporaries), support explicit virtual register aliasing, and map virtual registers to physical registers.
 - **Reference:** `opt/assign_temporaries.d` and `opt/lower_functions.d` in `tree/D`.
 - **Deliverables:**
   - Virtual register assignment query (`REG-Virt`) and register sharing through `std.unsafe.share_register` (`REG-Share`).
-  - Interval-sweep allocator mapping internal virtual registers to physical registers (`REG-Phys`) and stack spill offsets.
+  - The core's allocator (Phase 8) mapping internal virtual registers to physical registers (`REG-Phys`) and stack spill offsets, reached by DOIR-source backends through `compiler.assembler.*`.
   - Calling convention queries (`compiler_impl.prologue`, `compiler_impl.epilogue`, `compiler_impl.pass_arguments`, `compiler_impl.call`, `compiler_impl.emit_return`).
   - The `compiler.assembler` bootstrap names the allocator reads (`H-Boot`): the register classes, `pin_register`, `share_register`, `register_for`, `return_register` and `begin_register_allocation`.
   - Object output (`O-Fixup`, `O-Format`), now that calls cross functions: the `emit_function(entity, target)` query, a function's bytes per section with its patches and relocations, and `place_sections(target)`, which joins and aligns contributions, assigns addresses and resolves internal relocations.
@@ -154,14 +180,30 @@ Legacy behavior reference: [doir-lang/DOIR/tree/D](https://github.com/doir-lang/
   On Linux with ELF, `readelf -a` accepts the file, it runs, and each libc import is a dynamic relocation; freestanding with ELF has no `PT_INTERP`; freestanding with hex, read back with `objcopy -I ihex -O binary`, is byte for byte the flat image.
   Linux paired with the flat format is rejected under `O-Format`, annotating a libc `load_from_library`.
 
-### Phase 7: Multi-Target Builds and Target Bridges
+### Phase 10: Built-In `std` and the Core as Comptime Host
+- **Goal:** `std` is part of the core, as native code, and the core runs comptime by jitting it.
+- **Deliverables:**
+  - `std`'s declarations, generated from `standard.doir` and `standard.os.doir` by `core/tools/gen_std.py` into `doir.core.std.declarations` as builder calls, so starting the core parses nothing; `--check` keeps them in step, as `gen_tables.py` keeps the lexer's tables.
+  - A native body for every prototype (`T-Intrinsic`, `I-Extern`), in `doir.core.std.*`: numbers, conversions and memory with the semantics of §13 and §14, `std.os` through libfp (`OS-Sig`), and the `std.meta` hooks as `HostServices` entries; the JIT inlines or calls them.
+  - Comptime run as jitted code (`H-Host`), the second host beside Phase 7's Mizu, under the step and memory budgets (`IL-Steps`, `IL-Memory`); Phase 5's primitive bodies become `std`'s, so comptime and the program run the same code.
+- **Verification:** `standard.doir`'s own tests pass in the core with nothing loaded from source; the same comptime run on the JIT and on Mizu gives the same answers (`H-Det`); `tests/software_float.py`'s cases give the native floats the emulated ones' bits, NaN payloads aside.
+
+### Phase 11: Embedding
+- **Goal:** The core is something another program links and calls.
+- **Deliverables:**
+  - A C ABI over the JIT API (`extern(C)`), with a header, and a sample host program that loads a script, calls a function by name and passes values both ways.
+  - An arm64 encoder, so the core runs natively on both machines Phase 12's universal binaries target.
+  - A start-up and JIT budget, set from Phase 8's measurements, checked in CI.
+- **Verification:** The sample host runs on Linux and Windows, x86-64 and arm64, and in wasm32-wasi over Mizu; a script compiled and called through the C ABI gives the same results as the same file run by `bin/doir`.
+
+### Phase 12: Multi-Target Builds and Target Bridges
 - **Goal:** Retargeting via machine signatures (`T-Sig`) and heterogeneity inside a single build: a build names a set of targets (`T-Value`), and one program can call code lowered for more than one of them. Chapter 7 cannot run without this.
 - **Deliverables:**
   - Machine signature interface (`T-Sig`): `machine.u1`, `machine.u8`, `machine.u32` or `machine.u64` by pointer width, `machine.pointer_sized`, `machine.pointer_difference`, `machine.byte_order`, the optional types (`T-Optional`), the `compiler_impl` hooks, the register classes, and the descent schedule. `reference/machine.doir` is the contract to check a machine against.
   - The tower as a DAG (`L-Tower`, `L-Lower`): every backend lowered onto `builtin` is a target, `std` lowered onto each by explicit edges, intermediate levels that are not targets (a slang level onto SPIR-V), and per-target descent along `next_σ`, an edge with no passes handing its level down to be lowered with its head. `std.targets.compile_for` restricts a declaration to a subset of the targets (`T-Live`), and descent and emission run once per target. A build with one target is the old case unchanged.
   - The host target: `compiler.levels.set_host` marks the target that runs the program's root as a script (`L-Entry`); a single target is the host, and several targets with no host, or two, is an error. Only the host's root is held to `WF-Term`.
   - Per-target lookup (`R-Unqual`, `I-Extern`): under target τ, looking down from a level sees only the levels below it whose way down reaches τ or no target at all, so `std` prototypes bind to τ's definitions.
-  - Per-target comptime: `evaluate_comptime` (the spec's `cmp`) is keyed by ⟨entity, position, target⟩ inside a level and ⟨entity, target⟩ once it is frozen, for every level that reads a machine signature (`T-Split`). Sharing comes from dependencies, not early cutoff: an evaluation whose recorded dependencies include no machine-level entity cannot depend on the target, so its memo answers every target's key and it runs once. An answer that reads a machine entity (a resolved `std.u8`) runs per target, so how much of a shared level is evaluated once is measured (Phase 11), not assumed.
+  - Per-target comptime: `evaluate_comptime` (the spec's `cmp`) is keyed by ⟨entity, position, target⟩ inside a level and ⟨entity, target⟩ once it is frozen, for every level that reads a machine signature (`T-Split`). Sharing comes from dependencies, not early cutoff: an evaluation whose recorded dependencies include no machine-level entity cannot depend on the target, so its memo answers every target's key and it runs once. An answer that reads a machine entity (a resolved `std.u8`) runs per target, so how much of a shared level is evaluated once is measured (Phase 16), not assumed.
   - The bridge hooks inspect a call's arguments through `compiler.argument_count` and `compiler.argument`. They are floor names (`H-Boot`): a backend cannot name `std.meta` (`L-Mono`), so code below `std` needs them in `compiler`.
   - Targets, not device classes. There is no cpu/gpu enum in the language: a target is whatever backend the build lowers onto `builtin`, so one build can carry x86 and wasm, another SPIR-V and slang, and a third all four (`T-Device`). What each level can reach is declared by the levels themselves, not inferred from a hardware category.
   - Bridges (`T-Bridge`). Each backend writes its own half of a crossing, naming its peer by the declaration that holds its target: `compiler_impl.export_entry` emits a function other targets can call, and `compiler_impl.bridges.<target>.call` marshals the arguments and result and replaces `compiler_impl.call` for a callee live only on that target. A pair whose caller declares no namespace for the callee's target cannot call across, and the failed lookup names both targets. A callee live for several other targets is ill-formed to call across.
@@ -172,12 +214,12 @@ Legacy behavior reference: [doir-lang/DOIR/tree/D](https://github.com/doir-lang/
   - Bundles (`O-Bundle`): `compiler.levels.bundle` makes several targets alternatives, each the host of its own slice, and the bundle level's `compiler_impl.write_bundle` joins their thin artifacts through `compiler.artifacts`. Slices cooperate with no one: a call from one to code live only on another is rejected, naming both. The bundle this is for is a macOS universal binary, an x86_64 and an arm64 Mach-O in one file; `os.macos.doir`, `format.macho.doir`, `format.universal.doir` and an arm64 machine come with it, after the x86 backend.
 - **Verification:** One source file declares functions live for two different targets and compiles in a single build to both, and the build reports how many of the shared levels' comptime queries were evaluated once and how many per target. A declaration restricted to a target the build does not name is reported dead. A call across a pair with no declared bridge is rejected with a diagnostic naming both targets. A build naming one target produces output identical to the same build under the previous single-target rule. The universal build is accepted by `lipo -info` as `x86_64 arm64`, and `lipo -thin` gives back each slice byte for byte as that target's thin build.
 
-### Phase 8: Standard Library (`std`) Integration
-- **Goal:** Self-contained `standard.doir` compiled over multiple machine targets.
+### Phase 13: Standard Library (`std`) Integration
+- **Goal:** Self-contained `standard.doir` compiled over multiple machine targets. DOIR compiles `standard.doir` from source over its DOIR-source backends, and the core's built-in `std` (Phase 10) is the reference their results are checked against.
 - **Reference:** `standard.doir`; port `test_standard.doir` from `tree/D` (not yet in this repository).
 - **Deliverables:**
   - A second CPU backend: a 32-bit variant of the Mizu backend, which provides `machine.u32` as its pointer width and lacks `machine.u64`.
-  - `standard.doir` compiled in one build over the Mizu target and that variant's (Phase 7), with an optional name (`T-Optional`) one provides and the other lacks, used behind `std.numbers.integer_available` so `C-Splice` drops it where it is absent.
+  - `standard.doir` compiled in one build over the Mizu target and that variant's (Phase 12), with an optional name (`T-Optional`) one provides and the other lacks, used behind `std.numbers.integer_available` so `C-Splice` drops it where it is absent.
   - Every `std` prototype that is not a host hook bound to a body on both backends (`I-Extern`), checked against `reference/machine.doir`: the backend's own, or the software body `standard.emulated.doir` gives `std`, which the lowest-ranked definition replaces.
     The 32-bit variant defines only the primitives of `reference/machine.doir`'s first `std` block, so the emulation is what it runs.
     It also declares `machine.f32` but defines nothing in `std.float` (`N-Kind`), so its binary32 arithmetic is the software floats, whose steps `tests/software_float.py` already checks.
@@ -187,39 +229,40 @@ Legacy behavior reference: [doir-lang/DOIR/tree/D](https://github.com/doir-lang/
 - **Verification:** `test_standard.doir` compiles and passes verification without errors on both targets, and gives the same results on the variant, which emulates, as on Mizu, which does not: bit for bit for floats, NaN payloads aside.
   A program over `std.os` prints, reads back a file it wrote and joins a thread on the native target, gets `errors.unsupported` on freestanding Mizu, and reads the build machine's page size at comptime on both.
 
-### Phase 9: Graphics Target Backend (Chapter 6)
-- **Goal:** Prove that a target is ordinary library code and that the same source runs on two targets. Chapter 6 is due before Chapter 4, so this phase starts as soon as Phase 5 makes the host ABI callable, and runs in parallel with Phase 8.
+### Phase 14: Graphics Target Backend (Chapter 6)
+- **Goal:** Prove that a target is ordinary library code and that the same source runs on two targets. Chapter 6 is due before Chapter 4, so this phase starts as soon as Phase 7 makes the host ABI callable, and runs in parallel with Phase 13.
 - **Deliverables:**
   - A backend for the graphics API written against `HostServices` (`H-Hook`, `H-Services`), with its own register classes, made a target and lowered onto `builtin` by its own descent passes (`L-Lower`).
   - A port of that level to a second target for the web, with the concessions the port required recorded as a list.
-  - The handle discipline that keeps entity ids out of host memory (`MEM-Escape`, `E-Remap`), tested by renumbering between levels while the backend holds handles. The table itself is Phase 5's (`H-ABI`).
-- **Verification:** The same source compiled in two single-target builds, one per target, gives identical answers for every comptime query that reads no machine signature, and answers that read one differ only as the two signatures do (`H-Target`). Once Phase 7 exists the same check runs in one build over both (`T-Split`). `H-Det` is a claim about comptime hosts, not targets, and needs a second host to test (Deferred). The backend's pass count and lines of code are recorded, because they are the numbers Chapter 4 cites.
+  - The handle discipline that keeps entity ids out of host memory (`MEM-Escape`, `E-Remap`), tested by renumbering between levels while the backend holds handles. The table itself is Phase 7's (`H-ABI`).
+- **Verification:** The same source compiled in two single-target builds, one per target, gives identical answers for every comptime query that reads no machine signature, and answers that read one differ only as the two signatures do (`H-Target`). Once Phase 12 exists the same check runs in one build over both (`T-Split`). `H-Det` is a claim about comptime hosts, not targets, and needs a second host to test (Deferred). The backend's pass count and lines of code are recorded, because they are the numbers Chapter 4 cites.
 
-### Phase 10: Verifier and Conformance Corpus (Chapter 4)
+### Phase 15: Verifier and Conformance Corpus (Chapter 4)
 - **Goal:** Make level legality a checkable property and every rule tag testable.
 - **Deliverables:**
-  - A legality verifier after each lowering for each target (`T-Legal`), extending Phase 5's read barrier: every entity read below the level just lowered for target τ satisfies that level's signature for τ, and nothing whose `Lowered` relation holds τ is still read.
+  - A legality verifier after each lowering for each target (`T-Legal`), extending Phase 7's read barrier: every entity read below the level just lowered for target τ satisfies that level's signature for τ, and nothing whose `Lowered` relation holds τ is still read.
   - A conformance corpus keyed by rule tag, with at least one file each tag alone decides (spec Part II), and both an accepted and a rejected file for every tag a program can violate, run against the parser and the semantic checks. It starts as `tests/conformance`, run by `tools/conformance.py`.
   - Differential testing against `tools/doir_check.py` over that corpus.
 - **Verification:** Every tag in Part II has a corpus entry naming it, and every tag a program can violate has both an accepted and a rejected one. A lowering that leaves an entity readable below its level is caught by the verifier rather than by a crash in emission.
 
-### Phase 11: Measurement (Chapter 4)
+### Phase 16: Measurement (Chapter 4)
 - **Goal:** Turn the design claims into numbers.
 - **Deliverables:**
   - The control is the legacy waterfall compiler (`tree/D`), not a new implementation: it compiles the same language through a fixed pass schedule (the one `reference/machine.doir` transcribes), so it differs from this compiler in architecture and in the legacy divergences spec Part III records (`C-Specialize`, `AT-Set`, `C-Valid`). Deliverable: the corpus programs both compilers accept and whose result no recorded divergence changes, with their outputs checked equal, and the list of programs left out and why.
-  - Wall-clock compile time and peak memory against the control.
+  - A second control, the core (Phases 4, 5, 8, 10 and 11): a waterfall like the legacy one, on this code base and the same semantics, so architecture is the only difference between it and this compiler.
+  - Wall-clock compile time and peak memory against both controls.
   - Pass count and lines of code per pass, for the query-driven systems written over the store and for the legacy scheduled passes they replace.
   - Output size and quality against the control.
   - Incremental-edit re-run counts: queries re-run after a single declaration change, with and without early cutoff. The control has no incremental mode, so its number is a full rebuild.
-  - Per-target sharing (`T-Split`): for each multi-target build of Phase 7, the comptime queries of the shared levels evaluated once versus once per target.
+  - Per-target sharing (`T-Split`): for each multi-target build of Phase 12, the comptime queries of the shared levels evaluated once versus once per target.
 - **Verification:** These numbers decide H2 (demand-driven compile-time folding replaces scheduled passes, so it reduces their number without raising total compile time; the control also folds, but inside its fixed schedule) and H3 (query-driven passes are shorter than the scheduled legacy passes they replace). Neither is claimed before the measurement exists.
 
-### Phase 12: Heterogeneous Teaching Language and the Classroom Study (Chapter 7)
+### Phase 17: Heterogeneous Teaching Language and the Classroom Study (Chapter 7)
 - **Goal:** A ChocoPy-level front end over DOIR in which a function can be marked a kernel, plus the instruments for the Spring 2028 class.
 - **Deliverables:**
   - A ChocoPy-level front end written as a standalone translator that emits DOIR source, which the build imports like any other file. `language` blocks stay unimplemented (`I-Language`, Phase 2).
-  - Kernel marking lowered to Phase 9's graphics target level — SPIR-V or slang — using Phase 7's target sets and bridges.
-  - Bound checks and passes (`L-Bind`): `compiler.levels.bind_pass(f, name)` binds `name` to the function `f` the way the compiler binds the checks and passes it provides, so `compiler.levels.check` (`L-Sema`) and the passes of `compiler.levels.lower_to` (`L-Lower`) name it like any builtin one. The teaching language's checks and its kernel lowering are the first checks and passes written outside the compiler. A bound function is comptime of a level that is already frozen: for a check on T, a level below T; for an edge F → T, T or a level below it. It is a floor name (`H-Boot`) because a backend that lowers `std` onto itself cannot name `std.meta` (`L-Mono`). It is scheduled this late because it needs Phase 5's entity hooks and Phase 7's explicit edges, and because Phase 11 counts the compiler-provided passes alone. Binding one marks it to be compiled for the machine the compiler runs on and called directly; until the native JIT host exists (Deferred), it runs on the Mizu comptime host. Its signature as a check and as a pass is fixed here, from what the teaching language's checks and kernel lowering need.
+  - Kernel marking lowered to Phase 14's graphics target level — SPIR-V or slang — using Phase 12's target sets and bridges.
+  - Bound checks and passes (`L-Bind`): `compiler.levels.bind_pass(f, name)` binds `name` to the function `f` the way the compiler binds the checks and passes it provides, so `compiler.levels.check` (`L-Sema`) and the passes of `compiler.levels.lower_to` (`L-Lower`) name it like any builtin one. The teaching language's checks and its kernel lowering are the first checks and passes written outside the compiler. A bound function is comptime of a level that is already frozen: for a check on T, a level below T; for an edge F → T, T or a level below it. It is a floor name (`H-Boot`) because a backend that lowers `std` onto itself cannot name `std.meta` (`L-Mono`). It is scheduled this late because it needs Phase 7's entity hooks and Phase 12's explicit edges, and because Phase 16 counts the compiler-provided passes alone. Binding one marks it to be compiled by the core for the machine the compiler runs on and called directly (Phase 8). Its signature as a check and as a pass is fixed here, from what the teaching language's checks and kernel lowering need.
   - The timed backend task (one compiler lowering to two targets in a single build, with a call across them), its rubric, and the matching task in an established infrastructure to serve as the control.
   - A replacement for the byte-emission layer Chapter 5 identified as the principal usability risk: a typed rule DSL for instruction selection in the manner of ISLE, so emitting bytes is not the part students have to learn.
   - Machine-checked verification of the DSL's rules in the manner of Crocus and Alive2, limited to the rule sets small enough to state as SMT obligations. It waits for the DSL because hand-written emission code in a machine level is not in a form SMT obligations can be stated over.
@@ -229,8 +272,7 @@ Legacy behavior reference: [doir-lang/DOIR/tree/D](https://github.com/doir-lang/
 
 Claims with no phase behind them (Principle 9). Each stays out of the chapters until a phase produces its evidence.
 
-- A second comptime host, a native JIT calling `HostServices`: until one exists `H-Det` holds by construction and is not tested.
 - The aegraph mid-end, SSA-based register allocation and Datalog analyses (`ir-design.md` §5, row 6).
-- RVSDG block parameters and results, and OSSA ownership (`ir-design.md` §2, §4.1), until they are written into Part II; Phase 6's pinning workarounds stay until then.
+- RVSDG block parameters and results, and OSSA ownership (`ir-design.md` §2, §4.1), until they are written into Part II; Phase 9's pinning workarounds stay until then.
 - Foreign-language frontends behind `language "name" { ... }` (`I-Language`); until then a `language` block is an error (Phase 2).
 - Per-block reparse (Phase 3) and per (entity, component type) dependencies (Phase 1), until profiling asks for them.

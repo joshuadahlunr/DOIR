@@ -1,4 +1,4 @@
-// Level-0 emission test (roadmap Phase 4): emits the bytes of "Hello World" into a section with `compiler.emit` alone and writes it to `res.bin`, so it needs no backend and every line folds (rules O-Section, O-Artifact).
+// Level-0 emission test (roadmap Phase 6): emits the bytes of "Hello World" into a section with `compiler.emit` alone and writes it to `res.bin`, so it needs no backend and every line folds (rules O-Section, O-Artifact).
 text_name : compiler.byte_pointer = "text"
 text_flags : compiler.pointer_sized = 0
 text_alignment : compiler.pointer_sized = 1

@@ -1,0 +1,155 @@
+# Agent guidelines for DOIRcore
+
+DOIRcore (`doir-core`, modules `doir.core.*`) is the embeddable DOIR compiler: the builders, a one-shot parser, the semantics run once in lexical order, a native JIT for the machine it runs on, and `std` built in as native code.
+It is the core profile of `../doir.spec.md` (`P-Core`, `T-Intrinsic`, `L-Embed`); DOIR, the directory above, is the full profile built on it (`P-Full`).
+`../roadmap.md` Phases 4, 5, 8, 10 and 11 are its build plan, and `../doir.spec.md` is normative for it as for DOIR.
+
+## The core
+
+- **A waterfall, not queries (`../roadmap.md` Principle 10).**
+  Evaluate in lexical order, once, with no query engine, revisions or dependency edges; a forward reference evaluates its declaration on demand (`R-Order`), and a stack of declarations being evaluated reports a cycle with its chain (`Q-Cycle`).
+- **One declaration per entry point.**
+  Every entry point works on one declaration and takes an optional read log of the entities it read, null when the core runs alone; DOIR's queries call it and record the log as their `Reads`.
+  Write each semantic rule once, here.
+- **Nothing above it.**
+  No `doir.core` module imports another `doir` module (`tools/lint.py` reports one as `LAYER-Import`), and there is no `doir/package.d`, since the root package `doir` is shared with DOIR.
+  The incremental commit, the query engine, the printer and formatter, and the language server belong to DOIR.
+- **Speed over code quality.**
+  A JIT pays for every structure it builds and every pass it runs: prefer one pass over the store to several, and leave optimization to DOIR's descent.
+  Only the machine the core runs on is a target (`T-Intrinsic`), with Mizu as the portable fallback and the second comptime host (`H-Det`).
+- **The core profile.**
+  A call the core profile rejects is reported as `P-Core`, annotated at the call, with a hint saying the program needs the full compiler.
+- **Generated code.**
+  `source/doir/core/syntax/tables.d` comes from `../doir.peg` through `../tools/gen_tables.py`; never hand-edit it.
+
+## Diagnostics
+
+- Every diagnostic carries at least one annotation pointing at the offending item, and a hint saying how to fix it, as that annotation's message or as the diagnostic's `note`.
+- When other items are involved, point an annotation at each, saying what part it plays.
+- Tests of a diagnostic assert on its annotations and hint, not only on its kind and count.
+
+## Comments
+
+- Keep comments minimal.
+  Write one only where the code does something difficult to follow on its own: a non-obvious invariant, a subtle memory or lifetime rule, a workaround for a compiler bug, or why an apparently simpler approach would be wrong.
+  Do not restate what the code already says.
+- Cap every free-standing comment (a `//` or `/* */` block that is not a documentation comment) at 25 words.
+  If it needs more, the code or its documentation should carry the explanation instead.
+- Put each sentence of every comment (free-standing, DDoc, docstring or DOIR documentation) on its own line, with a blank line between paragraphs; never hard-wrap a sentence, since editors here soft-wrap.
+  `tools/lint.py` reports a D comment that breaks this as `CMT-Sentence` or `CMT-Wrap`.
+- Do not leave commented-out code, change logs, or notes about what was changed in a comment; those belong in commit messages.
+
+## Documentation
+
+- Put a DDoc comment (`///` or `/** */`) directly above every publicly accessible definition: each public or package-visible function, struct, enum, alias, template, mixin template, and module-level variable.
+  Private helpers do not need one.
+- Every DDoc comment on a function or template includes an example of its use in an `Examples:` section, as a `---` code block:
+
+  ```d
+  /// Appends `value`, growing the array if needed. Returns false if the allocator refused, leaving the array unchanged.
+  ///
+  /// Examples:
+  /// ---
+  /// int* array = null;
+  /// assert(pushBack(array, 42));
+  /// assert(array[0] == 42);
+  /// free(array);
+  /// ---
+  bool pushBack(T)(ref T* array, T value) { ... }
+  ```
+
+- Keep examples short, and make them correct against the current API: they should compile and pass as written under `-betterC`.
+  Check them with `python3 tools/doctest.py`, which compiles and runs every example and reports public definitions missing documentation or an example.
+- Examples see their own module unqualified, as user code would; anything else needs its full name.
+- When a platform `static if` or `version` gives an API several implementations, document the first branch's definitions; an `else` branch reimplementing the same API needs no second copy.
+- Document Python too: a docstring on each module, and on each function and class whose name does not start with `_`.
+  A Python tool's module docstring says how to run it, as a usage line (`python3 tools/doctest.py`).
+- A DDoc comment is documentation, not a free-standing comment, so the 25-word cap does not apply to it, but keep it as brief as the definition allows.
+
+## Style
+
+- Prefer plain-data structs operated on by free functions that take them by `ref` (for example `pushBack(array, x)`, `free(array)`), rather than methods.
+  Use member functions only for operator overloads, for `@property` accessors that name part of a field, and for what a language protocol requires to be a member, such as range primitives (`empty`, `front`, `popFront`) or an `alias this` target.
+  Python is not ported, so it uses classes and methods where they are idiomatic.
+- Prefer fully qualified names to aliasing imports: call `fp.string.free(s)` rather than `import fp.string : stringFree = free;` or `alias stringFree = fp.string.free;`.
+  A `static import` keeps a module's names out of scope so every use has to be qualified.
+- One module uses another through a `static import`, so every call names its layer (`fp.dynarray.pushBack`, `doir.core.builders.pushDeclaration`).
+  The exception is a `public import` that re-exports names as part of the module's own API.
+- In Python, import the module and call qualified (`fp.dynarray.pushBack`, `pathlib.Path`) rather than aliasing or importing names directly; the exception is `from __future__ import …`.
+- Name D in camelCase, and Python in snake_case, with Python classes in PascalCase.
+  Add a trailing underscore only when the plain name is a keyword of its language (`out_`, `in_`, `with_`, `null_`, `string_`).
+- Make names document themselves, so neither a comment nor a wrapper is needed to explain them:
+  - Spell words out: no C-heritage names or abbreviations (`allocate`, not `malloc`; `context`, not `ctx`; `array`, not `da`).
+  - Name the effect or the result, not the mechanism (`lockForReading`, not `readLock`; `wordEnd` for a function returning where a word ends).
+  - Do not repeat what the qualified module path or the types already say: calls are always qualified, so `fp.pointer.allocate` needs no `Memory`.
+  - Name a sentinel for what it means where it is used, and split a sentinel that would mean two things (`notInterned` and `refused`, not one `none`).
+  - Purpose suffixes read `ForReading`/`ForWriting` (`lockForWriting`, `getForWriting`, `mapForWriting`).
+  - Keep the words every reader already knows: `free`, `length`, `find`, `insert`, `hash`, `create`, `contains`, `pushBack`, `pushFront`, `removeAt`.
+- Avoid one-line wrappers: a function whose body only forwards to another call, fixing an argument or two or reaching into a field, adds a name to learn and hides the call it stands for.
+  Write the call out at each use, even when it is long.
+  Before keeping a wrapper, see whether renaming what it wraps would make the direct call read as well.
+  A wrapper a protocol requires (a hook found by name, an accessor of a private field) is marked `// wrapper: <reason>` on the line above its documentation comment.
+- Indent with tabs.
+- Under a `@nogc nothrow:` label, do not repeat those attributes on the declarations the label covers: every declaration at that scope, including those inside `version` and `static if` blocks.
+  Function attributes do not propagate into aggregate declarations, so members of a non-template struct, class or union, and hooks of a non-template struct declared inside a function or `unittest`, must state `@nogc nothrow` themselves, or calls from `@nogc` code fail to compile.
+  Members of a template struct need no repetition because their attributes are inferred.
+
+## Failure and invariants
+
+- Every function that can fail says in its DDoc how it reports failure (null, `false`, an empty `Nullable`, `fp.pointer.notFound`, `fp.pointer.allocationRefused`), and what state it leaves its arguments in; prefer leaving them as they were.
+- Do not return a `bool` with the result in an `out` parameter (`bool find(…, out T x)`): return `std.typecons.Nullable!T`, null on failure, so the result cannot be read without the check.
+  Several results go in a struct the `Nullable` holds.
+- Never drop the result of a call that can fail: check it, or discard it explicitly when failure is impossible or harmless there, with `cast(void)` in D and `_ = …` in Python.
+  Tests assert on it.
+- Return `std.typecons.Nullable` only of a struct or a pointer, never of a slice or other non-aggregate value.
+  Such a `Nullable` gets a `toHash` that needs druntime's hashing, which `-betterC` does not link, and MSVC's linker fails on it even when nothing calls it; wrap a slice in a struct instead.
+- When a limit on one value follows from another (such as a bit position), name the constant once, derive the others from it, and `assert` the limit where the value is accepted.
+- Give every recursion, and every loop over input, a named bound, and `assert` it where the depth or count grows.
+  A function that calls itself carries `// bounded: <the bound>` on the line above its documentation comment; prefer a worklist where it is no longer than the recursion.
+  `tools/lint.py` reports one without it as `REC-Bound`.
+- Input from outside the program (source text, bytes off a network, a document, a program to run) meets a named limit and a reported failure, never a stack overflow or a hang.
+- Assert what each function relies on: its arguments' preconditions, a structure's invariants where it is written and again where it is read, and what must never happen.
+  A structure with invariants gets a `validate` function that checks all of them, and the module asserts it on what it builds, so it runs wherever asserts do: debug and test builds, not release.
+  `python3 tools/lint.py --report` prints each module's asserts per function.
+- A structure with state, or a function over input, has a seeded test: a random sequence of operations checked against a simple model or a second implementation, with allocations refused at random (`fp.testing.limitAllocations`).
+  It draws from `fp.algorithms.Random`, so a failure replays from its seed, and a refused call must leave its arguments as they were.
+- Put test-only code, such as helper functions and globals the tests use, inside `version(unittest)` in D, and in the test files rather than the modules they test in Python.
+- `tests/runner.d` runs only the modules it lists, so add a new module with unittests to its `modules` list.
+- Keep test coverage as close to 100% as possible: add a test for every new branch and failure path, and check with `python3 tools/coverage.py`; an uncovered line needs a reason, such as being unreachable or platform-specific.
+
+## Organization
+
+- Where possible, group related definitions into sections (for example: types and layout, queries, creation and freeing, growth, removal), separated by blank lines, and order them so a reader meets a type before the functions built on it.
+- Whenever possible, define a function before anything that uses it, so a module reads bottom-up from its building blocks; a Python tool ends with `main`.
+  When functions use each other in a cycle, define first the one that more of the module uses.
+- Keep a module's tests in the same order as the code they test.
+- Keep a function's body to 70 lines.
+  When one grows past that, let it decide the cases and move each straight-line part into a helper defined above it, so the branches sit in the caller and the loops in the helpers.
+  `tools/lint.py` reports a longer one as `FN-Length`.
+- Prefer merging a new test case into an existing test (a D `unittest` block, a Python test function) covering the same section over adding a new one; add one only when no existing test fits.
+
+## Markdown
+
+- Put each sentence of a Markdown file on its own line, a list item's or block quote's later sentences continuing under its marker, so a diff shows the sentences an edit changed.
+  Never hard-wrap a sentence; editors here soft-wrap.
+
+## Layering
+
+DOIRcore sits near the top of a stack: libfp at the bottom, bc-threads on it, libdiagnose, libECRS, Mizu and bc-fetch on those, DOIRcore on all of them but bc-fetch, and DOIR on DOIRcore.
+Every library in the stack forwards these rules.
+
+- Put code in the lowest library that has everything it needs.
+  A library above may hold only what is specific to it: threads in bc-threads, entities in libECRS, diagnostics in libdiagnose, networking in bc-fetch, the language's semantics and JIT in DOIRcore, and queries, incrementality and the editor in DOIR.
+  Before writing a helper, search the libraries below for it; if it is missing, add it there, with a test, rather than locally.
+- Only libfp, bc-threads, bc-fetch and Mizu's FFI layer (`mizu.ffi`, which loads and calls into native libraries) import `core.sys.*` or `core.stdc.*`, or call OS APIs; everything else reaches the OS and the C runtime through them (`fp.pointer.copy` and `fill`, `fp.string.sliceTerminated`, `fp.io.print` and `abort`).
+- View a plain field atomically through `bc.platform.asShared`, never a hand-written `cast(shared …)`.
+- Hold owned memory in a struct through `fp.lifecycle.Owned` rather than hand-written `finalize` and `copyTo` hooks.
+- Compare and hash a value through `fp.lifecycle.equal` and `fp.lifecycle.contentHash`, which use its hooks if it declares them.
+  Never `memcmp` or hash a struct's raw bytes: its padding is in them.
+- Check these rules with `python3 tools/lint.py`, which every library keeps a copy of, each with its own `CONFIG` and the same `PUSHED` registry.
+  When code moves into a lower library, add the pattern it replaced to `PUSHED` in every copy, with the replacement as its hint, so the old way cannot come back.
+
+## Bugs
+
+- If you find a bug while working, fix it, with a test that would have caught it, rather than only reporting it.
+  Only when the fix would likely take a long time, report it instead, saying what you found and where.

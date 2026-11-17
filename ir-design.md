@@ -20,7 +20,7 @@ The original PDW (γ/μ/η gating plus control dependence) is not worth building
 
 **Block parameters and results.** `std.while`/`std.for` bodies get explicit loop variables, one in and one out per iteration (θ). `std.if` outputs are γ exits. Pinning workarounds disappear, and loop return types become derivable. A block's free variables are computed by a capture query, not written in syntax.
 
-**State tokens.** Effectful calls thread a state value, making effect order a data edge. Tokens are internal IR, not syntax, so they need no spec rule; they enforce `C-Order` within a target and `T-Order`'s bridge barrier across targets (`roadmap.md` Phase 7). Use several tokens (per memory region; entity store vs. runtime memory) so ordering is only as strict as needed.
+**State tokens.** Effectful calls thread a state value, making effect order a data edge. Tokens are internal IR, not syntax, so they need no spec rule; they enforce `C-Order` within a target and `T-Order`'s bridge barrier across targets (`roadmap.md` Phase 12). Use several tokens (per memory region; entity store vs. runtime memory) so ordering is only as strict as needed.
 
 **Payoff:**
 - A region query depends only on its declared inputs, so early cutoff is precise.
@@ -55,7 +55,7 @@ Use Cranelift's acyclic e-graph (aegraph), not full equality saturation (egg/egg
 **MimIR** (Thorin's successor; Leißa et al., POPL 2025). A graph IR where plugins declare axioms (opaque typed operations) and normalizers (rewrites applied as nodes are built); lowering is plugin-by-plugin. Types are terms, as DOIR types are bindings. Model for levels: a level provides a signature plus normalizers, giving §3's rules a home. Dependent typing offers a formal account of `deduced type` (`D-Deduce`) and `std.types.distinct_copy`.
 
 **MLIR dialect conversion** (the mechanics, not the C++ infrastructure). DOIR levels play the role of dialects.
-- Conversion targets declare which operations are legal after a lowering: `L-Erase` as a checkable property, and the Phase 10 verifier (`T-Legal`).
+- Conversion targets declare which operations are legal after a lowering: `L-Erase` as a checkable property, and the Phase 15 verifier (`T-Legal`).
 - `MemoryEffects` interfaces (read/write/alloc/free per resource) are a design for §2's state tokens, finer than one `Pure` flag, and let generic passes reason about operations defined by user levels.
 - Regions with block arguments are concrete syntax for §2.
 
@@ -86,9 +86,9 @@ Use Cranelift's acyclic e-graph (aegraph), not full equality saturation (egg/egg
 | Order | Proposal                                   | Roadmap point                 | Why then                                                 |
 | ----- | ------------------------------------------ | ----------------------------- | -------------------------------------------------------- |
 | 1     | Path hashes (§4.2)                         | Phases 1–2                    | Reparse matching keys on them.                           |
-| 2     | State tokens (§2)                          | Phase 7                       | `T-Order`'s bridge barrier needs an internal edge to enforce in descent. |
-| 3     | MimIR-style level signatures (§4.1)        | Phase 7 (`T-Sig`)             | Shapes how levels declare operations and normalizers.    |
-| 4     | Dialect legality as a verifier (§4.1)      | Phase 10                      | Chapter 4 cannot claim levels behave like dialects without a check. |
-| 5     | ISLE-style rule DSL (§4.2)                 | Phase 12                      | Chapter 7's students need instruction selection they can read. |
+| 2     | State tokens (§2)                          | Phase 12                       | `T-Order`'s bridge barrier needs an internal edge to enforce in descent. |
+| 3     | MimIR-style level signatures (§4.1)        | Phase 12 (`T-Sig`)             | Shapes how levels declare operations and normalizers.    |
+| 4     | Dialect legality as a verifier (§4.1)      | Phase 15                      | Chapter 4 cannot claim levels behave like dialects without a check. |
+| 5     | ISLE-style rule DSL (§4.2)                 | Phase 17                      | Chapter 7's students need instruction selection they can read. |
 | 6     | Aegraph, SSA allocation, Datalog (§3, §4.2) | Deferred to Chapter 8         | Needs targets, cost models and the §2 skeleton, and no chapter measures transformation order. |
-| 7     | RVSDG block parameters, OSSA (§2, §4.1)    | Deferred to Chapter 8         | They change the language, so they wait until written into Part II; until then `std.while` keeps its stack cell (`B-Loop`) and Phase 6 its pinning. |
+| 7     | RVSDG block parameters, OSSA (§2, §4.1)    | Deferred to Chapter 8         | They change the language, so they wait until written into Part II; until then `std.while` keeps its stack cell (`B-Loop`) and Phase 9 its pinning. |

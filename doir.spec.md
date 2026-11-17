@@ -199,6 +199,8 @@ DOIR types are structural (`S-Struct`): two types convert implicitly exactly whe
 
 A program is a set of files, arranged into a tower of levels that the compiler reads from the files themselves before it evaluates anything (`L-Tower`, `L-Scan`). The levels of the tower are each file's root, the builtin block, and each namespace that `compiler.levels.make` makes into a `compiler.level`. `compiler.levels.lower_to(from, to, passes)` says that one level is lowered onto another by `passes` (`L-Lower`), and may be written in any file, so `std` never has to name the backends it runs on. `compiler.levels.check(t, name)` adds a check to the semantic analysis a level runs over its own entities (`L-Sema`): a level defines its analysis with `check` and its lowering with `lower_to`, and neither needs a change to the compiler. A level that writes no edge lowers onto the levels it names, so a program over `std` writes none. A backend lowers onto `compiler.levels.builtin`, the builtin block, and the levels that do are the build's targets: the levels above them are evaluated and lowered once for each. With more than one, `compiler.levels.set_host` marks the one that runs the program. One file is the program: on the host its top-level declarations run top to bottom, starting from its first (`L-Entry`). A build with no target gets one by default: the backend native to the machine the compiler runs on, or Mizu if that cannot be determined (`T-Value`). There is no `main`.
 
+A target need not be DOIR source. An implementation may build in a target for the machine it runs on, with `std` already bound to native bodies (`T-Intrinsic`), and use it as that default. An embedded JIT does exactly this: it runs the core profile (`P-Core`), a fixed tower of the builtin block, its built-in target and `std`, and the program, and it may compile one function on request rather than run the program as a script (`L-Embed`).
+
 A backend is a machine, an operating system and an executable format together.
 Its namespace pastes a machine file (`reference/machine.doir`, or x86 or RISC-V), an operating-system file (`os.linux.doir`, `os.windows.doir` or `os.freestanding.doir`) and a format file (`format.flat.doir`, or ELF, Intel HEX, PE or Mach-O), and their `std` and `compiler_impl` namespaces merge (`OS-Target`).
 The machine supplies `std`'s primitives, and the operating system supplies `std.os`: files, directories, processes, memory, time, threads and the heap (Part II §19).
@@ -289,6 +291,22 @@ Constants and types: `compiler.pointer_sized` (host word), `compiler.byte`, `com
 
 Every rule in this part carries a tag, and the tags are the keys of the conformance corpus: each rule has at least one test that it alone decides, and changing a rule means changing the corpus entry named by its tag. An implementation conforms when it accepts and rejects exactly the files the corpus says and reports the diagnostic the rule names. A rule with no corpus entry is not yet a rule the implementation is obliged to honour.
 
+An implementation conforms to one of two profiles, and the corpus says which profile each case is for. The rules state what a program means, not how an implementation finds it out: a query-driven implementation memoizes each answer and re-runs it after an edit, and an in-order one computes each answer once, and both must give the same answers.
+
+- **[P-Full] The Full Profile:**  
+  $$
+  \text{every rule of Part II holds}
+  $$
+  > **In Plain English:** The full profile is the whole language: a tower of levels the program writes (`L-Tower`), backends written in DOIR, several targets in one build (`T-Value`), bundles (`O-Bundle`), output written to files (`O-Artifact`), and checks and passes the program binds (`L-Sema`, `L-Bind`). `bin/doir` is a full-profile implementation.
+- **[P-Core] The Core Profile:**  
+  $$
+  \text{levels} = \{\varepsilon, D, \mathtt{std}, \text{the program}\} \quad D \text{ the intrinsic host target (T-Intrinsic)} \quad \mathtt{std} \text{ intrinsic, always present}
+  $$
+  $$
+  \text{ill-formed: a call of } \mathrm{compiler.levels.make}, \mathrm{lower\_to}, \mathrm{check}, \mathrm{bind\_pass}, \mathrm{set\_host}, \mathrm{bundle}\text{, an output builtin (O-Section, O-Bits, O-Fixup, O-Artifact, O-Format), or a paste or import of } \mathtt{standard.doir}
+  $$
+  > **In Plain English:** The core profile is the language an embedded JIT runs: one target, the machine the program runs on, with `std` already built in and the program on top. The tower is fixed, so the calls that build one, and the builtins that only a DOIR-source backend or format needs, are rejected with a `P-Core` diagnostic whose hint says the program needs the full compiler. `std` is never loaded from source, so a program that pastes or imports its own `standard.doir` is rejected the same way; every `std` name is there without it. `std.targets.compile_for` is accepted only with the host target, which makes it do nothing. Every other rule holds as in the full profile, so a program the core profile accepts means the same under the full one. Nothing in the core profile requires incremental compilation or memoization.
+
 ## 1. The Store, Bindings, and Internal Registers
 
 A module is a pair $M = \langle E, C \rangle$ where $E \subseteq_{\mathrm{fin}} \mathbb{N}$ is a finite set of entity ids (each representing a **binding**, a type, a namespace, or an alias) and $C$ is a family of partial component maps $C : E \rightharpoonup V_C$ (component values which are defined in the following table).
@@ -316,7 +334,7 @@ A module is a pair $M = \langle E, C \rangle$ where $E \subseteq_{\mathrm{fin}} 
 | `Overloads`      | $\mathcal{P}(\text{EntityId})$        | Metadata         | Member functions of an overload set, added by `std.functions.add_overload` (`TF-Overload`). |
 | `Lowered`        | $\mathcal{P}(\text{target})$          | Descent          | Targets whose lowering has retired the entity (`L-Erase`); absent means retired under none. |
 
-> **In Plain English:** Think of the compiler as an in-memory relational database or Entity-Component System (ECS). Every variable, type, namespace, and literal is just an ID number (an entity id $e$). Instead of using heavy object trees or AST nodes, each ID has "rows" of data attached to it—such as its name, its parent block, its data type, or its assigned virtual and physical registers. In a multi-target build (`T-Value`), backend-specific components (`VirtualReg` and `PhysicalReg`) are indexed by target $\tau$, and `Lowered` relates an entity to every target whose descent has retired it, however many the build has. Each target's part (its registers, and its own entry in `Lowered`) is owned by target $\tau$'s lowering query, allowing independent targets to coexist in the store without clobbering each other.
+> **In Plain English:** Think of the compiler as an in-memory relational database or Entity-Component System (ECS). Every variable, type, namespace, and literal is just an ID number (an entity id $e$). Instead of using heavy object trees or AST nodes, each ID has "rows" of data attached to it—such as its name, its parent block, its data type, or its assigned virtual and physical registers. In a multi-target build (`T-Value`), backend-specific components (`VirtualReg` and `PhysicalReg`) are indexed by target $\tau$, and `Lowered` relates an entity to every target whose descent has retired it, however many the build has. Each target's part (its registers, and its own entry in `Lowered`) is written only by target $\tau$'s lowering, allowing independent targets to coexist in the store without clobbering each other.
 
 The flag set $F$:
 
@@ -518,7 +536,7 @@ where $\pi^{*}$ applies $\pi$ to every entity id inside a component value (`Pare
   \frac{f : \text{FunctionType} \quad \text{val}(f) = \{\text{FunctionReturn}, \text{Valueless}\}}{f \text{ is callable; a call to it calls the definition bound to it}}
   $$
   $$
-  \text{bound to: the host (H-Hook); else the library it was loaded from (FP-Load); else, for target } \tau\text{, the definition with the same } \text{SymbolName} \text{ in } \text{LevelOf}(f) \text{ or a level of } \text{View}_\tau(\text{LevelOf}(f)) \text{ (R-Unqual), lowest rank first; else the linker}
+  \text{bound to: the host (H-Hook); else the library it was loaded from (FP-Load); else its native body, under an intrinsic } \mathtt{std} \text{ (T-Intrinsic)}; \text{ else, for target } \tau\text{, the definition with the same } \text{SymbolName} \text{ in } \text{LevelOf}(f) \text{ or a level of } \text{View}_\tau(\text{LevelOf}(f)) \text{ (R-Unqual), lowest rank first; else the linker}
   $$
   > **In Plain English:** Naming a function with a type but no body is how DOIR refers to something it does not define.
   > A host hook is supplied by the compiler.
@@ -528,6 +546,7 @@ where $\pi^{*}$ applies $\pi$ to every entity id inside a component value (`Pare
   > A definition passed over is not lowered for that target, so the symbol is defined once; two definitions of equal rank are ambiguous, as in `R-Unqual`.
   > The definition's type must be equivalent to the prototype's (`S-Struct`).
   > With no definition anywhere, the symbol is left for the linker, so calling one whose body never appears is a link error, not a compile error.
+  > An implementation with `std` built in binds each `std` prototype to its own native body before looking at any level (`T-Intrinsic`).
 
 ---
 
@@ -546,7 +565,7 @@ where $\pi^{*}$ applies $\pi$ to every entity id inside a component value (`Pare
   \end{aligned}
   $$
   where $r \approx_\alpha s$ holds when $r$ and $s$ refer to corresponding parameters $p_i$ and $q_i$ (identical parameter index, $\alpha$-equivalence), and otherwise when $r \sim s$.
-  > **In Plain English:** DOIR uses structural typing. Two types are interchangeable ($T_1 \sim T_2$) if they occupy the same number of bits, share the same alignment and uniqueness tag, and have the same shape all the way down: pointers and arrays point at interchangeable types with the same length; aggregates have interchangeable fields in the same order with the same layout flags; function types have interchangeable parameters and returns. Parameter-dependent return types compare equal when they refer to the corresponding parameter index (such as `(T: type) -> T` and `(U: type) -> U`). Shapes of different kinds never match, so a pointer never converts to `std.pointer_sized`, and `{ a: u32, b: u32 }` is not `{ x: u64 }`. Field names and flags other than `Packed` and `Union` do not count. The relation is read coinductively, so a recursive type (`TF-Self`) compares equal to itself without triggering query cycle errors (`Q-Cycle`). Crossing between non-equivalent types is an explicit `std.reinterpret_bits`.
+  > **In Plain English:** DOIR uses structural typing. Two types are interchangeable ($T_1 \sim T_2$) if they occupy the same number of bits, share the same alignment and uniqueness tag, and have the same shape all the way down: pointers and arrays point at interchangeable types with the same length; aggregates have interchangeable fields in the same order with the same layout flags; function types have interchangeable parameters and returns. Parameter-dependent return types compare equal when they refer to the corresponding parameter index (such as `(T: type) -> T` and `(U: type) -> U`). Shapes of different kinds never match, so a pointer never converts to `std.pointer_sized`, and `{ a: u32, b: u32 }` is not `{ x: u64 }`. Field names and flags other than `Packed` and `Union` do not count. The relation is read coinductively, so a recursive type (`TF-Self`) compares equal to itself without being reported as a cycle (`Q-Cycle`). Crossing between non-equivalent types is an explicit `std.reinterpret_bits`.
 - **[S-Numeric] Signed and Float Base Types:**  
   $$
   \text{signed\_base\_type}(s, a) \rightsquigarrow \langle s, a, \nu_{\text{signed}} \rangle,\ \text{Signed} \qquad \text{float\_base\_type}(s, a) \rightsquigarrow \langle s, a, \nu_{\text{float}} \rangle,\ \text{Float}
@@ -579,7 +598,7 @@ where $\pi^{*}$ applies $\pi$ to every entity id inside a component value (`Pare
   $$
   \frac{e \vdash a \Downarrow t \quad t : \text{TypeDefinition} \quad \mu \text{ has flag } f_\mu}{\langle c : \text{type} = \mu(a) \rangle \rightsquigarrow \text{Flags}(t) := \text{Flags}(t) \cup \{f_\mu\}; \quad \text{Alias}(c) := t \ \text{(A-Bind)}}
   $$
-  > **In Plain English:** When you apply a modifier function $\mu$ (like making a type packed or immutable), the compiler attaches that flag directly to the existing type entity. In the query engine, intra-level modifier applications are recorded in a declaration-ordered effect log ⟨position, effect⟩ (`C-Order`, `M-Lexical`), ensuring that on-demand queries evaluated at position $k$ stay pure and memoized. At level freeze (`M-Freeze`), the log is folded once into the static `Flags` component. The call is consumed and $c$ becomes nothing more than another name for the modified type. A modifier changes the entity, not which entity a name denotes, so a flag reaches every name of the type, including every use of a memoized former result (`TF-Memo`): inside `std`'s level, applying `std.pointers.read_only` to the result of `std.types.pointer(std.u8)` would make `std.byte_pointer` immutable, and above it the same call is ill-formed because the type is frozen (`M-Freeze`). Only `Packed` and `Union` take part in `S-Struct`. To flag a variant, make it distinct first: `ro : type = std.types.distinct_copy(std.byte_pointer)`, then `_ : type = std.pointers.read_only(ro)`; converting between the two is then an explicit `std.reinterpret_bits`.
+  > **In Plain English:** When you apply a modifier function $\mu$ (like making a type packed or immutable), the compiler attaches that flag directly to the existing type entity. A read at position $k$ sees exactly the applications written before $k$ (`C-Order`, `M-Lexical`), even when a forward reference evaluates a later line first (`R-Order`), so intra-level modifier applications are recorded in a declaration-ordered effect log ⟨position, effect⟩ rather than overwriting the flags. At level freeze (`M-Freeze`), the log is folded once into the static `Flags` component. The call is consumed and $c$ becomes nothing more than another name for the modified type. A modifier changes the entity, not which entity a name denotes, so a flag reaches every name of the type, including every use of a memoized former result (`TF-Memo`): inside `std`'s level, applying `std.pointers.read_only` to the result of `std.types.pointer(std.u8)` would make `std.byte_pointer` immutable, and above it the same call is ill-formed because the type is frozen (`M-Freeze`). Only `Packed` and `Union` take part in `S-Struct`. To flag a variant, make it distinct first: `ro : type = std.types.distinct_copy(std.byte_pointer)`, then `_ : type = std.pointers.read_only(ro)`; converting between the two is then an explicit `std.reinterpret_bits`.
 
   | Modifier                        | Flag $f_\mu$        |
   | ------------------------------- | ------------------- |
@@ -985,9 +1004,9 @@ where $\pi^{*}$ applies $\pi$ to every entity id inside a component value (`Pare
   > A prototype the machine supplies (`I-Extern`) is never run by interpreting the body bound to it, which may be machine code or a software body from `standard.emulated.doir`, and differs per target: the host runs it with the semantics this specification gives it (§14, §13, `N-Convert`, `N-FloatConvert`, `N-Overflow`, `std.reinterpret_bits`, `std.copy`), at the target's widths (`H-Target`), so the answer depends on neither host nor machine (`H-Det`).
 - **[Q-Cycle] Cycles Are Errors:**  
   $$
-  \frac{\text{answering query } q \text{ requires the answer to } q}{\text{ill-formed, reported with the chain of queries that closes the cycle}}
+  \frac{\text{answering question } q \text{ requires the answer to } q}{\text{ill-formed, reported with the chain of questions that closes the cycle}}
   $$
-  > **In Plain English:** Every question the compiler answers — what a name or alias resolves to, a type's layout, a deduced type, the value of a comptime call — is a query, and a query that needs its own answer is an error naming the loop: an alias chain back to itself, a struct that contains itself by value, a comptime call whose argument is its own result. A comptime evaluation that never terminates does not compile; an implementation may stop it at a limit with a diagnostic.
+  > **In Plain English:** Every question the compiler answers — what a name or alias resolves to, a type's layout, a deduced type, the value of a comptime call — may need the answers to others, and one that needs its own answer is an error naming the loop: an alias chain back to itself, a struct that contains itself by value, a comptime call whose argument is its own result. A query-driven implementation finds the loop on its stack of running queries, and an in-order one on its stack of declarations being evaluated; both report the same chain. A comptime evaluation that never terminates does not compile; an implementation may stop it at a limit with a diagnostic.
 
 ---
 
@@ -1015,7 +1034,7 @@ where $\pi^{*}$ applies $\pi$ to every entity id inside a component value (`Pare
   $$
   \frac{n \text{ is a name a comptime program needs}}{n \text{ is a host hook (H-Hook)} \quad \text{unless } n \text{ is required before level } 1 \text{ can run, or by code that cannot name } \mathtt{std}}
   $$
-  > **In Plain English:** Two sets of names answer the same question — what may metaprogramming call? — from opposite ends. `compiler` is the **bootstrap**: its functions are walked and executed by the compiler itself, in the compiler's own process, before any target code exists. Host hooks are the **boundary**: they are not code, and a mizu backend or a JIT supplies them (`H-Hook`). Hooks over entities live in `std.meta`; hooks over source values (`std.import`, `std.attributes.*`) live beside the `std` names they serve. Neither is interpreted, and `H-Det` guarantees both give the same answer.
+  > **In Plain English:** Two sets of names answer the same question — what may metaprogramming call? — from opposite ends. `compiler` is the **bootstrap**: its functions are implemented by the compiler itself, interpreted or jitted in the compiler's own process, before any target code exists. Host hooks are the **boundary**: they are not code, and a mizu backend or a JIT supplies them (`H-Hook`). Hooks over entities live in `std.meta`; hooks over source values (`std.import`, `std.attributes.*`) live beside the `std` names they serve. Neither is interpreted, and `H-Det` guarantees both give the same answer.
   >
   > `compiler` holds two kinds of name, and nothing else. The **bootstrap** is what gets a first implementation off the ground before level 1 can run: enough to build primitive types and emit bytes. The **floor** is what code that cannot name `std` needs: the levels below `std` (level 0 and the backends of level 1, which `L-Mono` keeps from naming it) and builds that do not include `standard.doir` at all, since DOIR does not depend on `std` existing. Every other name is a host hook or `std`: a name that can be written in DOIR over hooks belongs in `std` (`RF-Wrapper`), and a name the host must supply is a host hook.
   >
@@ -1025,7 +1044,7 @@ where $\pi^{*}$ applies $\pi$ to every entity id inside a component value (`Pare
 
   |     | `compiler` | host hooks |
   | --- | --- | --- |
-  | How it runs | treewalk-interpreted by the compiler | a `HostServices` entry, reached by a mizu instruction or a JIT call |
+  | How it runs | implemented by the compiler itself, interpreted or jitted | a `HostServices` entry, reached by a mizu instruction or a JIT call |
   | Available from | level 0: before level 1 can run, and without `std` | the level that declares the prototype |
   | Goal | as small as possible | the whole metaprogramming interface |
   | Examples | `compiler.emit`, `compiler.base_type`, `compiler.levels.lower_to`, `compiler.levels.check`, `compiler.assembler.*`, `compiler.paste_file` | `std.meta.entity_of`, `std.meta.types.field_offset_bits`, `std.import` |
@@ -1035,12 +1054,12 @@ where $\pi^{*}$ applies $\pi$ to every entity id inside a component value (`Pare
   The output builtins are floor too: sections, emission, fixups, `compiler.emit_artifact`, `compiler.assembler.bit_order`, `compiler.levels.bundle` and the `compiler.sections`, `compiler.symbols`, `compiler.relocations` and `compiler.artifacts` accessors, because the machine encoders and the format writers that use them are written below `std` (`O-Format`).
   `compiler.entity` lives at level 0 because the `compiler_impl` hooks need it below `std`, and `compiler.argument_count` and `compiler.argument` let `compiler_impl.pass_arguments` and bridge calls (`T-Bridge`) inspect call arguments without violating `L-Mono`; `compiler.paste_file` is how a build without `std` brings in files, by pasting them; `std.import`, which compiles a file separately, is not its twin but a different operation above level 0.
   One debt is visible: `compiler.entity` pins the entity type to the host word the bootstrap invented.
-  And every name in Part I §7 is still called, by this repository or by the Mizu level Phase 5 ports (`mizu.doir`, `tree/D`); the legacy names nothing called (`always_comptime`, `indicate_yield`, `debug_print`, `current_entity`, `assembler.yield_register`) are retired, and a port that meets one replaces it with its `std` counterpart.
+  And every name in Part I §7 is still called, by this repository or by the Mizu level Phase 7 ports (`mizu.doir`, `tree/D`); the legacy names nothing called (`always_comptime`, `indicate_yield`, `debug_print`, `current_entity`, `assembler.yield_register`) are retired, and a port that meets one replaces it with its `std` counterpart.
 - **[H-Host] Comptime Host Selection:**  
   $$
   \frac{\text{cmp}(E) \text{ for target } \tau}{\text{executes in the compiler's process on its comptime host } h\text{, never on a target of the build}}
   $$
-  > **In Plain English:** Compile-time metaprogramming runs inside the compiler. The bootstrap (`H-Boot`) is walked by the compiler itself; every other body runs on a host the compiler embeds, the Mizu VM or a native JIT, which reaches hooks through `HostServices` (`H-Services`). The host belongs to the compiler, not to the tower: a build whose targets are x86 and SPIR-V still evaluates its comptime on the compiler's host, computing with $\tau$'s layouts (`H-Target`), and which host runs it never changes an answer (`H-Det`).
+  > **In Plain English:** Compile-time metaprogramming runs inside the compiler. The bootstrap (`H-Boot`) is implemented by the compiler itself; every other body runs on a host the compiler embeds, the Mizu VM or a native JIT, which reaches hooks through `HostServices` (`H-Services`). An implementation with an intrinsic target (`T-Intrinsic`) may use its own JIT as the host, so comptime code runs as the same native code the program would. The host belongs to the compiler, not to the tower: a build whose targets are x86 and SPIR-V still evaluates its comptime on the compiler's host, computing with $\tau$'s layouts (`H-Target`), and which host runs it never changes an answer (`H-Det`).
 - **[H-Target] Target Layout on Host Machine:**  
   $$
   \text{Comptime blocks execute on host } h\text{, but evaluate layouts and byte order calculated against target } \tau.
@@ -1052,6 +1071,7 @@ where $\pi^{*}$ applies $\pi$ to every entity id inside a component value (`Pare
   $$
   > **In Plain English:** Compiling the exact same DOIR code on Windows, Linux, or macOS will always produce the identical compile-time results.
   > The one exception is a call into a native library loaded with `std.load_library`, whose answers are the library's (`FP-Library`).
+  > The same holds between hosts in one implementation: comptime run by a native JIT and by the Mizu VM gives the same answers, which is how the rule is tested.
 
 ---
 
@@ -1380,7 +1400,8 @@ where $\pi^{*}$ applies $\pi$ to every entity id inside a component value (`Pare
   $$
   \text{Outside level } n\text{: a query against level } n \text{ is defined} \iff \text{cmp}(n) \text{ has terminated.}
   $$
-  > **In Plain English:** Within a level, modifiers and other comptime effects are computed top to bottom, and each comptime read sees the level as it stands at that line. A level-scope declaration is one in a file's root or in a namespace at any depth, as every modifier line in `standard.doir` is; a line inside a function body or block is not one. A comptime evaluation keeps the position of the level-scope line that started it, even while it runs function bodies written elsewhere. Every other reader (higher levels, descent, the host) waits until the level has finished and frozen, then sees one final answer. In-level reads are therefore keyed by $\langle e, k \rangle$; queries against a frozen level by $e$ alone. A level over more than one target adds the target to both keys (`T-Split`).
+  > **In Plain English:** Within a level, modifiers and other comptime effects are computed top to bottom, and each comptime read sees the level as it stands at that line. A level-scope declaration is one in a file's root or in a namespace at any depth, as every modifier line in `standard.doir` is; a line inside a function body or block is not one. A comptime evaluation keeps the position of the level-scope line that started it, even while it runs function bodies written elsewhere. Every other reader (higher levels, descent, the host) waits until the level has finished and frozen, then sees one final answer. An implementation that memoizes therefore keys in-level reads by $\langle e, k \rangle$, and reads of a frozen level by $e$ alone. A level over more than one target adds the target to both keys (`T-Split`).
+  > One that evaluates in lexical order keeps the same positioned logs and folds them at each read, so the answers are the same.
 - **[L-Erase] Lowering Retires a Level:**  
   $$
   \text{After lowering level } E \text{ for target } \tau: \quad \text{LevelOf}(e) = E \implies \tau \in \text{Lowered}(e) \;\land\; \text{no rewrite, allocation, or emission for } \tau \text{ in a level of Below}(E) \text{ reads } e
@@ -1391,6 +1412,11 @@ where $\pi^{*}$ applies $\pi$ to every entity id inside a component value (`Pare
   \text{The root block of the program file (the file the build names as the program, L-Tower) runs in lexical order from its first declaration to its terminator on each of the build's host targets (T-Value).}
   $$
   > **In Plain English:** A DOIR program needs no `main`. On the build's host target (`compiler.levels.set_host`), its outermost block is executed like any other block, so it ends with `std.halt()` (`WF-Term`). Its comptime lines fold as they are reached (`C-Order`); the rest is the program's entry code. A build has one host, or one per slice of a bundle (`O-Bundle`): the slices are alternatives, so each runs the whole script, and only one of them runs on a given machine. For every other target (such as SPIR-V or shader targets, `T-Device`), the program file contributes exported functions and entry points (`compiler_impl.export_entry`, `T-Bridge`) rather than an executable top-level script, so their roots need no terminator (`WF-Term`). Files below the program and files it imports contribute names, not code: every top-level line in them must fold or be a declaration, and their roots are never executed.
+- **[L-Embed] An Embedder May Call One Declaration:**  
+  $$
+  \mathrm{compile}(f) \rightsquigarrow \text{cmp of every declaration } f \text{ reaches (R-Order)}; \quad \text{every function } f \text{ may call is compiled before its first call}; \quad \text{no other root statement runs}
+  $$
+  > **In Plain English:** A program embedded in another one need not run as a script. The embedder may instead ask for one function and call it, as a scripting host calls a handler by name. Compiling it evaluates the comptime of what it reaches, as demand always does (`R-Order`), and compiles what it calls, all at once or each callee on its first call; the root's runtime lines never run, so its root needs no terminator (`WF-Term`). The answers are those the whole program would give: a comptime line the function does not reach has no effects it could see (`C-Order`). Asking for every declaration at once is the same as compiling the whole file without running it.
 
 ---
 
@@ -1414,6 +1440,7 @@ where $\pi^{*}$ applies $\pi$ to every entity id inside a component value (`Pare
   > A bundle makes each of its targets a host of its own slice instead (`O-Bundle`), so a build with one needs no `set_host`.
   > The host mark is read by descent, not by the scan, so it may be written in any level.
   > A build with no target gets one by default, supplied by the compiler with that backend's own passes: the backend native to the machine the compiler runs on, paired with the operating system the compiler runs on (`OS-Target`), or Mizu with the freestanding one if the compiler cannot tell what they are.
+  > The default backend is the intrinsic host target when the implementation has one (`T-Intrinsic`), and its passes are the implementation's own.
   > Whatever would have lowered straight onto `builtin` lowers onto it instead, and it is the host.
   > Where this specification indexes descent by $\tau$ (`Lowered`, `VirtualReg`$_\tau$, `T-Live`, `T-Bridge`), $\tau$ ranges over the targets.
 - **[T-Live] Declarations Are Live for a Target Set:**  
@@ -1492,6 +1519,19 @@ where $\pi^{*}$ applies $\pi$ to every entity id inside a component value (`Pare
   Its descent passes are not in the namespace: they are the passes of its edge onto `compiler.levels.builtin` (`L-Lower`).
   `reference/machine.doir` states the whole contract as declarations.
   The same namespace also holds an operating system, which supplies `std.os` and the heap, and a format, which supplies the sections and the writer; those parts of the signature are `OS-Sig`'s and `O-Format`'s.
+- **[T-Intrinsic] A Target May Be Built Into the Implementation:**  
+  $$
+  \frac{D \text{ provides } \text{sig}(\mathtt{std}) \text{ (T-Sig)} \land \text{sig}(\mathtt{std.os}) \text{ (OS-Sig)} \text{ as native code}}{D \text{ is an intrinsic target: it is a target like any backend namespace, and no program can tell the two apart}}
+  $$
+  $$
+  \text{an intrinsic } \mathtt{std} \text{ binds every prototype of } \mathtt{standard.doir} \text{ to a native body, ahead of a backend's and } \mathtt{standard.emulated.doir}\text{'s (I-Extern)}
+  $$
+  > **In Plain English:** An implementation may build a target in, rather than read it from DOIR source: its machine types, `compiler_impl` hooks, register classes and descent are the implementation's own code, for the machine it runs on.
+  > A built-in target must still satisfy `reference/machine.doir` and `reference/operating_system.doir` exactly, so a program sees the same names, layouts and answers as it would over a backend namespace with the same signature.
+  > It may build `std` in as well: each prototype of `standard.doir` and `standard.os.doir` is bound to a native body, which comes first under `I-Extern`, so neither a backend's body nor `standard.emulated.doir` is read.
+  > `standard.doir` stays the interface: a native body has its prototype's type (`S-Struct`) and the semantics of the rules it implements (§13, §14, `N-Convert`, `N-FloatConvert`, `N-Overflow`), bit for bit for floats, NaN payloads aside.
+  > An intrinsic target is what the core profile runs on (`P-Core`), and the default target of an implementation that has one (`T-Value`).
+  > A target written in DOIR remains how the full profile adds every other machine, so adding a machine still means writing a backend, not editing the compiler.
 - **[T-Optional] Optional Target Features:**  
   $$
   \frac{n \in \text{opt}(\mathtt{std}) \quad S \text{ does not provide } n}{\text{every alias of } n \text{ is absent: declaring it is well-formed, using it is ill-formed (A-Res)}}
@@ -1635,7 +1675,7 @@ The three parts of a target each own one step: the machine encodes instructions 
   > Each path is written once in a build; the diagnostic for a second annotates both calls, with a hint to name one of them differently.
   > The file holds the section as it is when the build ends, a placed section's placed bytes, or a writer's scratch section once it has finished filling it, so a call may come before the last write.
   > Nothing is written by a build that fails, so a failed build never leaves half its files behind.
-  > With no backend at all, as in Phase 4, comptime makes a section, emits into it and writes it out itself (`test_string.doir`).
+  > With no backend at all, as in Phase 6, comptime makes a section, emits into it and writes it out itself (`test_string.doir`).
   > Under a bundled target the file is not written but kept as a thin artifact of its slice, for the bundle's writer to read (`O-Bundle`).
 - **[O-Format] The Format Writes the Files:**  
   $$
@@ -1677,3 +1717,11 @@ Implementation behavior that deliberately contradicts this specification is reco
 | [AT-Set] | `std.attributes.mark` stores a fresh opaque marker and offers no way to store a chosen entity. | Hook attributes must name a function, so attributes were redesigned as types (`AT-Type`, `AT-Set`). |
 | [C-Specialize] | Specialization is keyed on argument types only, so comptime value arguments share one body and are not bound in it. | The waterfall had no partial evaluation of a call with mixed arguments; a comptime walk over a type's fields cannot be unrolled without it. |
 | [C-Valid] | `compiler.assembler.register_for` is declared `(T: pointer_sized, value: pointer_sized) -> register` in [`reference/compiler.doir`](reference/compiler.doir), as the legacy builtin block built it, not `(T: type, value: T)`. | The legacy builder only ever needed the register number, so the type was carried as a word. |
+
+### Core profile
+
+Shortcuts a core-profile implementation (`P-Core`) takes are recorded here against the rule they break.
+There are none yet.
+
+| Rule | Divergence | Reason |
+| ---- | ---------- | ------ |
