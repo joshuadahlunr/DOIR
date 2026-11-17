@@ -12,23 +12,23 @@
 	"dependencies": {
 		"bc-fetch": {
 			"repository": "git+https://github.com/doir-lang/bc-fetch",
-			"version": "2bb4110c18845850573dd613cbca5a75cac4a253"
+			"version": "84d384497eebda929a333b299b684e316891831e"
 		},
 		"libecrs": {
 			"repository": "git+https://github.com/doir-lang/libECRS.git",
-			"version": "f76a2e0eb387dcb7d42d259267807521b64be3ea"
+			"version": "f2c13ae05a4153171d0f62acf209646506e2e672"
 		},
 		"bc-threads": {
 			"repository": "git+https://github.com/doir-lang/bc-threads.git",
-			"version": "3a132805cac6808a70efecaeedd3d2cf151da90b"
+			"version": "0f8f0c6df0a632b74cb021e310891fe14e2adadb"
 		},
 		"libfp": {
 			"repository": "git+https://github.com/doir-lang/libfp.git",
-			"version": "9bd95c38c83cee39d683e4633ac40b184435b8b4"
+			"version": "75cee27a135b6b16456d6d96fb0d363c4ade27aa"
 		},
 		"libdiagnose": {
 			"repository": "git+https://github.com/doir-lang/libdiagnose.git",
-			"version": "ad592a0f873109ae8802f677f917e16130779d25"
+			"version": "ee15b8e8842818f9d3f49e15466f74f0ba29a9c0"
 		},
 		"mizu": {
 			"path": "mizu"

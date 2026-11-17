@@ -79,6 +79,7 @@ PUSHED = [
 	('hand-written-trim', r'while\s*\(\s*([\w.]+)\.length\s*&&\s*\(\s*\1\[\s*(0|\$\s*-\s*1)\s*\]\s*==', 'leading or trailing characters trimmed by hand', 'use fp.string.trim, trimStart or trimEnd'),
 	('renamed-fp-file', r'\bfp\.file\b', 'fp.file, since renamed', 'use fp.io'),
 	('inline-generator', r'\*\s*1103515245\b|\*\s*6364136223846793005\b', 'random numbers from a hand-written generator', 'use fp.algorithms.Random'),
+	('hash-table-byte-hooks', r'\bfp\.hashtable\.Config\s*\(\s*&|\.(hashFunction|equalFunction|copyFunction)\s*=', 'hash table slots hashed or compared through byte-level hooks', 'pass an fp.hashtable view (keyOf, hash, equal)'),
 	('fix-from-hint', r'\bstartsWith\s*\(\s*hint\b', 'quick fix parsed back out of a hint\'s text', 'attach a diagnose.Diagnostic.Fix where the diagnostic is made'),
 ]
 
@@ -87,7 +88,7 @@ PLATFORM = re.compile(r'\bcore\s*\.\s*(?:sys|stdc)\s*\.')
 PROTOCOL_HOOKS = {
 	'remapEntities', 'finalize', 'moveTo', 'copyTo', 'opCall', 'compute', 'empty', 'front', 'popFront', 'back', 'popBack', 'save',
 	'opIndex', 'opSlice', 'opDollar', 'opEquals', 'opCmp', 'opAssign', 'opApply', 'opUnary', 'opBinary', 'opCast', 'toHash',
-	'contentHash', 'equal', 'serialize', 'deserialize', 'keyEqual', 'keyHash', 'valueEqual', 'cycleFallback', 'describeKey', 'main',
+	'contentHash', 'equal', 'serialize', 'deserialize', 'keyEqual', 'keyHash', 'valueEqual', 'cycleFallback', 'describeKey', 'main', 'keyOf', 'hash',
 }
 
 CONTROL = {

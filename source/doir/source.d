@@ -288,18 +288,12 @@ private struct Keyed {
 	EntityId e;
 }
 
-// wrapper: the key hash an `fp.hashtable` config takes, over a slot's bytes
-private size_t hashKeyed(inout(ubyte)[] bytes) @trusted { return cast(size_t) (cast(const(Keyed)*) bytes.ptr).key; }
-private bool equalKeyed(inout(ubyte)[] a, inout(ubyte)[] b) @trusted { return (cast(const(Keyed)*) a.ptr).key == (cast(const(Keyed)*) b.ptr).key; }
-
-// An empty table of `Keyed` by key, or null on refusal.
-private Keyed* keyedTable() {
-	fp.hashtable.Config config;
-	config.hashFunction = &hashKeyed;
-	config.equalFunction = &equalKeyed;
-	auto table = fp.hashtable.create!Keyed(config);
-	assert(table is null || fp.hashtable.validate(table), "doir.source: a new keyed table that breaks its invariants");
-	return table;
+// The `fp.hashtable` view of `Keyed` slots, found by their key, which is already a hash.
+private struct ByKey {
+	alias Slot = Keyed;
+	alias Key = ulong;
+	ulong keyOf(ref const Keyed slot) const @nogc nothrow { return slot.key; }
+	size_t hash(ulong key) const @nogc nothrow { return cast(size_t) key; }
 }
 
 // The old entities a block's new entries match, or `invalidEntity`: each entry is its name, `unnamed` for `_`, and its hash.
@@ -307,15 +301,15 @@ private Keyed* keyedTable() {
 private bool match(ref Commit c, const(EntityId)[] old, const(doir.strings.StringId)[] names, const(ulong)[] hashes, ulong parentPath, EntityId* matched, ulong* paths) {
 	assert(names.length == hashes.length, "doir.source: entries whose names and hashes disagree in number");
 	assert(matched !is null && paths !is null || names.length == 0, "doir.source: matching into nowhere");
-	auto byPath = keyedTable();
+	auto byPath = fp.hashtable.create!Keyed();
 	if (byPath is null) return false;
 	scope(exit) fp.hashtable.free(byPath);
 	foreach (e; old)
 		if (auto path = ecrs.context.findComponent!(doir.components.source.PathHash)(*c.store, e))
-			if (fp.hashtable.insert(byPath, Keyed(path.value, e)) is null) return false;
+			if (fp.hashtable.insert(ByKey(), byPath, Keyed(path.value, e)) is null) return false;
 
 	// Named: the name path, with the occurrence index among same-named siblings.
-	auto occurrences = keyedTable();
+	auto occurrences = fp.hashtable.create!Keyed();
 	if (occurrences is null) return false;
 	scope(exit) fp.hashtable.free(occurrences);
 	foreach (i, name; names) {
@@ -323,18 +317,18 @@ private bool match(ref Commit c, const(EntityId)[] old, const(doir.strings.Strin
 		paths[i] = 0;
 		if (name == doir.strings.unnamed) continue;
 		immutable nameHash = fp.algorithms.hashBytes(cast(const(ubyte)[]) doir.strings.text(*c.strings, name));
-		auto seen = fp.hashtable.find(occurrences, Keyed(nameHash));
+		auto seen = fp.hashtable.find(ByKey(), occurrences, nameHash);
 		immutable occurrence = seen is null ? 0 : seen.e + 1;
 		if (seen is null) {
-			if (fp.hashtable.insert(occurrences, Keyed(nameHash, 0)) is null) return false;
+			if (fp.hashtable.insert(ByKey(), occurrences, Keyed(nameHash, 0)) is null) return false;
 		} else seen.e = occurrence;
 		paths[i] = fp.algorithms.combine(fp.algorithms.combine(parentPath, nameHash), occurrence);
-		auto found = fp.hashtable.find(byPath, Keyed(paths[i]));
+		auto found = fp.hashtable.find(ByKey(), byPath, paths[i]);
 		if (found is null) continue;
 		auto oldName = ecrs.context.findComponent!(doir.components.ast.Name)(*c.store, found.e);
 		if (oldName !is null && oldName.value == name) {
 			matched[i] = found.e;
-			fp.hashtable.remove(byPath, Keyed(paths[i]));
+			fp.hashtable.remove(ByKey(), byPath, paths[i]);
 		}
 	}
 

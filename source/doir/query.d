@@ -104,17 +104,18 @@ private struct TableEntry(Q) {
 	Q.Key key;
 }
 
-// wrapper: the key hash an `fp.hashtable` config takes, over a slot's bytes
-private size_t hashTableEntry(Q)(inout(ubyte)[] bytes) @trusted {
-	assert(bytes.length == TableEntry!Q.sizeof, "doir.query: hashing a table entry of the wrong size");
-	return keyHash!Q((cast(const(TableEntry!Q)*) bytes.ptr).key);
-}
+// The `fp.hashtable` view of a query table, whose entries are found by their key.
+private struct ByQueryKey(Q) {
+	alias Slot = TableEntry!Q;
+	alias Key = Q.Key;
 
-private bool equalTableEntry(Q)(inout(ubyte)[] a, inout(ubyte)[] b) @trusted {
-	assert(a.length == TableEntry!Q.sizeof && b.length == TableEntry!Q.sizeof, "doir.query: comparing table entries of the wrong size");
-	immutable same = keysEqual!Q((cast(const(TableEntry!Q)*) a.ptr).key, (cast(const(TableEntry!Q)*) b.ptr).key);
-	assert(!same || hashTableEntry!Q(a) == hashTableEntry!Q(b), "doir.query: equal keys that hash differently");
-	return same;
+	ref const(Q.Key) keyOf(return ref const TableEntry!Q slot) const { return slot.key; }
+	size_t hash(ref const Q.Key key) const { return keyHash!Q(key); }
+	bool equal(ref const Q.Key a, ref const Q.Key b) const {
+		immutable same = keysEqual!Q(a, b);
+		assert(!same || keyHash!Q(a) == keyHash!Q(b), "doir.query: equal keys that hash differently");
+		return same;
+	}
 }
 
 // What a `QueryTable` keeps behind its lock.
@@ -1074,9 +1075,9 @@ private void flushWithheld(ref QueryEngine engine, EntityId q) {
 // Returns false if the rehash was refused, leaving it stale.
 private bool rehashIfStale(Q)(ref TableState!Q table) {
 	if (!table.stale) return true;
-	if (!fp.hashtable.rehash(table.table, 0, true)) return false;
+	if (!fp.hashtable.rehash(ByQueryKey!Q(), table.table, 0, true)) return false;
 	table.stale = false;
-	assert(fp.hashtable.validate(table.table), "doir.query: a rehashed query table that breaks its invariants");
+	assert(fp.hashtable.validate(ByQueryKey!Q(), table.table), "doir.query: a rehashed query table that breaks its invariants");
 	return true;
 }
 
@@ -1116,7 +1117,7 @@ package(doir) EntityId find(Q)(ref QueryEngine engine, const Q.Key key) @trusted
 private EntityId lookup(Q)(ref const TableState!Q table, ref const Q.Key key) @trusted {
 	const(TableEntry!Q)* found = null;
 	if (!table.stale) {
-		immutable at = fp.hashtable.positionOf(table.table, TableEntry!Q([invalidEntity], key));
+		immutable at = fp.hashtable.positionOf(ByQueryKey!Q(), table.table, key);
 		if (at != fp.pointer.notFound) found = table.table + at;
 	} else
 		foreach (stored; fp.hashtable.occupied(table.table))
@@ -1153,10 +1154,7 @@ private QueryTable!Q* tableFor(Q)(ref QueryEngine engine) @trusted {
 	beginExclusive(engine);
 	scope(exit) endExclusive(engine);
 	if (auto raced = ecrs.context.findSingletonForWriting!(QueryTable!Q)(*engine.store)) return raced;
-	fp.hashtable.Config config;
-	config.hashFunction = &hashTableEntry!Q;
-	config.equalFunction = &equalTableEntry!Q;
-	auto fresh = fp.hashtable.create!(TableEntry!Q)(config);
+	auto fresh = fp.hashtable.create!(TableEntry!Q)();
 	if (fresh is null) return null;
 	auto table = ecrs.context.addSingleton!(QueryTable!Q)(*engine.store);
 	if (table is null) {
@@ -1219,8 +1217,8 @@ private EntityId findOrAdd(Q)(ref QueryEngine engine, ref const Q.Key key) @trus
 				assert(q != invalidEntity, "doir.query: a spare query that was removed");
 				ecrs.context.getForWriting!(doir.components.query.QueryKey!Q)(*engine.store, q).key = key;
 				// An entry whose query a renumbering removed is reused.
-				if (auto dead = fp.hashtable.find(state.value.table, TableEntry!Q([invalidEntity], key))) dead.related[0] = q;
-				else if (fp.hashtable.insert(state.value.table, TableEntry!Q([q], key)) is null) return invalidEntity;
+				if (auto dead = fp.hashtable.find(ByQueryKey!Q(), state.value.table, key)) dead.related[0] = q;
+				else if (fp.hashtable.insert(ByQueryKey!Q(), state.value.table, TableEntry!Q([q], key)) is null) return invalidEntity;
 				cast(void) fp.dynarray.removeLast(state.value.spareQueries.related);
 				assert(lookup!Q(state.value, key) == q, "doir.query: a query added that its key does not find");
 				return q;
