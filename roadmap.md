@@ -289,7 +289,8 @@ Legacy behavior reference: [doir-lang/DOIR/tree/D](https://github.com/doir-lang/
   - Everything incremental stays: the query engine, the commit and its matching and chunking, positioned logs, imports, checks, schedules, the printer and formatter, the simulation and the language server.
   - The two packages share the root package `doir`, so neither has a `doir/package.d`, and each copy of `tools/lint.py` rejects an import from `doir.core` of any other `doir` module.
 - **Verification:** Every test that passed before passes, the moved modules' tests run in the core's runner, `tools/gen_tables.py --check` passes against the core's tables, the parser differential, conformance corpus, simulation and language server harness pass unchanged, and the core builds for wasm32-wasi.
-- **Where it stands (2026-11-16):** done but for the wasm32-wasi build, which needs the core's own `tools/wasi.py`.
+- **Where it stands (2026-11-17):** done.
+  `core/tools/wasi.py` runs the core's tests on wasm32-wasip1 and wasip1-threads under Node; it links a 1 MiB stack, since wasm-ld's default 64 KiB overflows parsing `maxNesting` blocks (`IL-Nest`) in a debug build.
   The core is a `sourceLibrary`, as libECRS is, since a static library would carry a second copy of libECRS into DOIR's link.
   A test in `doir.source` checks that `doir.core.parse` builds the same declarations as the incremental commit over the corpus.
   On a million-line file in a release build, the one-shot parse takes 516 ms and peaks at 342 MB, against 1.22 s and 448 MB for DOIR's first commit on one thread (871 ms and 515 MB on 12); DOIR's pays for the bookkeeping that lets an edit commit in 0.2 ms.
